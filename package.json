@@ -1,0 +1,18 @@
+{
+  "name": "intap-flipbook",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:dashboard": "npm run dev --workspace=apps/dashboard",
+    "dev:viewer": "npm run dev --workspace=apps/viewer",
+    "build": "npm run build --workspaces --if-present",
+    "deploy:api": "npm run deploy --workspace=apps/api",
+    "deploy:dashboard": "npm run deploy --workspace=apps/dashboard",
+    "deploy:viewer": "npm run deploy --workspace=apps/viewer"
+  }
+}

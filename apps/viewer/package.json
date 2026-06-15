@@ -1,0 +1,12 @@
+{
+  "name": "@intap-flipbook/viewer",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler pages dev src --port 5174",
+    "deploy": "wrangler pages deploy src --project-name=intap-flipbook-viewer"
+  },
+  "devDependencies": {
+    "wrangler": "^3.65.0"
+  }
+}
