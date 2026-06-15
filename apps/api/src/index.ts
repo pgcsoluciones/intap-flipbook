@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import authRoutes from './routes/auth'
 
 export type Env = {
   DB: D1Database
@@ -24,5 +25,7 @@ app.use('*', async (c, next) => {
 })
 
 app.get('/', (c) => c.json({ service: 'intap-flipbook-api', status: 'ok' }))
+
+app.route('/auth', authRoutes)
 
 export default app
