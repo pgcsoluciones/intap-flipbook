@@ -86,7 +86,6 @@ def r2_put(key: str, local_path: str, dry: bool):
         f"{R2_BUCKET}/{key}",
         f"--file={local_path}",
         "--content-type=image/jpeg",
-        "--remote",
     ])
 
 
