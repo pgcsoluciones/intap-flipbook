@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
+import { getUserPlan, checkPublicationLimit, checkSoundAllowed } from '../lib/plans'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
@@ -36,30 +37,18 @@ publications.post('/', async (c) => {
   }>()
 
   if (!body.title?.trim()) {
-    return c.json({ success: false, error: 'title is required' }, 400)
+    return c.json({ success: false, error: 'El título es requerido' }, 400)
   }
 
-  // Enforce plan limits
-  const user = await c.env.DB.prepare('SELECT plan_id FROM users WHERE id = ?')
-    .bind(userId)
-    .first<{ plan_id: string }>()
-  const plan = await c.env.DB.prepare('SELECT max_publications FROM plans WHERE id = ?')
-    .bind(user!.plan_id)
-    .first<{ max_publications: number | null }>()
+  const { plan } = await getUserPlan(c.env.DB, userId)
 
-  if (plan?.max_publications !== null) {
-    const { count } = await c.env.DB.prepare(
-      'SELECT COUNT(*) as count FROM publications WHERE user_id = ?',
-    )
-      .bind(userId)
-      .first<{ count: number }>() ?? { count: 0 }
-    if (count >= plan!.max_publications!) {
-      return c.json(
-        { success: false, error: `Plan limit reached (max ${plan!.max_publications} publications)` },
-        403,
-      )
-    }
-  }
+  const pubLimitError = await checkPublicationLimit(c.env.DB, userId, plan)
+  if (pubLimitError) return c.json({ success: false, error: pubLimitError }, 403)
+
+  // If user explicitly requests sound and plan doesn't support it, silently disable
+  const wantsSound = body.sound_enabled !== false
+  const soundAllowed = plan.sound_enabled === 1
+  const soundValue = wantsSound && soundAllowed ? 1 : 0
 
   const id = crypto.randomUUID()
   const slug = generateSlug()
@@ -68,19 +57,15 @@ publications.post('/', async (c) => {
     `INSERT INTO publications (id, user_id, title, description, category, public_slug, sound_enabled)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(
-      id,
-      userId,
-      body.title.trim(),
-      body.description ?? null,
-      body.category ?? null,
-      slug,
-      body.sound_enabled !== false ? 1 : 0,
-    )
+    .bind(id, userId, body.title.trim(), body.description ?? null, body.category ?? null, slug, soundValue)
     .run()
 
   const pub = await c.env.DB.prepare('SELECT * FROM publications WHERE id = ?').bind(id).first()
-  return c.json({ success: true, data: pub }, 201)
+  return c.json({
+    success: true,
+    data: pub,
+    ...(wantsSound && !soundAllowed ? { warning: checkSoundAllowed(plan) } : {}),
+  }, 201)
 })
 
 // GET /api/publications/:id
@@ -89,7 +74,7 @@ publications.get('/:id', async (c) => {
   const pub = await c.env.DB.prepare('SELECT * FROM publications WHERE id = ? AND user_id = ?')
     .bind(c.req.param('id'), userId)
     .first()
-  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
 
   const { results: pages } = await c.env.DB.prepare(
     'SELECT * FROM pages WHERE publication_id = ? ORDER BY page_number ASC',
@@ -114,7 +99,25 @@ publications.put('/:id', async (c) => {
   const pub = await c.env.DB.prepare('SELECT id FROM publications WHERE id = ? AND user_id = ?')
     .bind(c.req.param('id'), userId)
     .first()
-  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  let soundValue: number | null = null
+  let soundWarning: string | undefined
+
+  if (body.sound_enabled !== undefined) {
+    if (body.sound_enabled) {
+      const { plan } = await getUserPlan(c.env.DB, userId)
+      const err = checkSoundAllowed(plan)
+      if (err) {
+        soundValue = 0
+        soundWarning = err
+      } else {
+        soundValue = 1
+      }
+    } else {
+      soundValue = 0
+    }
+  }
 
   await c.env.DB.prepare(
     `UPDATE publications
@@ -130,7 +133,7 @@ publications.put('/:id', async (c) => {
       body.title ?? null,
       body.description ?? null,
       body.category ?? null,
-      body.sound_enabled !== undefined ? (body.sound_enabled ? 1 : 0) : null,
+      soundValue,
       body.cover_image_url ?? null,
       c.req.param('id'),
     )
@@ -139,7 +142,7 @@ publications.put('/:id', async (c) => {
   const updated = await c.env.DB.prepare('SELECT * FROM publications WHERE id = ?')
     .bind(c.req.param('id'))
     .first()
-  return c.json({ success: true, data: updated })
+  return c.json({ success: true, data: updated, ...(soundWarning ? { warning: soundWarning } : {}) })
 })
 
 // DELETE /api/publications/:id
@@ -148,7 +151,7 @@ publications.delete('/:id', async (c) => {
   const pub = await c.env.DB.prepare('SELECT id FROM publications WHERE id = ? AND user_id = ?')
     .bind(c.req.param('id'), userId)
     .first()
-  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
 
   await c.env.DB.prepare('DELETE FROM pages WHERE publication_id = ?').bind(c.req.param('id')).run()
   await c.env.DB.prepare('DELETE FROM publications WHERE id = ?').bind(c.req.param('id')).run()
@@ -162,7 +165,15 @@ publications.post('/:id/publish', async (c) => {
   const pub = await c.env.DB.prepare('SELECT id FROM publications WHERE id = ? AND user_id = ?')
     .bind(c.req.param('id'), userId)
     .first()
-  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  // Must have at least one page
+  const { count } = await c.env.DB.prepare(
+    'SELECT COUNT(*) as count FROM pages WHERE publication_id = ?'
+  ).bind(c.req.param('id')).first<{ count: number }>() ?? { count: 0 }
+  if (count === 0) {
+    return c.json({ success: false, error: 'La publicación debe tener al menos una página antes de publicarse' }, 400)
+  }
 
   await c.env.DB.prepare(
     `UPDATE publications SET status = 'published', updated_at = datetime('now') WHERE id = ?`,

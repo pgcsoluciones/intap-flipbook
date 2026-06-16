@@ -65,6 +65,10 @@ export const api = {
       }),
   },
 
+  plan: {
+    usage: () => request<{ success: true; data: any }>('/api/me/usage'),
+  },
+
   upload: (file: File) => {
     const token = getToken()
     const form = new FormData()

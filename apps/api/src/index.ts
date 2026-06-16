@@ -4,6 +4,9 @@ import authRoutes from './routes/auth'
 import publicationRoutes from './routes/publications'
 import pageRoutes from './routes/pages'
 import uploadRoutes from './routes/upload'
+import { jwtMiddleware } from './middleware/jwt'
+import { getUserPlan, getPlanUsage } from './lib/plans'
+import type { AuthVariables } from './middleware/jwt'
 
 export type Env = {
   DB: D1Database
@@ -36,6 +39,14 @@ app.route('/auth', authRoutes)
 app.route('/api/publications', publicationRoutes)
 app.route('/api', pageRoutes)
 app.route('/api/upload', uploadRoutes)
+
+// Plan usage — protected
+app.get('/api/me/usage', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { plan } = await getUserPlan(c.env.DB, userId)
+  const usage = await getPlanUsage(c.env.DB, userId, plan)
+  return c.json({ success: true, data: usage })
+})
 
 // Public viewer endpoint — no auth required
 app.get('/view/:slug', async (c) => {

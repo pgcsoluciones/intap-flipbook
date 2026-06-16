@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS pages (
   publication_id TEXT NOT NULL,
   page_number INTEGER NOT NULL,
   image_url TEXT NOT NULL,
+  size_bytes INTEGER DEFAULT 0,
   title TEXT,
   description TEXT,
   price TEXT,

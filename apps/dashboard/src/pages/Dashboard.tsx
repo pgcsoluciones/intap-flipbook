@@ -7,12 +7,13 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [user, setUser] = useState<any>(null)
   const [pubs, setPubs] = useState<any[]>([])
+  const [usage, setUsage] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!localStorage.getItem('token')) { navigate('/login'); return }
-    Promise.all([api.auth.me(), api.publications.list()])
-      .then(([u, p]) => { setUser(u.data); setPubs(p.data) })
+    Promise.all([api.auth.me(), api.publications.list(), api.plan.usage()])
+      .then(([u, p, us]) => { setUser(u.data); setPubs(p.data); setUsage(us.data) })
       .catch(() => { localStorage.removeItem('token'); navigate('/login') })
       .finally(() => setLoading(false))
   }, [])
@@ -48,6 +49,8 @@ export default function Dashboard() {
           <h2 style={{ margin: 0 }}>Mis publicaciones</h2>
           <Link to="/new"><button style={styles.btnPrimary}>+ Nueva publicación</button></Link>
         </div>
+
+        {usage && <UsageBar usage={usage} />}
 
         {pubs.length === 0 ? (
           <div style={styles.empty}>
@@ -91,6 +94,49 @@ export default function Dashboard() {
       </main>
     </div>
   )
+}
+
+function UsageBar({ usage }: { usage: any }) {
+  const storagePct = Math.min(100, (usage.storage.used_mb / usage.storage.max_mb) * 100)
+  const pubMax = usage.publications.unlimited ? null : usage.publications.max
+  const pubPct = pubMax ? Math.min(100, (usage.publications.used / pubMax) * 100) : 0
+
+  return (
+    <div style={usageStyles.card}>
+      <div style={usageStyles.row}>
+        <div style={usageStyles.stat}>
+          <span style={usageStyles.label}>Publicaciones</span>
+          <span style={usageStyles.value}>
+            {usage.publications.used}{pubMax ? ` / ${pubMax}` : ' (ilimitadas)'}
+          </span>
+          {pubMax && <div style={usageStyles.barBg}><div style={{ ...usageStyles.barFill, width: `${pubPct}%`, background: pubPct > 80 ? '#e53e3e' : '#4f46e5' }} /></div>}
+        </div>
+        <div style={usageStyles.stat}>
+          <span style={usageStyles.label}>Almacenamiento</span>
+          <span style={usageStyles.value}>{usage.storage.used_mb} MB / {usage.storage.max_mb} MB</span>
+          <div style={usageStyles.barBg}><div style={{ ...usageStyles.barFill, width: `${storagePct}%`, background: storagePct > 80 ? '#e53e3e' : '#38a169' }} /></div>
+        </div>
+        <div style={usageStyles.stat}>
+          <span style={usageStyles.label}>Páginas por publicación</span>
+          <span style={usageStyles.value}>máx. {usage.features.max_pages_per_pub}</span>
+        </div>
+        <div style={usageStyles.stat}>
+          <span style={usageStyles.label}>Sonido</span>
+          <span style={usageStyles.value}>{usage.features.sound_enabled ? '✅ Incluido' : '❌ Requiere Basic+'}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const usageStyles: Record<string, React.CSSProperties> = {
+  card: { background: '#fff', borderRadius: 12, padding: '1rem 1.5rem', marginBottom: '1.5rem', boxShadow: '0 2px 8px rgba(0,0,0,.05)', border: '1px solid #eee' },
+  row: { display: 'flex', gap: '2rem', flexWrap: 'wrap' },
+  stat: { display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 140 },
+  label: { fontSize: '0.75rem', color: '#888', textTransform: 'uppercase', fontWeight: 600 },
+  value: { fontSize: '0.95rem', fontWeight: 500 },
+  barBg: { height: 4, background: '#eee', borderRadius: 4, overflow: 'hidden' },
+  barFill: { height: '100%', borderRadius: 4, transition: 'width .3s' },
 }
 
 const styles: Record<string, React.CSSProperties> = {

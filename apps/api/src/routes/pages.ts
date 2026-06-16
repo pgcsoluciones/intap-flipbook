@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
+import { getUserPlan, checkPageLimit } from '../lib/plans'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
@@ -14,33 +15,18 @@ pages.post('/publications/:pubId/pages', async (c) => {
   const userId = c.get('user').sub
   const pubId = c.req.param('pubId')
 
-  const pub = await c.env.DB.prepare('SELECT id, user_id FROM publications WHERE id = ? AND user_id = ?')
+  const pub = await c.env.DB.prepare('SELECT id FROM publications WHERE id = ? AND user_id = ?')
     .bind(pubId, userId)
-    .first<{ id: string; user_id: string }>()
-  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+    .first<{ id: string }>()
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
 
-  // Check plan page limit
-  const user = await c.env.DB.prepare('SELECT plan_id FROM users WHERE id = ?')
-    .bind(userId)
-    .first<{ plan_id: string }>()
-  const plan = await c.env.DB.prepare('SELECT max_pages_per_pub FROM plans WHERE id = ?')
-    .bind(user!.plan_id)
-    .first<{ max_pages_per_pub: number }>()
-  const { count } = await c.env.DB.prepare(
-    'SELECT COUNT(*) as count FROM pages WHERE publication_id = ?',
-  )
-    .bind(pubId)
-    .first<{ count: number }>() ?? { count: 0 }
-
-  if (count >= plan!.max_pages_per_pub) {
-    return c.json(
-      { success: false, error: `Plan limit reached (max ${plan!.max_pages_per_pub} pages)` },
-      403,
-    )
-  }
+  const { plan } = await getUserPlan(c.env.DB, userId)
+  const pageLimitError = await checkPageLimit(c.env.DB, pubId, plan)
+  if (pageLimitError) return c.json({ success: false, error: pageLimitError }, 403)
 
   const body = await c.req.json<{
     image_url: string
+    size_bytes?: number
     title?: string
     description?: string
     price?: string
@@ -48,17 +34,23 @@ pages.post('/publications/:pubId/pages', async (c) => {
   }>()
 
   if (!body.image_url) {
-    return c.json({ success: false, error: 'image_url is required' }, 400)
+    return c.json({ success: false, error: 'image_url es requerido' }, 400)
   }
+
+  const { count } = await c.env.DB.prepare(
+    'SELECT COUNT(*) as count FROM pages WHERE publication_id = ?',
+  )
+    .bind(pubId)
+    .first<{ count: number }>() ?? { count: 0 }
 
   const pageNumber = body.page_number ?? count + 1
   const id = crypto.randomUUID()
 
   await c.env.DB.prepare(
-    `INSERT INTO pages (id, publication_id, page_number, image_url, title, description, price)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO pages (id, publication_id, page_number, image_url, size_bytes, title, description, price)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(id, pubId, pageNumber, body.image_url, body.title ?? null, body.description ?? null, body.price ?? null)
+    .bind(id, pubId, pageNumber, body.image_url, body.size_bytes ?? 0, body.title ?? null, body.description ?? null, body.price ?? null)
     .run()
 
   await c.env.DB.prepare(`UPDATE publications SET updated_at = datetime('now') WHERE id = ?`)
@@ -75,13 +67,13 @@ pages.put('/pages/:pageId', async (c) => {
   const pageId = c.req.param('pageId')
 
   const page = await c.env.DB.prepare(
-    `SELECT pg.*, pub.user_id FROM pages pg
+    `SELECT pg.id, pg.publication_id FROM pages pg
      JOIN publications pub ON pub.id = pg.publication_id
      WHERE pg.id = ? AND pub.user_id = ?`,
   )
     .bind(pageId, userId)
     .first<{ id: string; publication_id: string }>()
-  if (!page) return c.json({ success: false, error: 'Page not found' }, 404)
+  if (!page) return c.json({ success: false, error: 'Página no encontrada' }, 404)
 
   const body = await c.req.json<{
     title?: string
@@ -121,7 +113,7 @@ pages.delete('/pages/:pageId', async (c) => {
   )
     .bind(pageId, userId)
     .first<{ id: string; publication_id: string }>()
-  if (!page) return c.json({ success: false, error: 'Page not found' }, 404)
+  if (!page) return c.json({ success: false, error: 'Página no encontrada' }, 404)
 
   await c.env.DB.prepare('DELETE FROM pages WHERE id = ?').bind(pageId).run()
   await c.env.DB.prepare(`UPDATE publications SET updated_at = datetime('now') WHERE id = ?`)
@@ -136,14 +128,14 @@ pages.post('/pages/reorder', async (c) => {
   const userId = c.get('user').sub
   const body = await c.req.json<{ publication_id: string; page_ids: string[] }>()
 
-  if (!body.publication_id || !Array.isArray(body.page_ids)) {
-    return c.json({ success: false, error: 'publication_id and page_ids array are required' }, 400)
+  if (!body.publication_id || !Array.isArray(body.page_ids) || body.page_ids.length === 0) {
+    return c.json({ success: false, error: 'publication_id y page_ids son requeridos' }, 400)
   }
 
   const pub = await c.env.DB.prepare('SELECT id FROM publications WHERE id = ? AND user_id = ?')
     .bind(body.publication_id, userId)
     .first()
-  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
 
   const stmts = body.page_ids.map((pageId, index) =>
     c.env.DB.prepare('UPDATE pages SET page_number = ? WHERE id = ? AND publication_id = ?').bind(
