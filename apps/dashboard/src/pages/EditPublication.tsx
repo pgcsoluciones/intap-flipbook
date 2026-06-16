@@ -209,6 +209,26 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   quiz:     { question: '¿Tu pregunta?', options: 'Opción A\nOpción B\nOpción C' },
 }
 
+// Reúne todas las URLs de imágenes ya usadas en el proyecto: fondos de página
+// y elementos de imagen dentro del canvas de cada página.
+function collectBankFromPages(ps: any[]): string[] {
+  const urls = new Set<string>()
+  for (const pg of ps) {
+    if (pg?.image_url) urls.add(pg.image_url)
+    const cj = pg?.canvas_json
+    if (cj) {
+      try {
+        const parsed = typeof cj === 'string' ? JSON.parse(cj) : cj
+        for (const o of parsed?.objects ?? []) {
+          if (o?.type === 'image' && o?.src) urls.add(o.src)
+          if (o?.data?.src) urls.add(o.data.src)
+        }
+      } catch { /* canvas_json inválido: lo ignoramos */ }
+    }
+  }
+  return [...urls]
+}
+
 export default function EditPublication() {
   const { id } = useParams<{ id: string }>()
   const [pub, setPub]       = useState<any>(null)
@@ -218,6 +238,7 @@ export default function EditPublication() {
   const [publishing, setPublishing] = useState(false)
   const [selected, setSelected] = useState<any>(null)
   const [defaultFont, setDefaultFont] = useState<string>(FONTS[0].family) // tipografía para texto nuevo
+  const [imageBank, setImageBank] = useState<string[]>([]) // banco de imágenes subidas en este proyecto
   const [selectVersion, setSelectVersion] = useState(0) // fuerza refresco del panel de props
   const [zoom, setZoom]   = useState(100)
 
@@ -245,8 +266,24 @@ export default function EditPublication() {
       const ps = res.data.pages ?? []
       setPages(ps)
       if (ps.length > 0) setActivePage(ps[0])
+      // Banco de imágenes: imágenes del proyecto + las guardadas localmente (subidas pero quizá no colocadas)
+      let stored: string[] = []
+      try { stored = JSON.parse(localStorage.getItem(`imgbank_${id}`) ?? '[]') } catch {}
+      const merged = Array.from(new Set([...collectBankFromPages(ps), ...stored]))
+      setImageBank(merged)
     })
     api.templates.list().then((r) => setTemplates(r.data ?? [])).catch(() => {})
+  }, [id])
+
+  // Agrega una URL al banco de imágenes del proyecto (sin duplicar) y lo persiste
+  const addToBank = useCallback((url: string) => {
+    if (!url) return
+    setImageBank((prev) => {
+      if (prev.includes(url)) return prev
+      const next = [url, ...prev]
+      try { localStorage.setItem(`imgbank_${id}`, JSON.stringify(next)) } catch {}
+      return next
+    })
   }, [id])
 
   // ── Autoguardado: guarda el canvas actual en segundo plano ──
@@ -418,15 +455,22 @@ export default function EditPublication() {
     try {
       const up = await api.upload(file)
       if (!up.success) throw new Error('Upload falló')
-      fabric.Image.fromURL(up.data.url, (img: any) => {
-        // Escala la imagen para que no ocupe más del 60 % del ancho del canvas
-        const maxW = c.getWidth() * 0.6
-        if (img.width > maxW) img.scaleToWidth(maxW)
-        img.set({ left: 60, top: 60, data: { kind: 'image', src: up.data.url } })
-        c.add(img); c.setActiveObject(img); c.requestRenderAll()
-        scheduleAutosave()
-      })
+      addToBank(up.data.url)
+      addImageFromUrl(up.data.url)
     } finally { setUploading(false) }
+  }
+
+  // Inserta una imagen ya subida (del banco) como elemento editable, sin re-subir
+  function addImageFromUrl(url: string) {
+    const c = fabricRef.current; if (!c) return
+    fabric.Image.fromURL(url, (img: any) => {
+      // Escala la imagen para que no ocupe más del 60 % del ancho del canvas
+      const maxW = c.getWidth() * 0.6
+      if (img.width > maxW) img.scaleToWidth(maxW)
+      img.set({ left: 60, top: 60, data: { kind: 'image', src: url } })
+      c.add(img); c.setActiveObject(img); c.requestRenderAll()
+      scheduleAutosave()
+    })
   }
   async function handleImgInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
@@ -489,6 +533,7 @@ export default function EditPublication() {
     try {
       const up = await api.upload(file)
       if (!up.success) throw new Error('Upload falló')
+      addToBank(up.data.url)
       const res = await api.pages.add(id!, { image_url: up.data.url })
       setPages((prev) => { const next = [...prev, res.data]; setActivePage(res.data); return next })
     } finally { setUploading(false) }
@@ -657,6 +702,8 @@ export default function EditPublication() {
               addWidget={addWidget}
               defaultFont={defaultFont}
               setDefaultFont={setDefaultFont}
+              imageBank={imageBank}
+              addImageFromUrl={addImageFromUrl}
             />
           </aside>
         )}
@@ -852,6 +899,23 @@ function ContextPanel(p: any) {
             {p.uploading ? 'Subiendo...' : '+ Agregar como nueva página'}
           </button>
           <p style={cp.hint}>Agrega la imagen como página nueva del flipbook (igual que en el panel Páginas).</p>
+
+          {/* Banco de imágenes del proyecto: reutilizar sin volver a subir */}
+          <div style={cp.sectionLabel}>Mis imágenes ({p.imageBank?.length ?? 0})</div>
+          {(!p.imageBank || p.imageBank.length === 0) ? (
+            <p style={cp.empty}>Las imágenes que subas en este catálogo aparecerán aquí para reutilizarlas.</p>
+          ) : (
+            <>
+              <p style={cp.hint}>Hacé clic en una imagen para insertarla en la página actual sin volver a subirla.</p>
+              <div style={cp.bankGrid}>
+                {p.imageBank.map((url: string) => (
+                  <button key={url} style={cp.bankItem} title="Insertar en la página" onClick={() => p.addImageFromUrl(url)}>
+                    <img src={url} alt="" style={cp.bankImg} loading="lazy" />
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </>
       )
 
@@ -1486,6 +1550,9 @@ const cp: Record<string, React.CSSProperties> = {
   iconGrid:   { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 },
   iconBtn:    { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, height: 64, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', cursor: 'pointer', color: '#334155' },
   iconName:   { fontSize: 9, color: '#9ca3af', lineHeight: 1 },
+  bankGrid:   { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginTop: 4 },
+  bankItem:   { padding: 0, border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden', cursor: 'pointer', background: '#fff', aspectRatio: '1', display: 'block' },
+  bankImg:    { width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block' },
 }
 
 const cfg: Record<string, React.CSSProperties> = {
