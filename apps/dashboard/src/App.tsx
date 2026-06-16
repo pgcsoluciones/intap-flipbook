@@ -48,8 +48,8 @@ export default function App() {
         {/* Publicaciones */}
         <Route path="/dashboard"                 element={<Layout><Dashboard /></Layout>} />
         <Route path="/publications"              element={<Layout><Publications /></Layout>} />
-        <Route path="/publications/new"          element={<Layout><NewPublication /></Layout>} />
-        <Route path="/publications/:id/editor"   element={<Layout><EditPublication /></Layout>} />
+        <Route path="/publications/new"          element={<NewPublication />} />
+        <Route path="/publications/:id/editor"   element={<EditPublication />} />
         <Route path="/publications/:id/preview"  element={<Layout><Preview /></Layout>} />
         <Route path="/publications/:id/settings" element={<Layout><Settings /></Layout>} />
 
