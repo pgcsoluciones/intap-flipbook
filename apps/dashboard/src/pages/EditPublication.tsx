@@ -19,10 +19,12 @@ export default function EditPublication() {
   const [selected, setSelected] = useState<any>(null)
   const [zoom, setZoom]   = useState(100)
   const [msg, setMsg]     = useState('')
+  const [rightTab, setRightTab] = useState<'props' | 'elements'>('elements')
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
   const pageIdRef = useRef<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!id) return
@@ -56,15 +58,24 @@ export default function EditPublication() {
       img.scaleToHeight(H)
       img.set({ selectable: false, evented: false })
       canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
-    }, { crossOrigin: 'anonymous' })
+    })
 
     if (activePage.canvas_json) {
       canvas.loadFromJSON(activePage.canvas_json, () => canvas.renderAll())
     }
 
-    canvas.on('selection:created', (e: any) => setSelected(e.selected?.[0] ?? null))
-    canvas.on('selection:updated', (e: any) => setSelected(e.selected?.[0] ?? null))
-    canvas.on('selection:cleared', () => setSelected(null))
+    canvas.on('selection:created', (e: any) => {
+      setSelected(e.selected?.[0] ?? null)
+      setRightTab('props')
+    })
+    canvas.on('selection:updated', (e: any) => {
+      setSelected(e.selected?.[0] ?? null)
+      setRightTab('props')
+    })
+    canvas.on('selection:cleared', () => {
+      setSelected(null)
+      setRightTab('elements')
+    })
 
     return () => {
       if (fabricRef.current) {
@@ -94,7 +105,7 @@ export default function EditPublication() {
       const json = JSON.stringify(canvas.toJSON())
       await api.pages.saveCanvas(pageIdRef.current, json)
       setPages((prev) => prev.map((p) => p.id === pageIdRef.current ? { ...p, canvas_json: json } : p))
-      flash('Página guardada ✓')
+      flash('Pagina guardada')
     } finally { setSaving(false) }
   }
 
@@ -102,7 +113,7 @@ export default function EditPublication() {
 
   function addText() {
     const c = fabricRef.current; if (!c) return
-    const t = new fabric.Textbox('Texto aquí', { left: 60, top: 60, width: 200, fontSize: 24, fill: '#ffffff', fontFamily: 'Inter, sans-serif', fontWeight: 'bold' })
+    const t = new fabric.Textbox('Texto aqui', { left: 60, top: 60, width: 200, fontSize: 24, fill: '#ffffff', fontFamily: 'Inter, sans-serif', fontWeight: 'bold' })
     c.add(t); c.setActiveObject(t); setTool('select')
   }
 
@@ -116,24 +127,31 @@ export default function EditPublication() {
     const c = fabricRef.current; if (!c) return
     const btn = new fabric.Group([
       new fabric.Rect({ width: 180, height: 44, fill: '#4F46E5', rx: 8, ry: 8, originX: 'center', originY: 'center' }),
-      new fabric.Text('Ver más', { fill: '#fff', fontSize: 16, fontFamily: 'Inter, sans-serif', fontWeight: 'bold', originX: 'center', originY: 'center' }),
+      new fabric.Text('Ver mas', { fill: '#fff', fontSize: 16, fontFamily: 'Inter, sans-serif', fontWeight: 'bold', originX: 'center', originY: 'center' }),
     ], { left: 100, top: 120, data: { type: 'link', url: 'https://' } })
     c.add(btn); c.setActiveObject(btn); setTool('select')
-    flash('Editá la URL en propiedades →')
+    flash('Edita la URL en propiedades')
   }
 
   async function handleUpload(file: File) {
     setUploading(true)
     try {
       const up = await api.upload(file)
-      if (!up.success) throw new Error('Upload falló')
+      if (!up.success) throw new Error('Upload fallo')
       const res = await api.pages.add(id!, { image_url: up.data.url })
       setPages((prev) => { const next = [...prev, res.data]; setActivePage(res.data); return next })
     } finally { setUploading(false) }
   }
 
+  async function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    await handleUpload(file)
+    e.target.value = ''
+  }
+
   async function handleDeletePage(pageId: string) {
-    if (!confirm('¿Eliminar esta página?')) return
+    if (!confirm('Eliminar esta pagina?')) return
     await api.pages.delete(pageId)
     setPages((prev) => {
       const next = prev.filter((p) => p.id !== pageId)
@@ -160,28 +178,39 @@ export default function EditPublication() {
     try {
       const res = await api.publications.publish(id!)
       setPub(res.data)
-      flash('¡Publicado! ✓')
+      flash('Publicado!')
     } catch (e: any) { flash(e.message) }
     finally { setPublishing(false) }
   }
+
+  const activePageIndex = activePage ? pages.findIndex((p) => p.id === activePage.id) : -1
 
   if (!pub) return <div style={s.loading}>Cargando editor...</div>
 
   return (
     <div style={s.root}>
 
-      {/* Barra superior */}
+      {/* Top bar */}
       <div style={s.topBar}>
-        <Link to="/publications" style={s.backLink}>← Mis flipbooks</Link>
-        <span style={s.pubTitle}>{pub.title}</span>
+        <div style={s.topLeft}>
+          <Link to="/publications" style={s.backLink}>&#8592; Mis flipbooks</Link>
+          <span style={s.pubTitle}>{pub.title}</span>
+        </div>
+        <div style={s.topCenter}>
+          {activePage && pages.length > 0 && (
+            <span style={s.breadcrumb}>{activePageIndex + 1} / {pages.length}</span>
+          )}
+        </div>
         <div style={s.topRight}>
           {msg && <span style={s.msg}>{msg}</span>}
           <Link to={`/publications/${id}/preview`}>
-            <button className="btn btn-secondary btn-sm">Vista previa</button>
+            <button style={s.btnOutlineWhite}>Vista previa</button>
           </Link>
           <button
-            className="btn btn-sm"
-            style={{ background: pub.status === 'published' ? 'var(--color-success)' : 'var(--color-primary)', color: '#fff' }}
+            style={{
+              ...s.btnPublish,
+              background: pub.status === 'published' ? '#16a34a' : '#4f46e5',
+            }}
             onClick={handlePublish}
             disabled={publishing}
           >
@@ -190,12 +219,15 @@ export default function EditPublication() {
         </div>
       </div>
 
-      {/* Layout 3 columnas */}
+      {/* 3-column layout */}
       <div style={s.columns}>
 
-        {/* Columna izquierda — miniaturas */}
+        {/* Left sidebar — page thumbnails */}
         <aside style={s.left}>
-          <div style={s.leftHeader}>Páginas ({pages.length})</div>
+          <div style={s.leftHeader}>
+            <span style={s.leftHeaderLabel}>PAGINAS</span>
+            <span style={s.leftHeaderCount}>{pages.length}</span>
+          </div>
           <div style={s.thumbList}>
             {pages.map((page, i) => (
               <div
@@ -205,7 +237,11 @@ export default function EditPublication() {
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => onDrop(i)}
                 onClick={() => setActivePage(page)}
-                style={{ ...s.thumbItem, outline: activePage?.id === page.id ? '2px solid var(--color-primary)' : '2px solid transparent' }}
+                style={{
+                  ...s.thumbItem,
+                  borderLeft: activePage?.id === page.id ? '3px solid #818cf8' : '3px solid transparent',
+                  background: activePage?.id === page.id ? 'rgba(129,140,248,0.08)' : 'transparent',
+                }}
               >
                 <img src={page.image_url} alt={`p${i + 1}`} style={s.thumbImg} />
                 <div style={s.thumbNum}>{i + 1}</div>
@@ -213,78 +249,142 @@ export default function EditPublication() {
                   style={s.thumbDel}
                   onClick={(e) => { e.stopPropagation(); handleDeletePage(page.id) }}
                   title="Eliminar"
-                >✕</button>
+                >&#10005;</button>
               </div>
             ))}
           </div>
-          <div style={{ padding: 10, borderTop: '1px solid var(--color-border)' }}>
-            <ImageUploader onUpload={handleUpload} uploading={uploading} compact />
+          <div style={s.leftBottom}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              style={{ display: 'none' }}
+              onChange={handleFileInputChange}
+            />
+            <button
+              style={s.addPageBtn}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+            >
+              {uploading ? 'Subiendo...' : '+ Nueva pagina'}
+            </button>
           </div>
         </aside>
 
-        {/* Columna central — canvas */}
+        {/* Center — canvas */}
         <main style={s.center}>
           {/* Toolbar */}
           <div style={s.toolbar}>
-            {([
-              { key: 'select', icon: '↖', label: 'Seleccionar' },
-              { key: 'text',   icon: 'T',  label: 'Texto',       action: addText },
-              { key: 'rect',   icon: '▭',  label: 'Forma',       action: addRect },
-              { key: 'link',   icon: '🔗', label: 'Botón/Link',  action: addLink },
-            ] as { key: Tool; icon: string; label: string; action?: () => void }[]).map((t) => (
+            <div style={s.toolGroup}>
+              {([
+                { key: 'select', icon: '↖', label: 'Seleccionar' },
+                { key: 'text',   icon: 'T',       label: 'Texto',      action: addText },
+                { key: 'rect',   icon: '▭',  label: 'Forma',      action: addRect },
+                { key: 'link',   icon: '🔗', label: 'Boton/Link', action: addLink },
+              ] as { key: Tool; icon: string; label: string; action?: () => void }[]).map((t) => (
+                <button
+                  key={t.key}
+                  title={t.label}
+                  style={{ ...s.toolBtn, ...(tool === t.key ? s.toolBtnActive : {}) }}
+                  onClick={() => { setTool(t.key); t.action?.() }}
+                >
+                  {t.icon}
+                </button>
+              ))}
+              <div style={s.toolSep} />
               <button
-                key={t.key}
-                title={t.label}
-                style={{ ...s.toolBtn, ...(tool === t.key ? s.toolBtnActive : {}) }}
-                onClick={() => { setTool(t.key); t.action?.() }}
+                title="Eliminar seleccion"
+                style={s.toolBtn}
+                onClick={() => {
+                  const c = fabricRef.current
+                  const o = c?.getActiveObject()
+                  if (o) { c!.remove(o); setSelected(null) }
+                }}
               >
-                {t.icon}
+                &#128465;
               </button>
-            ))}
+            </div>
+            <div style={{ flex: 1 }} />
+            <div style={s.zoomGroup}>
+              {[50, 75, 100, 125].map((z) => (
+                <button
+                  key={z}
+                  style={{ ...s.zoomBtn, ...(zoom === z ? s.zoomActive : {}) }}
+                  onClick={() => setZoom(z)}
+                >
+                  {z}%
+                </button>
+              ))}
+            </div>
             <div style={s.toolSep} />
-            <button title="Eliminar selección" style={s.toolBtn}
-              onClick={() => { const c = fabricRef.current; const o = c?.getActiveObject(); if (o) { c!.remove(o); setSelected(null) } }}>
-              🗑
+            <button style={s.savePgBtn} onClick={saveCurrentCanvas} disabled={saving}>
+              {saving ? 'Guardando...' : 'Guardar pagina'}
             </button>
           </div>
 
           {/* Canvas area */}
           <div style={s.canvasWrap}>
             {activePage ? (
-              <div style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center', boxShadow: '0 4px 24px rgba(0,0,0,.2)', borderRadius: 2 }}>
+              <div style={{
+                transform: `scale(${zoom / 100})`,
+                transformOrigin: 'top center',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+                borderRadius: 2,
+              }}>
                 <canvas ref={canvasRef} />
               </div>
             ) : (
               <div style={s.canvasEmpty}>
-                <div style={{ fontSize: 48 }}>📄</div>
-                <p>Subí imágenes desde el panel izquierdo para comenzar.</p>
+                <div style={{ fontSize: 52, marginBottom: 16, opacity: 0.4 }}>&#128196;</div>
+                <p style={{ color: '#6b7280', fontSize: 15, textAlign: 'center', maxWidth: 260, lineHeight: 1.6 }}>
+                  Agrega paginas desde el panel izquierdo para comenzar.
+                </p>
               </div>
             )}
           </div>
-
-          {/* Barra inferior */}
-          <div style={s.bottomBar}>
-            <div style={s.zoomGroup}>
-              {[50, 75, 100, 125].map((z) => (
-                <button key={z} style={{ ...s.zoomBtn, ...(zoom === z ? s.zoomActive : {}) }} onClick={() => setZoom(z)}>{z}%</button>
-              ))}
-            </div>
-            <span style={s.pageIndicator}>
-              {activePage ? `${pages.findIndex((p) => p.id === activePage.id) + 1} / ${pages.length}` : '—'}
-            </span>
-            <button className="btn btn-secondary btn-sm" onClick={saveCurrentCanvas} disabled={saving}>
-              {saving ? 'Guardando...' : 'Guardar página'}
-            </button>
-          </div>
         </main>
 
-        {/* Columna derecha — propiedades */}
+        {/* Right sidebar — props / elements */}
         <aside style={s.right}>
-          <div style={s.rightHeader}>Propiedades</div>
-          {selected
-            ? <PropsPanel obj={selected} canvas={fabricRef.current} />
-            : <div style={s.rightEmpty}>Seleccioná un elemento del canvas para editar sus propiedades.</div>
-          }
+          {/* Tab header */}
+          <div style={s.tabHeader}>
+            <button
+              style={{ ...s.tabBtn, ...(rightTab === 'elements' ? s.tabBtnActive : {}) }}
+              onClick={() => setRightTab('elements')}
+            >
+              Elementos
+            </button>
+            <button
+              style={{ ...s.tabBtn, ...(rightTab === 'props' ? s.tabBtnActive : {}) }}
+              onClick={() => setRightTab('props')}
+            >
+              Propiedades
+            </button>
+          </div>
+
+          {rightTab === 'props' ? (
+            selected
+              ? <PropsPanel obj={selected} canvas={fabricRef.current} />
+              : <div style={s.rightEmpty}>Selecciona un elemento del canvas para editar sus propiedades.</div>
+          ) : (
+            <div style={s.elementsPanel}>
+              <div style={s.elemSectionTitle}>Agregar elemento</div>
+              <div style={s.elemGrid}>
+                <button style={s.elemCard} onClick={addText}>
+                  <span style={s.elemIcon}>T</span>
+                  <span style={s.elemLabel}>Texto</span>
+                </button>
+                <button style={s.elemCard} onClick={addRect}>
+                  <span style={s.elemIcon}>&#9645;</span>
+                  <span style={s.elemLabel}>Forma</span>
+                </button>
+                <button style={s.elemCard} onClick={addLink}>
+                  <span style={s.elemIcon}>&#128279;</span>
+                  <span style={s.elemLabel}>Boton</span>
+                </button>
+              </div>
+            </div>
+          )}
         </aside>
       </div>
     </div>
@@ -299,13 +399,13 @@ function PropsPanel({ obj, canvas }: { obj: any; canvas: any }) {
 
   return (
     <div style={s.props}>
-      <PropGroup label="Posición">
+      <PropGroup label="Posicion">
         <div style={{ display: 'grid', gridTemplateColumns: '16px 1fr 16px 1fr', gap: 4, alignItems: 'center' }}>
           <span style={s.axisLabel}>X</span>
-          <input className="input" style={{ padding: '4px 6px', fontSize: 12 }} type="number"
+          <input style={s.propInput} type="number"
             defaultValue={Math.round(obj.left ?? 0)} onChange={(e) => update({ left: +e.target.value })} />
           <span style={s.axisLabel}>Y</span>
-          <input className="input" style={{ padding: '4px 6px', fontSize: 12 }} type="number"
+          <input style={s.propInput} type="number"
             defaultValue={Math.round(obj.top ?? 0)} onChange={(e) => update({ top: +e.target.value })} />
         </div>
       </PropGroup>
@@ -318,18 +418,18 @@ function PropsPanel({ obj, canvas }: { obj: any; canvas: any }) {
       <PropGroup label="Color">
         <input type="color" defaultValue={fill.startsWith('#') ? fill : '#4f46e5'}
           onChange={(e) => update({ fill: e.target.value })}
-          style={{ width: '100%', height: 34, border: '1px solid var(--color-border)', borderRadius: 6, cursor: 'pointer' }} />
+          style={{ width: '100%', height: 34, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer' }} />
       </PropGroup>
 
       {isText && (
         <>
           <PropGroup label="Texto">
-            <textarea className="input" style={{ height: 60, resize: 'vertical' }}
+            <textarea style={{ ...s.propInput, height: 60, resize: 'vertical' } as any}
               defaultValue={(obj as any).text ?? ''}
               onChange={(e) => { (obj as any).set('text', e.target.value); canvas?.renderAll() }} />
           </PropGroup>
-          <PropGroup label="Tamaño de fuente">
-            <input className="input" type="number" min={8} max={120}
+          <PropGroup label="Tamano de fuente">
+            <input style={s.propInput} type="number" min={8} max={120}
               defaultValue={(obj as any).fontSize ?? 24}
               onChange={(e) => update({ fontSize: +e.target.value })} />
           </PropGroup>
@@ -341,14 +441,16 @@ function PropsPanel({ obj, canvas }: { obj: any; canvas: any }) {
       )}
 
       {isLink && (
-        <PropGroup label="URL del botón">
-          <input className="input" defaultValue={(obj as any).data?.url ?? ''}
+        <PropGroup label="URL del boton">
+          <input style={s.propInput} defaultValue={(obj as any).data?.url ?? ''}
             onChange={(e) => { (obj as any).data = { ...((obj as any).data ?? {}), url: e.target.value } }} />
         </PropGroup>
       )}
 
-      <button className="btn btn-danger btn-sm" style={{ width: '100%', justifyContent: 'center' }}
-        onClick={() => { canvas?.remove(obj); canvas?.renderAll() }}>
+      <button
+        style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', width: '100%', fontSize: 13, marginTop: 8 }}
+        onClick={() => { canvas?.remove(obj); canvas?.renderAll() }}
+      >
         Eliminar elemento
       </button>
     </div>
@@ -357,7 +459,7 @@ function PropsPanel({ obj, canvas }: { obj: any; canvas: any }) {
 
 function PropGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 8, borderBottom: '1px solid #f3f4f6' }}>
       <span style={s.propLabel}>{label}</span>
       {children}
     </div>
@@ -365,37 +467,67 @@ function PropGroup({ label, children }: { label: string; children: React.ReactNo
 }
 
 const s: Record<string, React.CSSProperties> = {
-  root:    { display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' },
-  loading: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--color-muted)' },
-  topBar:  { display: 'flex', alignItems: 'center', gap: 16, padding: '10px 20px', background: '#fff', borderBottom: '1px solid var(--color-border)', flexShrink: 0 },
-  backLink:{ color: 'var(--color-primary)', fontSize: 'var(--text-sm)', whiteSpace: 'nowrap' },
-  pubTitle:{ fontWeight: 600, fontSize: 'var(--text-sm)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  topRight:{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
-  msg:     { fontSize: 'var(--text-xs)', color: 'var(--color-success)', fontWeight: 500 },
+  root:    { display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', fontFamily: 'Inter, system-ui, sans-serif' },
+  loading: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#6b7280', fontSize: 15 },
+
+  // Top bar
+  topBar:   { display: 'flex', alignItems: 'center', height: 52, padding: '0 16px', background: '#1e1b4b', flexShrink: 0, gap: 0 },
+  topLeft:  { display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 },
+  topCenter:{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 120, flexShrink: 0 },
+  topRight: { display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 },
+  backLink: { color: 'rgba(255,255,255,0.7)', fontSize: 12, textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0 },
+  pubTitle: { fontWeight: 700, fontSize: 14, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  breadcrumb: { fontSize: 13, color: 'rgba(255,255,255,0.65)', fontWeight: 500 },
+  msg:       { fontSize: 12, color: '#86efac', fontWeight: 500, whiteSpace: 'nowrap' },
+  btnOutlineWhite: { background: 'transparent', border: '1px solid rgba(255,255,255,0.4)', color: '#fff', borderRadius: 6, padding: '6px 14px', fontSize: 13, cursor: 'pointer', fontWeight: 500 },
+  btnPublish: { border: 'none', color: '#fff', borderRadius: 6, padding: '6px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 600 },
+
+  // Layout
   columns: { display: 'flex', flex: 1, overflow: 'hidden' },
-  left:    { width: 190, minWidth: 190, background: '#fff', borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column' },
-  leftHeader: { padding: '10px 12px', borderBottom: '1px solid var(--color-border)', fontWeight: 600, fontSize: 'var(--text-sm)', flexShrink: 0 },
-  thumbList:  { flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 },
-  thumbItem:  { position: 'relative', cursor: 'pointer', borderRadius: 6, overflow: 'hidden' },
-  thumbImg:   { width: '100%', aspectRatio: '0.707', objectFit: 'cover', display: 'block' },
-  thumbNum:   { position: 'absolute', bottom: 4, left: 6, background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 3 },
-  thumbDel:   { position: 'absolute', top: 3, right: 3, background: 'rgba(239,68,68,.85)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 10, width: 18, height: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 },
-  center:  { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#dde1e7' },
-  toolbar: { display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', background: '#fff', borderBottom: '1px solid var(--color-border)', flexShrink: 0 },
-  toolBtn: { background: 'none', border: '1px solid transparent', borderRadius: 6, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15 },
-  toolBtnActive: { background: '#EEF2FF', borderColor: 'var(--color-primary)', color: 'var(--color-primary)' },
-  toolSep: { width: 1, height: 20, background: 'var(--color-border)', margin: '0 4px' },
-  canvasWrap:  { flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 24 },
-  canvasEmpty: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: 'var(--color-muted)', textAlign: 'center' },
-  bottomBar: { display: 'flex', alignItems: 'center', gap: 16, padding: '8px 16px', background: '#fff', borderTop: '1px solid var(--color-border)', flexShrink: 0 },
+
+  // Left sidebar
+  left:        { width: 220, minWidth: 220, background: '#1a1827', display: 'flex', flexDirection: 'column' },
+  leftHeader:  { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', flexShrink: 0 },
+  leftHeaderLabel: { fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.08em', textTransform: 'uppercase' as any },
+  leftHeaderCount: { fontSize: 11, color: 'rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.08)', borderRadius: 10, padding: '1px 7px' },
+  thumbList:   { flex: 1, overflowY: 'auto', padding: '4px 8px', display: 'flex', flexDirection: 'column', gap: 4 },
+  thumbItem:   { position: 'relative', cursor: 'pointer', borderRadius: 4, overflow: 'hidden', transition: 'background 0.15s' },
+  thumbImg:    { width: '100%', aspectRatio: '0.707', objectFit: 'cover', display: 'block' },
+  thumbNum:    { position: 'absolute', bottom: 4, left: 6, background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 3 },
+  thumbDel:    { position: 'absolute', top: 4, right: 4, background: 'rgba(239,68,68,0.85)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 11, width: 20, height: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 },
+  leftBottom:  { padding: '10px 8px', flexShrink: 0 },
+  addPageBtn:  { width: '100%', background: '#2d2b45', color: '#fff', border: '1px solid #3d3b55', borderRadius: 6, padding: '10px', cursor: 'pointer', fontSize: 13, fontWeight: 500, textAlign: 'center' as any },
+
+  // Center
+  center:    { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#e8eaed' },
+  toolbar:   { display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', height: 44, background: '#fff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 },
+  toolGroup: { display: 'flex', alignItems: 'center', gap: 2 },
+  toolBtn:   { background: 'none', border: '1px solid transparent', borderRadius: 8, width: 36, height: 36, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, color: '#374151' },
+  toolBtnActive: { background: '#eef2ff', borderColor: '#818cf8', color: '#4f46e5' },
+  toolSep:   { width: 1, height: 20, background: '#e5e7eb', margin: '0 6px' },
   zoomGroup: { display: 'flex', gap: 2 },
-  zoomBtn:   { background: 'none', border: '1px solid transparent', borderRadius: 4, padding: '3px 7px', fontSize: 11, cursor: 'pointer', color: 'var(--color-muted)' },
-  zoomActive:{ background: 'var(--color-surface)', borderColor: 'var(--color-border)', color: 'var(--color-text)', fontWeight: 600 },
-  pageIndicator: { flex: 1, textAlign: 'center', fontSize: 'var(--text-sm)', color: 'var(--color-muted)' },
-  right:      { width: 250, minWidth: 250, background: '#fff', borderLeft: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column' },
-  rightHeader:{ padding: '10px 16px', borderBottom: '1px solid var(--color-border)', fontWeight: 600, fontSize: 'var(--text-sm)', flexShrink: 0 },
-  rightEmpty: { padding: 16, color: 'var(--color-muted)', fontSize: 'var(--text-sm)', textAlign: 'center', marginTop: 32, lineHeight: 1.5 },
-  props:      { padding: 14, display: 'flex', flexDirection: 'column', gap: 14 },
-  propLabel:  { fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' },
-  axisLabel:  { fontSize: 11, color: 'var(--color-muted)', textAlign: 'center' },
+  zoomBtn:   { background: 'none', border: '1px solid transparent', borderRadius: 12, padding: '3px 9px', fontSize: 11, cursor: 'pointer', color: '#6b7280', fontWeight: 500 },
+  zoomActive:{ background: '#f3f4f6', borderColor: '#e5e7eb', color: '#111827', fontWeight: 600 },
+  savePgBtn: { background: '#f3f4f6', border: '1px solid #e5e7eb', color: '#374151', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 500 },
+  canvasWrap:  { flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 32, alignItems: 'flex-start' },
+  canvasEmpty: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' },
+
+  // Right sidebar
+  right:      { width: 280, minWidth: 280, background: '#fff', borderLeft: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column' },
+  tabHeader:  { display: 'flex', borderBottom: '1px solid #e5e7eb', flexShrink: 0 },
+  tabBtn:     { flex: 1, background: 'none', border: 'none', borderBottom: '2px solid transparent', padding: '12px 0', fontSize: 13, cursor: 'pointer', color: '#6b7280', fontWeight: 500 },
+  tabBtnActive: { color: '#4f46e5', borderBottomColor: '#4f46e5', fontWeight: 600 },
+  rightEmpty: { padding: '32px 20px', color: '#9ca3af', fontSize: 13, textAlign: 'center', lineHeight: 1.6 },
+  elementsPanel: { padding: '20px 16px', display: 'flex', flexDirection: 'column', gap: 16 },
+  elemSectionTitle: { fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as any, letterSpacing: '0.07em' },
+  elemGrid:   { display: 'flex', gap: 10, flexWrap: 'wrap' as any },
+  elemCard:   { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, width: 80, height: 70, border: '1px solid #e5e7eb', borderRadius: 8, background: 'none', cursor: 'pointer', fontSize: 13, color: '#374151', transition: 'background 0.12s' },
+  elemIcon:   { fontSize: 20, lineHeight: 1 },
+  elemLabel:  { fontSize: 11, fontWeight: 500, color: '#6b7280' },
+
+  // Props panel
+  props:     { padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' },
+  propLabel: { fontSize: 11, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase' as any, letterSpacing: '0.05em' },
+  propInput: { border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', fontSize: 13, width: '100%', boxSizing: 'border-box' as any },
+  axisLabel: { fontSize: 11, color: '#9ca3af', textAlign: 'center' },
 }
