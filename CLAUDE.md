@@ -194,6 +194,18 @@ npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase8b.sql --r
 
 ---
 
+## 🆕 Tipografías + galería de iconos + widgets interactivos
+
+- **Texto — librería de tipografías**: panel "Texto" con 14 fuentes (Inter, Poppins, Montserrat, Oswald, Bebas Neue, Roboto Slab, Merriweather, Playfair, Lobster, Pacifico, Dancing Script, Caveat, Georgia, Courier). Se elige una fuente y el texto nuevo la usa; el panel derecho tiene un selector "Tipografía" para cambiar la fuente del texto seleccionado. Las fuentes se cargan por Google Fonts en `apps/dashboard/index.html` **y** en `apps/viewer/src/index.html` (para que el visor las renderice igual).
+- **Elementos — galería vectorial**: `ICON_LIBRARY` categorizada (Flechas, Negocio, Señales, Decorativos, Redes). Cada icono es SVG insertado con `fabric.loadSVGFromString` → objeto editable (`data.kind='icon'`), con control de color en el panel derecho.
+- **Widgets interactivos**: Mapa, WhatsApp, Formulario de contacto, Video (YouTube/Vimeo/MP4), Audio, Código QR, Tabla, Me gusta (+ Incrustar/Cuestionario premium). En el editor se insertan como placeholder (`data.kind='widget'`, `data.widget={type,config}`) y se configuran en el panel derecho (`WidgetProps`). El visor (`flipbook.js → buildWidget`) reemplaza el placeholder por el componente real (iframe de mapa/video, form con `mailto`, enlace `wa.me`, QR vía `api.qrserver.com`, tabla HTML, contador de likes en localStorage).
+
+> ⚠️ **REQUIERE REDEPLOY DEL VISOR** para que los widgets y las tipografías se vean en publicaciones:
+> `cd ~/intap-flipbook/apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer`
+> El Worker no necesita cambios (los widgets viajan dentro de `canvas_json`).
+
+---
+
 ## 📋 Pendiente
 
 | Tarea | Estado |

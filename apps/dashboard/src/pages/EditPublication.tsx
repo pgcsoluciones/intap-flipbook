@@ -36,6 +36,16 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
     case 'star':      return <svg {...p}><path d="M12 3l2.7 5.5 6 .9-4.3 4.2 1 6L12 17.8 6.6 19.6l1-6L3.3 9.4l6-.9z"/></svg>
     case 'arrow':     return <svg {...p}><path d="M4 12h14M13 6l6 6-6 6"/></svg>
     case 'badge':     return <svg {...p}><circle cx="12" cy="9" r="6"/><path d="m8 14-1 7 5-3 5 3-1-7"/></svg>
+    case 'map':       return <svg {...p}><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg>
+    case 'whatsapp':  return <svg {...p}><path d="M12 3a9 9 0 0 0-7.7 13.6L3 21l4.6-1.2A9 9 0 1 0 12 3z"/><path d="M8.6 8.2c.6 0 .9 1.4 1 1.7.1.4-.4.7-.5 1 .6 1 1.4 1.6 2.4 2 .3-.2.6-.7 1-.6.4.2 1.7.6 1.7 1.2 0 1-1.2 1.4-1.9 1.4-2.6 0-5.3-2.7-5.3-5.3 0-.7.4-1.4 1.6-1.4z"/></svg>
+    case 'contact':   return <svg {...p}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
+    case 'video':     return <svg {...p}><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg>
+    case 'audio':     return <svg {...p}><path d="M9 18V7l10-2v11"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>
+    case 'qr':        return <svg {...p}><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M21 14v7h-7"/></svg>
+    case 'table':     return <svg {...p}><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/></svg>
+    case 'like':      return <svg {...p}><path d="M7 10v10H4V10zM7 10l4-7c1.3 0 2 .8 2 2l-.7 5H19a2 2 0 0 1 2 2.3l-1 6A2 2 0 0 1 18 21H7"/></svg>
+    case 'quiz':      return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.3 2.4c-.8.3-1.3 1-1.3 1.8M12 17h.01"/></svg>
+    case 'embed':     return <svg {...p}><path d="m9 8-5 4 5 4M15 8l5 4-5 4"/></svg>
     default:          return <svg {...p}><circle cx="12" cy="12" r="8"/></svg>
   }
 }
@@ -74,6 +84,80 @@ const TEXT_PRESETS = [
   { label: 'Texto pequeño',     sample: 'Pie de página',   opts: { fontSize: 13, fontWeight: 'normal' as const } },
 ]
 
+// Librería de tipografías. "fontFamily" debe coincidir con las fuentes cargadas
+// en index.html (Google Fonts) para que se vean igual en editor y visor.
+const FONTS: { name: string; family: string }[] = [
+  { name: 'Inter',           family: 'Inter, sans-serif' },
+  { name: 'Poppins',         family: 'Poppins, sans-serif' },
+  { name: 'Montserrat',      family: 'Montserrat, sans-serif' },
+  { name: 'Oswald',          family: 'Oswald, sans-serif' },
+  { name: 'Bebas Neue',      family: '"Bebas Neue", sans-serif' },
+  { name: 'Roboto Slab',     family: '"Roboto Slab", serif' },
+  { name: 'Merriweather',    family: 'Merriweather, serif' },
+  { name: 'Playfair',        family: '"Playfair Display", serif' },
+  { name: 'Lobster',         family: 'Lobster, cursive' },
+  { name: 'Pacifico',        family: 'Pacifico, cursive' },
+  { name: 'Dancing Script',  family: '"Dancing Script", cursive' },
+  { name: 'Caveat',          family: 'Caveat, cursive' },
+  { name: 'Georgia',         family: 'Georgia, serif' },
+  { name: 'Courier',         family: '"Courier New", monospace' },
+]
+
+// Galería de iconos / figuras / señales (SVG vectorial). Cada `svg` es el
+// contenido interno; `addIcon` lo envuelve y lo convierte en objeto Fabric.
+type IconItem = { label: string; svg: string }
+const ICON_STROKE = 'stroke="#334155" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"'
+const ICON_FILL = 'fill="#334155" stroke="none"'
+const ICON_LIBRARY: { category: string; items: IconItem[] }[] = [
+  {
+    category: 'Flechas',
+    items: [
+      { label: 'Derecha',  svg: `<path d="M4 12h14M13 6l6 6-6 6" ${ICON_STROKE}/>` },
+      { label: 'Arriba',   svg: `<path d="M12 20V5M6 11l6-6 6 6" ${ICON_STROKE}/>` },
+      { label: 'Curva',    svg: `<path d="M5 16c5 3 11 0 13-6M18 5l1 5-5 1" ${ICON_STROKE}/>` },
+      { label: 'Dobles',   svg: `<path d="M3 9l4-4 4 4M3 15l4 4 4-4M14 8h7M14 16h7" ${ICON_STROKE}/>` },
+    ],
+  },
+  {
+    category: 'Negocio',
+    items: [
+      { label: 'Teléfono', svg: `<path d="M5 4h4l2 5-3 2a11 11 0 0 0 5 5l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" ${ICON_STROKE}/>` },
+      { label: 'Email',    svg: `<path d="M3 6h18v12H3zM3 7l9 6 9-6" ${ICON_STROKE}/>` },
+      { label: 'Ubicación',svg: `<path d="M12 21s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12zM12 11a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z" ${ICON_STROKE}/>` },
+      { label: 'Carrito',  svg: `<path d="M3 4h2l2.5 12h11l2-8H6M9 20a1 1 0 1 0 .01 0M18 20a1 1 0 1 0 .01 0" ${ICON_STROKE}/>` },
+      { label: 'Precio',   svg: `<path d="M3 12l8-8h8v8l-8 8zM16 8h.01" ${ICON_STROKE}/>` },
+      { label: 'Reloj',    svg: `<path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2" ${ICON_STROKE}/>` },
+    ],
+  },
+  {
+    category: 'Señales',
+    items: [
+      { label: 'Check',    svg: `<path d="M5 13l4 4 10-11" ${ICON_STROKE}/>` },
+      { label: 'Aviso',    svg: `<path d="M12 3 2 20h20zM12 9v5M12 18h.01" ${ICON_STROKE}/>` },
+      { label: 'Info',     svg: `<path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 7h.01" ${ICON_STROKE}/>` },
+      { label: 'OK',       svg: `<path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM8 12l3 3 5-6" ${ICON_STROKE}/>` },
+    ],
+  },
+  {
+    category: 'Decorativos',
+    items: [
+      { label: 'Estrella', svg: `<path d="M12 3l2.7 5.5 6 .9-4.3 4.2 1 6L12 17.8 6.6 19.6l1-6L3.3 9.4l6-.9z" fill="#F59E0B" stroke="none"/>` },
+      { label: 'Corazón',  svg: `<path d="M12 21s-7-4.7-9.3-9.2C1 8 3 4.5 6.5 4.5c2 0 3.5 1.3 5.5 3.5 2-2.2 3.5-3.5 5.5-3.5C21 4.5 23 8 21.3 11.8 19 16.3 12 21 12 21z" fill="#EF4444" stroke="none"/>` },
+      { label: 'Corona',   svg: `<path d="M3 8l4 4 5-7 5 7 4-4-2 12H5z" ${ICON_FILL}/>` },
+      { label: 'Destello', svg: `<path d="M12 2v6M12 16v6M2 12h6M16 12h6M5 5l3 3M16 16l3 3M19 5l-3 3M8 16l-3 3" ${ICON_STROKE}/>` },
+    ],
+  },
+  {
+    category: 'Redes',
+    items: [
+      { label: 'WhatsApp', svg: `<path d="M12 3a9 9 0 0 0-7.7 13.6L3 21l4.6-1.2A9 9 0 1 0 12 3zM8.6 8.2c.6 0 .9 1.4 1 1.7.1.4-.4.7-.5 1 .6 1 1.4 1.6 2.4 2 .3-.2.6-.7 1-.6.4.2 1.7.6 1.7 1.2 0 1-1.2 1.4-1.9 1.4-2.6 0-5.3-2.7-5.3-5.3 0-.7.4-1.4 1.6-1.4z" fill="#25D366" stroke="none"/>` },
+      { label: 'Globo',    svg: `<path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18" ${ICON_STROKE}/>` },
+      { label: 'Instagram',svg: `<path d="M4 8a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16.5 7.5h.01" ${ICON_STROKE}/>` },
+      { label: 'Facebook', svg: `<path d="M13 22V12h3l.5-4H13V6c0-1 .3-1.5 1.5-1.5H17V1.1C16.5 1 15.3 1 14 1c-2.7 0-4 1.6-4 4.3V8H7v4h3v10z" ${ICON_FILL}/>` },
+    ],
+  },
+]
+
 // Botones prediseñados con estilo coherente (relleno / contorno / texto)
 const BUTTON_PRESETS: { label: string; variant: 'solid' | 'outline' | 'pill' }[] = [
   { label: 'Comprar Ahora',  variant: 'solid' },
@@ -96,14 +180,34 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'show_hide',   label: 'Mostrar/Ocultar',  icon: 'elements' },
 ]
 
-const WIDGETS = [
-  { label: 'Mapa', premium: false },
-  { label: 'Tabla', premium: false },
-  { label: 'Código QR', premium: false },
-  { label: 'Me gusta', premium: false },
-  { label: 'Incrustar terceros', premium: true },
-  { label: 'Cuestionario', premium: true },
+// Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
+type WidgetType = 'map' | 'whatsapp' | 'contact' | 'video' | 'audio' | 'qr' | 'table' | 'like' | 'embed' | 'quiz'
+const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean }[] = [
+  { type: 'map',      label: 'Mapa',                  icon: 'map',      premium: false },
+  { type: 'whatsapp', label: 'WhatsApp',              icon: 'whatsapp', premium: false },
+  { type: 'contact',  label: 'Formulario de contacto',icon: 'contact',  premium: false },
+  { type: 'video',    label: 'Video',                 icon: 'video',    premium: false },
+  { type: 'audio',    label: 'Audio',                 icon: 'audio',    premium: false },
+  { type: 'qr',       label: 'Código QR',             icon: 'qr',       premium: false },
+  { type: 'table',    label: 'Tabla',                 icon: 'table',    premium: false },
+  { type: 'like',     label: 'Me gusta',              icon: 'like',     premium: false },
+  { type: 'embed',    label: 'Incrustar terceros',    icon: 'embed',    premium: true },
+  { type: 'quiz',     label: 'Cuestionario',          icon: 'quiz',     premium: true },
 ]
+
+// Configuración inicial de cada widget (la edita el usuario en el panel derecho).
+const WIDGET_DEFAULTS: Record<WidgetType, any> = {
+  map:      { address: '', zoom: 14 },
+  whatsapp: { phone: '', message: 'Hola, vi tu catálogo y quiero más información', label: 'Escríbenos por WhatsApp' },
+  contact:  { title: 'Contáctanos', toEmail: '', button: 'Enviar' },
+  video:    { url: '' },
+  audio:    { url: '' },
+  qr:       { data: '', caption: 'Escanéame' },
+  table:    { csv: 'Producto, Precio\nCafé, $2.50\nTé, $2.00' },
+  like:     { label: 'Me gusta' },
+  embed:    { html: '' },
+  quiz:     { question: '¿Tu pregunta?', options: 'Opción A\nOpción B\nOpción C' },
+}
 
 export default function EditPublication() {
   const { id } = useParams<{ id: string }>()
@@ -113,6 +217,7 @@ export default function EditPublication() {
   const [uploading, setUploading]   = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [selected, setSelected] = useState<any>(null)
+  const [defaultFont, setDefaultFont] = useState<string>(FONTS[0].family) // tipografía para texto nuevo
   const [selectVersion, setSelectVersion] = useState(0) // fuerza refresco del panel de props
   const [zoom, setZoom]   = useState(100)
 
@@ -247,7 +352,7 @@ export default function EditPublication() {
     const c = fabricRef.current; if (!c) return
     const t = new fabric.Textbox(opts.sample ?? 'Texto aquí', {
       left: 60, top: 60, width: 240, fontSize: 24, fill: '#111827',
-      fontFamily: 'Inter, sans-serif', data: { kind: 'text' }, ...opts,
+      fontFamily: defaultFont, data: { kind: 'text' }, ...opts,
     })
     c.add(t); c.setActiveObject(t); c.requestRenderAll()
   }
@@ -337,6 +442,45 @@ export default function EditPublication() {
       data: { kind: 'linkzone', action: { type: 'link' as ActionType, url: 'https://' } },
     })
     c.add(zone); c.setActiveObject(zone); c.requestRenderAll()
+  }
+
+  // Inserta un icono/figura de la galería como objeto vectorial editable
+  function addIcon(svgInner: string) {
+    const c = fabricRef.current; if (!c) return
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${svgInner}</svg>`
+    fabric.loadSVGFromString(svg, (objects: any[], options: any) => {
+      const obj = fabric.util.groupSVGElements(objects, options)
+      obj.scaleToWidth(90)
+      obj.set({ left: 100, top: 100, data: { kind: 'icon' } })
+      c.add(obj); c.setActiveObject(obj); c.requestRenderAll()
+      scheduleAutosave()
+    })
+  }
+
+  // Inserta un widget como un marcador (placeholder) en el lienzo. El visor
+  // lo convierte en el componente real (mapa, formulario, video, etc.).
+  function addWidget(w: { type: WidgetType; label: string; premium: boolean }) {
+    const c = fabricRef.current; if (!c) return
+    if (w.premium) { alert(`"${w.label}" es una función premium. Estará disponible al activar el plan correspondiente.`); return }
+    const W = 230, H = 150
+    const rect = new fabric.Rect({
+      width: W, height: H, fill: 'rgba(79,70,229,0.06)', stroke: '#4F46E5',
+      strokeDashArray: [6, 4], strokeWidth: 1.5, rx: 10, ry: 10, originX: 'center', originY: 'center',
+    })
+    const title = new fabric.Text(w.label, {
+      fontSize: 15, fontFamily: 'Inter, sans-serif', fontWeight: 'bold', fill: '#4F46E5',
+      originX: 'center', originY: 'center', top: -14,
+    })
+    const hint = new fabric.Text('Configura en el panel derecho →', {
+      fontSize: 11, fontFamily: 'Inter, sans-serif', fill: '#6b7280',
+      originX: 'center', originY: 'center', top: 14,
+    })
+    const group = new fabric.Group([rect, title, hint], {
+      left: 100, top: 120,
+      data: { kind: 'widget', widget: { type: w.type, config: { ...(WIDGET_DEFAULTS[w.type] ?? {}) } } },
+    })
+    c.add(group); c.setActiveObject(group); c.requestRenderAll()
+    setActiveTool('widgets')
   }
 
   // ── Imágenes / páginas ──
@@ -509,6 +653,10 @@ export default function EditPublication() {
               addLinkZone={addLinkZone}
               imgInputRef={imgInputRef}
               uploadingImg={uploading}
+              addIcon={addIcon}
+              addWidget={addWidget}
+              defaultFont={defaultFont}
+              setDefaultFont={setDefaultFont}
             />
           </aside>
         )}
@@ -665,8 +813,23 @@ function ContextPanel(p: any) {
           <div style={cp.stack}>
             {TEXT_PRESETS.map((preset) => (
               <button key={preset.label} style={cp.listBtn} onClick={() => p.addText(preset.opts)}>
-                <span style={{ fontSize: Math.min(preset.opts.fontSize as number, 22), fontWeight: preset.opts.fontWeight as any }}>Aa</span>
+                <span style={{ fontSize: Math.min(preset.opts.fontSize as number, 22), fontWeight: preset.opts.fontWeight as any, fontFamily: p.defaultFont }}>Aa</span>
                 {preset.label}
+              </button>
+            ))}
+          </div>
+
+          <div style={cp.sectionLabel}>Tipografías</div>
+          <p style={cp.hint}>Elegí una fuente y luego agregá texto, o seleccioná un texto y cambiá su tipografía aquí.</p>
+          <div style={cp.fontList}>
+            {FONTS.map((f) => (
+              <button
+                key={f.name}
+                onClick={() => p.setDefaultFont(f.family)}
+                style={{ ...cp.fontBtn, ...(p.defaultFont === f.family ? cp.fontBtnActive : {}) }}
+              >
+                <span style={{ fontFamily: f.family, fontSize: 22 }}>Aa</span>
+                <span style={cp.fontName}>{f.name}</span>
               </button>
             ))}
           </div>
@@ -736,13 +899,20 @@ function ContextPanel(p: any) {
       return (
         <>
           <PanelTitle title="Elementos" />
-          <div style={cp.shapeGrid}>
-            <ShapeBtn icon="star"     label="Estrella" onClick={() => p.addShape('star')} />
-            <ShapeBtn icon="circle"   label="Punto"    onClick={() => p.addShape('circle')} />
-            <ShapeBtn icon="rect"     label="Barra"    onClick={() => p.addShape('rect')} />
-            <ShapeBtn icon="triangle" label="Flecha"   onClick={() => p.addShape('triangle')} />
-          </div>
-          <p style={cp.hint}>Biblioteca de elementos. El Super Admin puede agregar más desde Recursos.</p>
+          <p style={cp.hint}>Iconos, figuras y señales para catálogos, menús y portafolios. Hacé clic para agregarlos al diseño.</p>
+          {ICON_LIBRARY.map((cat) => (
+            <div key={cat.category}>
+              <div style={cp.sectionLabel}>{cat.category}</div>
+              <div style={cp.iconGrid}>
+                {cat.items.map((it) => (
+                  <button key={it.label} title={it.label} style={cp.iconBtn} onClick={() => p.addIcon(it.svg)}>
+                    <svg width={26} height={26} viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: it.svg }} />
+                    <span style={cp.iconName}>{it.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </>
       )
 
@@ -759,16 +929,21 @@ function ContextPanel(p: any) {
       return (
         <>
           <PanelTitle title="Widgets" />
+          <p style={cp.hint}>Elementos interactivos. Se agregan al diseño y se configuran en el panel derecho; el visor los muestra en vivo.</p>
           <div style={cp.shapeGrid}>
             {WIDGETS.map((w) => (
-              <div key={w.label} style={{ ...cp.widgetCard, opacity: w.premium ? 0.55 : 1 }} title={w.premium ? 'Función premium' : ''}>
-                <Icon name="widgets" size={20} />
+              <button
+                key={w.type}
+                style={{ ...cp.widgetCard, opacity: w.premium ? 0.6 : 1, cursor: 'pointer' }}
+                title={w.premium ? 'Función premium' : w.label}
+                onClick={() => p.addWidget(w)}
+              >
+                <Icon name={w.icon} size={22} />
                 <span style={cp.widgetLabel}>{w.label}</span>
                 {w.premium && <span style={cp.crown}>★</span>}
-              </div>
+              </button>
             ))}
           </div>
-          <p style={cp.hint}>Los widgets se integran en próximas fases.</p>
         </>
       )
 
@@ -861,7 +1036,7 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
   const setData = (patch: any) => { (obj as any).data = { ...((obj as any).data ?? {}), ...patch }; onChange() }
 
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'
-  const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen' }
+  const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen', icon: 'Icono', widget: 'Widget' }
 
   return (
     <div style={s.propsScroll}>
@@ -887,6 +1062,11 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
           <>
             <PropGroup label="Contenido">
               <textarea style={{ ...s.propInput, height: 64, resize: 'vertical' } as any} defaultValue={(obj as any).text ?? ''} onChange={(e) => { (obj as any).set('text', e.target.value); canvas?.requestRenderAll(); onChange() }} />
+            </PropGroup>
+            <PropGroup label="Tipografía">
+              <select style={s.propInput} value={(obj as any).fontFamily ?? FONTS[0].family} onChange={(e) => set({ fontFamily: e.target.value })}>
+                {FONTS.map((f) => <option key={f.name} value={f.family} style={{ fontFamily: f.family }}>{f.name}</option>)}
+              </select>
             </PropGroup>
             <PropGroup label="Tamaño de fuente">
               <input style={s.propInput} type="number" min={8} max={160} defaultValue={(obj as any).fontSize ?? 24} onChange={(e) => set({ fontSize: +e.target.value })} />
@@ -940,9 +1120,26 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
           </PropGroup>
         )}
 
-        {/* ── ACCIÓN: disponible para TODOS los elementos que no sean botón
-            (el botón ya incluye su propio ActionEditor dentro de ButtonProps) ── */}
-        {kind !== 'button' && (
+        {/* ── ICONO: color del trazo/relleno ── */}
+        {kind === 'icon' && (
+          <PropGroup label="Color del icono">
+            <input type="color" defaultValue="#334155" onChange={(e) => {
+              const col = e.target.value
+              const apply = (o: any) => { if (o.fill && o.fill !== '') o.set('fill', col); if (o.stroke && o.stroke !== '') o.set('stroke', col) }
+              if (obj.getObjects) obj.getObjects().forEach(apply); else apply(obj)
+              canvas?.requestRenderAll(); onChange()
+            }} style={s.colorInput} />
+          </PropGroup>
+        )}
+
+        {/* ── WIDGET: configuración propia según el tipo ── */}
+        {kind === 'widget' && (
+          <WidgetProps obj={obj} setData={setData} />
+        )}
+
+        {/* ── ACCIÓN: disponible para todos menos botón y widget
+            (el botón ya incluye su ActionEditor; el widget es autónomo) ── */}
+        {kind !== 'button' && kind !== 'widget' && (
           <>
             <div style={s.actionDivider}>Acción al hacer clic</div>
             <ActionEditor data={(obj as any).data ?? {}} pages={pages} setData={setData} />
@@ -1012,6 +1209,98 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
 
       <div style={s.actionDivider}>Acción al hacer clic</div>
       <ActionEditor data={data} pages={pages} setData={setData} />
+    </>
+  )
+}
+
+// Propiedades de un widget: campos de configuración según su tipo
+function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) {
+  const widget = (obj as any).data?.widget ?? { type: 'map', config: {} }
+  const cfg = widget.config ?? {}
+  const type: WidgetType = widget.type
+  const setCfg = (patch: any) => setData({ widget: { ...widget, config: { ...cfg, ...patch } } })
+
+  const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <PropGroup label={label}>{children}</PropGroup>
+  )
+  const labels: Record<WidgetType, string> = {
+    map: 'Mapa', whatsapp: 'WhatsApp', contact: 'Formulario de contacto', video: 'Video',
+    audio: 'Audio', qr: 'Código QR', table: 'Tabla', like: 'Me gusta', embed: 'Incrustar', quiz: 'Cuestionario',
+  }
+
+  return (
+    <>
+      <div style={s.actionDivider}>Configuración · {labels[type]}</div>
+
+      {type === 'map' && (
+        <>
+          <Field label="Dirección o lugar">
+            <input style={s.propInput} placeholder="Ej: Av. Lincoln 100, Santo Domingo" defaultValue={cfg.address ?? ''} onChange={(e) => setCfg({ address: e.target.value })} />
+          </Field>
+          <Field label="Zoom (1–20)">
+            <input style={s.propInput} type="number" min={1} max={20} defaultValue={cfg.zoom ?? 14} onChange={(e) => setCfg({ zoom: +e.target.value })} />
+          </Field>
+        </>
+      )}
+
+      {type === 'whatsapp' && (
+        <>
+          <Field label="Número (con código de país)">
+            <input style={s.propInput} placeholder="18095551234" defaultValue={cfg.phone ?? ''} onChange={(e) => setCfg({ phone: e.target.value })} />
+          </Field>
+          <Field label="Mensaje prellenado">
+            <textarea style={{ ...s.propInput, height: 64, resize: 'vertical' } as any} defaultValue={cfg.message ?? ''} onChange={(e) => setCfg({ message: e.target.value })} />
+          </Field>
+          <Field label="Texto del botón">
+            <input style={s.propInput} defaultValue={cfg.label ?? ''} onChange={(e) => setCfg({ label: e.target.value })} />
+          </Field>
+        </>
+      )}
+
+      {type === 'contact' && (
+        <>
+          <Field label="Título del formulario">
+            <input style={s.propInput} defaultValue={cfg.title ?? ''} onChange={(e) => setCfg({ title: e.target.value })} />
+          </Field>
+          <Field label="Email destino (recibe los mensajes)">
+            <input style={s.propInput} placeholder="ventas@dominio.com" defaultValue={cfg.toEmail ?? ''} onChange={(e) => setCfg({ toEmail: e.target.value })} />
+          </Field>
+          <Field label="Texto del botón">
+            <input style={s.propInput} defaultValue={cfg.button ?? 'Enviar'} onChange={(e) => setCfg({ button: e.target.value })} />
+          </Field>
+        </>
+      )}
+
+      {(type === 'video' || type === 'audio') && (
+        <Field label={type === 'video' ? 'URL del video (YouTube, Vimeo o .mp4)' : 'URL del audio (.mp3)'}>
+          <input style={s.propInput} placeholder="https://..." defaultValue={cfg.url ?? ''} onChange={(e) => setCfg({ url: e.target.value })} />
+        </Field>
+      )}
+
+      {type === 'qr' && (
+        <>
+          <Field label="Contenido (URL o texto). Vacío = enlace del flipbook">
+            <input style={s.propInput} placeholder="https://..." defaultValue={cfg.data ?? ''} onChange={(e) => setCfg({ data: e.target.value })} />
+          </Field>
+          <Field label="Leyenda">
+            <input style={s.propInput} defaultValue={cfg.caption ?? ''} onChange={(e) => setCfg({ caption: e.target.value })} />
+          </Field>
+        </>
+      )}
+
+      {type === 'table' && (
+        <Field label="Datos (una fila por línea, columnas separadas por coma)">
+          <textarea style={{ ...s.propInput, height: 120, resize: 'vertical', fontFamily: 'monospace' } as any} defaultValue={cfg.csv ?? ''} onChange={(e) => setCfg({ csv: e.target.value })} />
+        </Field>
+      )}
+
+      {type === 'like' && (
+        <Field label="Texto del botón">
+          <input style={s.propInput} defaultValue={cfg.label ?? 'Me gusta'} onChange={(e) => setCfg({ label: e.target.value })} />
+        </Field>
+      )}
+
+      <p style={cp.hint}>El widget se muestra completo en la vista previa y en la publicación final.</p>
     </>
   )
 }
@@ -1186,9 +1475,17 @@ const cp: Record<string, React.CSSProperties> = {
   shapeLabel: { fontSize: 11, color: '#6b7280' },
   btnList:    { display: 'flex', flexDirection: 'column', gap: 8 },
   previewBtn: { width: '100%', padding: '10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
-  widgetCard: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, height: 72, border: '1px solid #e5e7eb', borderRadius: 8, color: '#475569' },
+  widgetCard: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, height: 72, border: '1px solid #e5e7eb', borderRadius: 8, color: '#475569', background: '#fff' },
   widgetLabel:{ fontSize: 10, color: '#6b7280', textAlign: 'center' as const, lineHeight: 1.2 },
   crown:      { position: 'absolute', top: 4, right: 5, fontSize: 11, color: '#f59e0b' },
+  sectionLabel:{ fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.05em', margin: '16px 0 8px' },
+  fontList:   { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 },
+  fontBtn:    { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, height: 64, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', cursor: 'pointer', color: '#111827' },
+  fontBtnActive:{ borderColor: '#4F46E5', background: '#eef2ff', boxShadow: '0 0 0 1px #4F46E5 inset' },
+  fontName:   { fontSize: 10, color: '#6b7280', fontFamily: 'Inter, sans-serif' },
+  iconGrid:   { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 },
+  iconBtn:    { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, height: 64, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', cursor: 'pointer', color: '#334155' },
+  iconName:   { fontSize: 9, color: '#9ca3af', lineHeight: 1 },
 }
 
 const cfg: Record<string, React.CSSProperties> = {

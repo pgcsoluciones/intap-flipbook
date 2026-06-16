@@ -173,6 +173,131 @@ async function init() {
     document.body.appendChild(back)
   }
 
+  // ── Widgets interactivos ───────────────────────────────────────────────
+  const INP_CSS = 'border:1px solid #d1d5db;border-radius:6px;padding:6px 8px;font-size:12px;font-family:Inter,sans-serif;box-sizing:border-box;width:100%;'
+  function makeInput(ph, type) {
+    const i = document.createElement('input')
+    i.type = type || 'text'; i.placeholder = ph; i.required = true
+    i.style.cssText = INP_CSS
+    return i
+  }
+  function widgetFrame(src) {
+    const f = document.createElement('iframe')
+    f.src = src; f.loading = 'lazy'
+    f.setAttribute('allowfullscreen', '')
+    f.style.cssText = 'width:100%;height:100%;border:0;border-radius:8px;display:block;'
+    return f
+  }
+  function centerBox() {
+    const d = document.createElement('div')
+    d.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;height:100%;'
+    return d
+  }
+  function placeholderBox(text) {
+    const d = centerBox()
+    d.style.cssText += 'background:#f8fafc;border:1px dashed #cbd5e1;border-radius:8px;color:#94a3b8;font-size:12px;font-family:Inter,sans-serif;text-align:center;padding:8px;'
+    d.textContent = text
+    return d
+  }
+  function ytId(u) { const m = (u || '').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/); return m ? m[1] : null }
+  function vimeoId(u) { const m = (u || '').match(/vimeo\.com\/(\d+)/); return m ? m[1] : null }
+
+  function buildContactForm(cfg) {
+    const f = document.createElement('form')
+    f.style.cssText = 'display:flex;flex-direction:column;gap:6px;width:100%;height:100%;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px;box-sizing:border-box;font-family:Inter,sans-serif;overflow:auto;'
+    const title = document.createElement('div')
+    title.textContent = cfg.title || 'Contáctanos'
+    title.style.cssText = 'font-weight:700;font-size:13px;color:#111827;'
+    const name = makeInput('Nombre'); const email = makeInput('Email', 'email')
+    const msg = document.createElement('textarea'); msg.placeholder = 'Mensaje'; msg.required = true
+    msg.style.cssText = INP_CSS + 'resize:none;flex:1;min-height:34px;'
+    const btn = document.createElement('button'); btn.type = 'submit'; btn.textContent = cfg.button || 'Enviar'
+    btn.style.cssText = 'background:#4F46E5;color:#fff;border:none;border-radius:6px;padding:8px;font-weight:600;cursor:pointer;font-size:12px;'
+    f.append(title, name, email, msg, btn)
+    f.addEventListener('submit', (e) => {
+      e.preventDefault()
+      const body = `Nombre: ${name.value}\nEmail: ${email.value}\n\n${msg.value}`
+      window.location.href = `mailto:${cfg.toEmail || ''}?subject=${encodeURIComponent('Contacto desde catálogo')}&body=${encodeURIComponent(body)}`
+    })
+    return f
+  }
+  function buildTable(csv) {
+    const wrap = document.createElement('div')
+    wrap.style.cssText = 'width:100%;height:100%;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;background:#fff;'
+    const tbl = document.createElement('table')
+    tbl.style.cssText = 'width:100%;border-collapse:collapse;font-family:Inter,sans-serif;font-size:12px;'
+    const rows = (csv || '').split('\n').filter((r) => r.trim())
+    rows.forEach((row, ri) => {
+      const tr = document.createElement('tr')
+      row.split(',').forEach((cell) => {
+        const td = document.createElement(ri === 0 ? 'th' : 'td')
+        td.textContent = cell.trim()
+        td.style.cssText = `border:1px solid #e5e7eb;padding:6px 8px;text-align:left;${ri === 0 ? 'background:#f3f4f6;font-weight:700;' : ''}`
+        tr.appendChild(td)
+      })
+      tbl.appendChild(tr)
+    })
+    wrap.appendChild(tbl)
+    return wrap
+  }
+  function buildLike(cfg, key) {
+    const box = centerBox()
+    let count = parseInt(localStorage.getItem('like_' + key) || '0', 10)
+    const btn = document.createElement('button')
+    btn.style.cssText = 'display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #e5e7eb;border-radius:24px;padding:8px 16px;cursor:pointer;font-family:Inter,sans-serif;font-weight:600;font-size:13px;color:#ef4444;'
+    const render = () => { btn.innerHTML = `<span style="font-size:16px">♥</span> ${cfg.label || 'Me gusta'} <span style="color:#6b7280">(${count})</span>` }
+    render()
+    btn.addEventListener('click', () => { count++; localStorage.setItem('like_' + key, String(count)); render() })
+    box.appendChild(btn)
+    return box
+  }
+
+  function buildWidget(widget, w, h, key) {
+    const cfg = widget.config || {}
+    switch (widget.type) {
+      case 'map':
+        return cfg.address
+          ? widgetFrame(`https://www.google.com/maps?q=${encodeURIComponent(cfg.address)}&z=${cfg.zoom || 14}&output=embed`)
+          : placeholderBox('Mapa (sin dirección)')
+      case 'video': {
+        const yt = ytId(cfg.url), vm = vimeoId(cfg.url)
+        if (yt) return widgetFrame(`https://www.youtube.com/embed/${yt}`)
+        if (vm) return widgetFrame(`https://player.vimeo.com/video/${vm}`)
+        if (cfg.url) { const v = document.createElement('video'); v.src = cfg.url; v.controls = true; v.style.cssText = 'width:100%;height:100%;border-radius:8px;background:#000;'; return v }
+        return placeholderBox('Video (sin URL)')
+      }
+      case 'audio': {
+        if (!cfg.url) return placeholderBox('Audio (sin URL)')
+        const box = centerBox(); const a = document.createElement('audio'); a.src = cfg.url; a.controls = true; a.style.cssText = 'width:90%;'
+        box.appendChild(a); return box
+      }
+      case 'whatsapp': {
+        const phone = String(cfg.phone || '').replace(/\D/g, '')
+        const a = document.createElement('a')
+        a.href = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(cfg.message || '')}` : 'javascript:void(0)'
+        a.target = '_blank'
+        a.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:100%;background:#25D366;color:#fff;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;font-family:Inter,sans-serif;'
+        a.innerHTML = `<span style="font-size:18px">✆</span> ${cfg.label || 'WhatsApp'}`
+        return a
+      }
+      case 'qr': {
+        const dataStr = cfg.data || location.href
+        const sz = Math.max(80, Math.round(Math.min(w, h)))
+        const box = centerBox()
+        const img = document.createElement('img')
+        img.src = `https://api.qrserver.com/v1/create-qr-code/?size=${sz}x${sz}&data=${encodeURIComponent(dataStr)}`
+        img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;'
+        box.appendChild(img)
+        if (cfg.caption) { const c = document.createElement('div'); c.textContent = cfg.caption; c.style.cssText = 'font-size:11px;color:#374151;font-family:Inter,sans-serif;'; box.appendChild(c) }
+        return box
+      }
+      case 'contact': return buildContactForm(cfg)
+      case 'table': return buildTable(cfg.csv || '')
+      case 'like': return buildLike(cfg, key)
+      default: return placeholderBox(widget.type)
+    }
+  }
+
   function buildOverlay(div, canvasJson) {
     if (!canvasJson || typeof fabric === 'undefined') return
     let parsed
@@ -190,11 +315,28 @@ async function init() {
     // Sin fondo: la imagen de la página ya está debajo
     const objectsOnly = Object.assign({}, parsed, { background: '', backgroundImage: null })
     fcanvas.loadFromJSON(objectsOnly, () => {
-      fcanvas.renderAll()
-      fcanvas.getObjects().forEach((obj) => {
-        const action = obj.data && obj.data.action
-        if (!action) return
+      let widgetIdx = 0
+      // slice(): vamos a remover widgets del canvas mientras iteramos
+      fcanvas.getObjects().slice().forEach((obj) => {
+        const d = obj.data || {}
         const r = obj.getBoundingRect(true)
+
+        // Widget: renderiza el componente real y oculta el placeholder del editor
+        if (d.widget) {
+          const node = buildWidget(d.widget, r.width, r.height, `${slug}_${widgetIdx++}`)
+          if (node) {
+            const holder = document.createElement('div')
+            holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;`
+            holder.appendChild(node)
+            wrap.appendChild(holder)
+          }
+          fcanvas.remove(obj)
+          return
+        }
+
+        // Acción al hacer clic (botones, zonas de enlace, cualquier elemento)
+        const action = d.action
+        if (!action) return
         const hot = document.createElement('a')
         hot.href = 'javascript:void(0)'
         hot.title = ''
@@ -202,6 +344,7 @@ async function init() {
         hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action) })
         wrap.appendChild(hot)
       })
+      fcanvas.renderAll()
     })
   }
 
