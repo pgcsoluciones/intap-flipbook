@@ -61,6 +61,7 @@ export default function ImageUploader({ onUpload, uploading }: Props) {
           <p style={styles.icon}>📷</p>
           <p style={styles.text}>Arrastra imágenes aquí o haz clic para seleccionar</p>
           <p style={styles.hint}>JPG, PNG, WEBP — máx. 10 MB por imagen — puedes seleccionar varias</p>
+          <p style={styles.hint}>💡 La primera imagen subida será la <strong>portada</strong> del flipbook</p>
         </>
       )}
     </div>

@@ -81,7 +81,7 @@ async function init() {
   const pageFlip = new St.PageFlip(container, {
     width: pageWidth,
     height: pageHeight,
-    showCover: false,
+    showCover: true,
     mobileScrollSupport: false,
     usePortrait: portrait,
     drawShadow: true,
