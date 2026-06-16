@@ -70,6 +70,7 @@ async function init() {
   container.appendChild(makeBlank(pageWidth, pageHeight))
 
   // índices 1..realCount: páginas reales
+  const pageDivs = []
   data.pages.forEach((page) => {
     const div = document.createElement('div')
     div.className = 'page'
@@ -79,6 +80,7 @@ async function init() {
     img.alt = page.title ?? `Página ${page.page_number}`
     img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;'
     div.appendChild(img)
+    pageDivs.push(div)
     if (page.title || page.price) {
       const label = document.createElement('div')
       label.style.cssText = 'position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.55);color:#fff;padding:6px 10px;font-size:0.75rem;display:flex;justify-content:space-between;'
@@ -108,6 +110,103 @@ async function init() {
   })
 
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
+
+  // ── Overlays de elementos del editor + acciones interactivas ──
+  // El editor diseña a 580×820 px; aquí escalamos a la página real del viewer.
+  const DESIGN_W = 580
+  const DESIGN_H = Math.round(DESIGN_W * 1.414)
+  const overlayScale = pageWidth / DESIGN_W
+
+  function runAction(a) {
+    if (!a || !a.type) return
+    switch (a.type) {
+      case 'link':
+        if (a.url) window.open(a.url, a.target === '_self' ? '_self' : '_blank')
+        break
+      case 'page':
+        if (a.page) pageFlip.flip(Number(a.page))
+        break
+      case 'call':
+        if (a.phone) window.location.href = 'tel:' + String(a.phone).replace(/\s+/g, '')
+        break
+      case 'email':
+        if (a.email) {
+          let href = 'mailto:' + a.email
+          if (a.subject) href += '?subject=' + encodeURIComponent(a.subject)
+          window.location.href = href
+        }
+        break
+      case 'popup_text': {
+        const p = document.createElement('p')
+        p.style.cssText = 'margin:0;color:#111;font-size:1rem;line-height:1.6;white-space:pre-wrap;'
+        p.textContent = a.text || ''
+        showPopup(p)
+        break
+      }
+      case 'popup_image': {
+        if (!a.image) break
+        const im = document.createElement('img')
+        im.src = a.image
+        im.style.cssText = 'max-width:80vw;max-height:80vh;display:block;border-radius:8px;'
+        showPopup(im)
+        break
+      }
+      case 'show_hide':
+        // Mostrar/Ocultar requiere elementos nombrados; se ampliará en una fase futura.
+        break
+    }
+  }
+
+  function showPopup(node) {
+    const back = document.createElement('div')
+    back.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;'
+    const box = document.createElement('div')
+    box.style.cssText = 'background:#fff;border-radius:12px;padding:28px;max-width:90vw;max-height:90vh;overflow:auto;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.4);'
+    const close = document.createElement('button')
+    close.textContent = '✕'
+    close.style.cssText = 'position:absolute;top:8px;right:10px;border:none;background:none;font-size:20px;cursor:pointer;color:#666;'
+    close.addEventListener('click', () => back.remove())
+    back.addEventListener('click', (e) => { if (e.target === back) back.remove() })
+    box.appendChild(close)
+    box.appendChild(node)
+    back.appendChild(box)
+    document.body.appendChild(back)
+  }
+
+  function buildOverlay(div, canvasJson) {
+    if (!canvasJson || typeof fabric === 'undefined') return
+    let parsed
+    try { parsed = typeof canvasJson === 'string' ? JSON.parse(canvasJson) : canvasJson } catch { return }
+    if (!parsed || !parsed.objects || !parsed.objects.length) return
+
+    const wrap = document.createElement('div')
+    wrap.style.cssText = `position:absolute;top:0;left:0;width:${DESIGN_W}px;height:${DESIGN_H}px;transform:scale(${overlayScale});transform-origin:top left;`
+    const cv = document.createElement('canvas')
+    cv.style.cssText = 'pointer-events:none;'
+    wrap.appendChild(cv)
+    div.appendChild(wrap)
+
+    const fcanvas = new fabric.StaticCanvas(cv, { width: DESIGN_W, height: DESIGN_H })
+    // Sin fondo: la imagen de la página ya está debajo
+    const objectsOnly = Object.assign({}, parsed, { background: '', backgroundImage: null })
+    fcanvas.loadFromJSON(objectsOnly, () => {
+      fcanvas.renderAll()
+      fcanvas.getObjects().forEach((obj) => {
+        const action = obj.data && obj.data.action
+        if (!action) return
+        const r = obj.getBoundingRect(true)
+        const hot = document.createElement('a')
+        hot.href = 'javascript:void(0)'
+        hot.title = ''
+        hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;`
+        hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action) })
+        wrap.appendChild(hot)
+      })
+    })
+  }
+
+  // Construye overlays para cada página real
+  pageDivs.forEach((div, i) => buildOverlay(div, data.pages[i] && data.pages[i].canvas_json))
 
   // Centrado dinámico: cubre/contraportada centradas, spreads interiores sin desplazamiento
   let currentShift = 0

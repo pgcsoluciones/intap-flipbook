@@ -70,7 +70,7 @@ app.get('/view/:slug', async (c) => {
   if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
 
   const { results: pages } = await c.env.DB.prepare(
-    `SELECT id, page_number, image_url, title, description, price
+    `SELECT id, page_number, image_url, title, description, price, canvas_json
      FROM pages WHERE publication_id = ? ORDER BY page_number ASC`,
   )
     .bind(pub.id)
