@@ -162,10 +162,12 @@ export default function EditPublication() {
   }
 
   async function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    await handleUpload(file)
+    const files = Array.from(e.target.files ?? [])
+    if (!files.length) return
     e.target.value = ''
+    for (const file of files) {
+      await handleUpload(file)
+    }
   }
 
   async function handleDeletePage(pageId: string) {
@@ -178,6 +180,7 @@ export default function EditPublication() {
     })
   }
 
+  // drag & drop para reordenar páginas
   const dragRef = useRef<number | null>(null)
   function onDragStart(i: number) { dragRef.current = i }
   function onDrop(i: number) {
@@ -188,6 +191,22 @@ export default function EditPublication() {
     setPages(next)
     api.pages.reorder(id!, next.map((p) => p.id))
     dragRef.current = null
+  }
+
+  // drag & drop de archivos externos (imágenes desde el escritorio)
+  const [sidebarDrag, setSidebarDrag] = useState(false)
+  function onSidebarDragOver(e: React.DragEvent) {
+    if ([...e.dataTransfer.items].some((i) => i.kind === 'file')) {
+      e.preventDefault(); setSidebarDrag(true)
+    }
+  }
+  function onSidebarDragLeave() { setSidebarDrag(false) }
+  async function onSidebarDrop(e: React.DragEvent) {
+    e.preventDefault(); setSidebarDrag(false)
+    const files = Array.from(e.dataTransfer.files).filter((f) =>
+      ['image/jpeg', 'image/png', 'image/webp'].includes(f.type)
+    )
+    for (const file of files) await handleUpload(file)
   }
 
   async function handlePublish() {
@@ -241,7 +260,12 @@ export default function EditPublication() {
       <div style={s.columns}>
 
         {/* Left sidebar — page thumbnails */}
-        <aside style={s.left}>
+        <aside
+          style={{ ...s.left, ...(sidebarDrag ? { outline: '2px dashed #818cf8' } : {}) }}
+          onDragOver={onSidebarDragOver}
+          onDragLeave={onSidebarDragLeave}
+          onDrop={onSidebarDrop}
+        >
           <div style={s.leftHeader}>
             <span style={s.leftHeaderLabel}>PAGINAS</span>
             <span style={s.leftHeaderCount}>{pages.length}</span>
@@ -276,6 +300,7 @@ export default function EditPublication() {
               ref={fileInputRef}
               type="file"
               accept="image/jpeg,image/png,image/webp"
+              multiple
               style={{ display: 'none' }}
               onChange={handleFileInputChange}
             />
@@ -284,8 +309,13 @@ export default function EditPublication() {
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
             >
-              {uploading ? 'Subiendo...' : '+ Nueva pagina'}
+              {uploading ? 'Subiendo...' : '+ Agregar páginas'}
             </button>
+            {sidebarDrag && (
+              <div style={{ fontSize: 11, color: '#818cf8', textAlign: 'center', marginTop: 6 }}>
+                Suelta las imágenes aquí
+              </div>
+            )}
           </div>
         </aside>
 
@@ -352,10 +382,19 @@ export default function EditPublication() {
                 <canvas ref={canvasRef} />
               </div>
             ) : (
-              <div style={s.canvasEmpty}>
-                <div style={{ fontSize: 52, marginBottom: 16, opacity: 0.4 }}>&#128196;</div>
-                <p style={{ color: '#6b7280', fontSize: 15, textAlign: 'center', maxWidth: 260, lineHeight: 1.6 }}>
-                  Agrega paginas desde el panel izquierdo para comenzar.
+              <div
+                style={{ ...s.canvasEmpty, ...(sidebarDrag ? { background: 'rgba(129,140,248,0.08)' } : {}) }}
+                onDragOver={onSidebarDragOver}
+                onDragLeave={onSidebarDragLeave}
+                onDrop={onSidebarDrop}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <div style={{ fontSize: 52, marginBottom: 16, opacity: 0.4 }}>&#128247;</div>
+                <p style={{ color: '#374151', fontSize: 15, textAlign: 'center', maxWidth: 280, lineHeight: 1.6, fontWeight: 600 }}>
+                  Arrastra imágenes aquí o haz clic para subir
+                </p>
+                <p style={{ color: '#9ca3af', fontSize: 13, textAlign: 'center', marginTop: 8 }}>
+                  JPG, PNG o WEBP · múltiples archivos
                 </p>
               </div>
             )}
@@ -553,7 +592,7 @@ const s: Record<string, React.CSSProperties> = {
   zoomActive:{ background: '#f3f4f6', borderColor: '#e5e7eb', color: '#111827', fontWeight: 600 },
   savePgBtn: { background: '#f3f4f6', border: '1px solid #e5e7eb', color: '#374151', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 500 },
   canvasWrap:  { flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 32, alignItems: 'flex-start' },
-  canvasEmpty: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' },
+  canvasEmpty: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', cursor: 'pointer', borderRadius: 12, transition: 'background 0.2s' },
 
   // Right sidebar
   right:      { width: 280, minWidth: 280, background: '#fff', borderLeft: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column' },
