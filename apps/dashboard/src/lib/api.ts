@@ -1,4 +1,4 @@
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'https://intap-flipbook-api.fliaprince.workers.dev'
+export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787'
 
 function getToken(): string | null {
   return localStorage.getItem('token')
