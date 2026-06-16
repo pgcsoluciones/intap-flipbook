@@ -12,11 +12,11 @@ R2_PUBLIC_BASE_URL = "https://media.intapflipbook.com"
 [[d1_databases]]
 binding = "DB"
 database_name = "intap-flipbook-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "f5e1ca62-8487-4250-a9d4-851d4880dcb3"
 
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "8a0d51a9b1334c0c9c65e04109731ded"
 
 [[r2_buckets]]
 binding = "MEDIA"
