@@ -186,11 +186,14 @@ export default function AdminPlans() {
   const [form, setForm]           = useState<PlanForm>(EMPTY_FORM)
   const [saving, setSaving]       = useState(false)
 
-  useEffect(() => {
-    adminFetch<{ data: Plan[] }>('/plans-list')
+  function loadPlans() {
+    return adminFetch<{ data: Plan[] }>('/plans')
       .then((r) => setPlans(r.data))
       .catch((e) => flash(e.message, 'err'))
-      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadPlans().finally(() => setLoading(false))
   }, [])
 
   // Toast temporal
@@ -222,14 +225,12 @@ export default function AdminPlans() {
       const body = formToBody(form)
 
       if (modalPlan === 'new') {
-        // POST crea un plan nuevo
-        const res = await adminFetch<{ data: Plan }>('/plans', { method: 'POST', body: JSON.stringify(body) })
-        setPlans((prev) => [...prev, res.data])
+        await adminFetch('/plans', { method: 'POST', body: JSON.stringify(body) })
+        await loadPlans()
         flash('Plan creado correctamente.')
       } else if (modalPlan) {
-        // PUT actualiza el plan existente
-        const res = await adminFetch<{ data: Plan }>(`/plans/${modalPlan.id}`, { method: 'PUT', body: JSON.stringify(body) })
-        setPlans((prev) => prev.map((p) => p.id === modalPlan.id ? res.data : p))
+        await adminFetch(`/plans/${(modalPlan as Plan).id}`, { method: 'PUT', body: JSON.stringify(body) })
+        await loadPlans()
         flash('Plan actualizado correctamente.')
       }
 
