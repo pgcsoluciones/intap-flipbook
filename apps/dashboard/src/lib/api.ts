@@ -71,6 +71,14 @@ export const api = {
     usage: () => request<{ success: true; data: any }>('/api/me/usage'),
   },
 
+  templates: {
+    list: () => request<{ success: true; data: any[] }>('/api/templates'),
+  },
+
+  resources: {
+    list: () => request<{ success: true; data: any[] }>('/api/resources'),
+  },
+
   upload: (file: File) => {
     const token = getToken()
     const form = new FormData()

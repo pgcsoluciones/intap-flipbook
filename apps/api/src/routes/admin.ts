@@ -256,38 +256,68 @@ admin.post('/payments', async (c) => {
 })
 
 // ─── GATEWAYS ─────────────────────────────────────────────────────────────────
+// Las pasarelas son un conjunto fijo de 5 tipos. Se identifican por `type`
+// (no por id autoincremental) para que el frontend pueda crearlas/togglearlas
+// aunque todavía no existan en D1 (upsert por type).
+
+const GATEWAY_NAMES: Record<string, string> = {
+  transfer: 'Transferencia bancaria',
+  deposit:  'Depósito en efectivo',
+  paypal:   'PayPal',
+  readdy:   'Readdy (CardNet)',
+  custom:   'Otro / Custom',
+}
 
 // GET /admin/gateways
 admin.get('/gateways', async (c) => {
   const { results } = await c.env.DB.prepare('SELECT * FROM payment_gateways ORDER BY sort_order ASC').all()
-  return c.json({ success: true, data: results })
+  const data = (results as any[]).map((g) => ({
+    ...g,
+    active: !!g.active,
+    config_json: (() => { try { return JSON.parse(g.config_json ?? '{}') } catch { return {} } })(),
+  }))
+  return c.json({ success: true, data })
 })
 
-// PUT /admin/gateways/:id
-admin.put('/gateways/:id', async (c) => {
-  const id = c.req.param('id')
+// PUT /admin/gateways/:type — upsert config por type
+admin.put('/gateways/:type', async (c) => {
+  const type = c.req.param('type')
   const body = await c.req.json<any>()
-  const existing = await c.env.DB.prepare('SELECT id FROM payment_gateways WHERE id = ?').bind(id).first()
+  const name = body.name ?? GATEWAY_NAMES[type] ?? type
+  const configJson = JSON.stringify(body.config_json ?? body.config ?? {})
+  const existing = await c.env.DB.prepare('SELECT id FROM payment_gateways WHERE type = ?').bind(type).first()
   if (!existing) {
     await c.env.DB.prepare(
       'INSERT INTO payment_gateways (name, type, config_json, instructions, active, sort_order) VALUES (?,?,?,?,?,?)'
-    ).bind(body.name, body.type, JSON.stringify(body.config ?? {}), body.instructions ?? null, body.active ? 1 : 0, body.sort_order ?? 0).run()
+    ).bind(name, type, configJson, body.instructions ?? null, body.active ? 1 : 0, body.sort_order ?? 0).run()
   } else {
     await c.env.DB.prepare(
-      'UPDATE payment_gateways SET name = ?, config_json = ?, instructions = ?, sort_order = ? WHERE id = ?'
-    ).bind(body.name, JSON.stringify(body.config ?? {}), body.instructions ?? null, body.sort_order ?? 0, id).run()
+      'UPDATE payment_gateways SET config_json = ?, instructions = ? WHERE type = ?'
+    ).bind(configJson, body.instructions ?? null, type).run()
   }
-  return c.json({ success: true })
+  const row = await c.env.DB.prepare('SELECT * FROM payment_gateways WHERE type = ?').bind(type).first<any>()
+  const data = row ? { ...row, active: !!row.active, config_json: (() => { try { return JSON.parse(row.config_json ?? '{}') } catch { return {} } })() } : null
+  return c.json({ success: true, data })
 })
 
-// PATCH /admin/gateways/:id/toggle
-admin.patch('/gateways/:id/toggle', async (c) => {
-  const id = c.req.param('id')
-  const gw = await c.env.DB.prepare('SELECT active FROM payment_gateways WHERE id = ?')
-    .bind(id).first<{ active: number }>()
-  if (!gw) return c.json({ success: false, error: 'Pasarela no encontrada' }, 404)
-  await c.env.DB.prepare('UPDATE payment_gateways SET active = ? WHERE id = ?')
-    .bind(gw.active ? 0 : 1, id).run()
+// PATCH /admin/gateways/:type/toggle — upsert + flip active por type
+admin.patch('/gateways/:type/toggle', async (c) => {
+  const type = c.req.param('type')
+  const body = await c.req.json<{ active?: boolean }>().catch(() => ({} as { active?: boolean }))
+  const name = GATEWAY_NAMES[type] ?? type
+  const existing = await c.env.DB.prepare('SELECT id, active FROM payment_gateways WHERE type = ?')
+    .bind(type).first<{ id: number; active: number }>()
+  const newActive = body.active !== undefined
+    ? (body.active ? 1 : 0)
+    : (existing ? (existing.active ? 0 : 1) : 1)
+  if (!existing) {
+    await c.env.DB.prepare(
+      'INSERT INTO payment_gateways (name, type, config_json, instructions, active, sort_order) VALUES (?,?,?,?,?,?)'
+    ).bind(name, type, '{}', null, newActive, 0).run()
+  } else {
+    await c.env.DB.prepare('UPDATE payment_gateways SET active = ? WHERE type = ?')
+      .bind(newActive, type).run()
+  }
   return c.json({ success: true })
 })
 
