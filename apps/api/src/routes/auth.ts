@@ -115,6 +115,63 @@ auth.put('/password', jwtMiddleware, async (c) => {
   return c.json({ success: true })
 })
 
+// GET /auth/referral-config — configuración pública del programa de referidos (sin auth)
+auth.get('/referral-config', async (c) => {
+  const config = await c.env.DB.prepare(
+    `SELECT * FROM referral_config WHERE id = 1`,
+  ).first()
+  return c.json({ success: true, data: config })
+})
+
+// GET /auth/referrals/my — mis referidos (con auth)
+auth.get('/referrals/my', jwtMiddleware, async (c) => {
+  const { sub } = c.get('user')
+  const { results } = await c.env.DB.prepare(
+    `SELECT r.*, u.email as referred_email, u.name as referred_name
+     FROM referrals r
+     JOIN users u ON u.id = r.referred_id
+     WHERE r.referrer_id = ?
+     ORDER BY r.created_at DESC`,
+  )
+    .bind(sub)
+    .all()
+  return c.json({ success: true, data: results })
+})
+
+// GET /auth/stats/my — mis estadísticas de publicaciones y vistas (con auth)
+auth.get('/stats/my', jwtMiddleware, async (c) => {
+  const { sub } = c.get('user')
+
+  const { results: publications } = await c.env.DB.prepare(
+    `SELECT p.id, p.title, p.status, p.views_count, COUNT(pg.id) as page_count
+     FROM publications p
+     LEFT JOIN pages pg ON pg.publication_id = p.id
+     WHERE p.user_id = ?
+     GROUP BY p.id
+     ORDER BY p.views_count DESC`,
+  )
+    .bind(sub)
+    .all()
+
+  const totalViews = (publications as Array<{ views_count: number }>).reduce(
+    (sum, pub) => sum + (pub.views_count ?? 0),
+    0,
+  )
+
+  const { results: recentViews } = await c.env.DB.prepare(
+    `SELECT pv.viewed_at, pv.device, pub.title
+     FROM publication_views pv
+     JOIN publications pub ON pub.id = pv.publication_id
+     WHERE pub.user_id = ?
+     ORDER BY pv.viewed_at DESC
+     LIMIT 20`,
+  )
+    .bind(sub)
+    .all()
+
+  return c.json({ success: true, data: { publications, total_views: totalViews, recent_views: recentViews } })
+})
+
 // PBKDF2 password hashing via Web Crypto API
 async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16))

@@ -508,6 +508,106 @@ admin.delete('/resources/:id', async (c) => {
   return c.json({ success: true })
 })
 
+// ─── TEMPLATES ────────────────────────────────────────────────────────────────
+
+// GET /admin/templates
+admin.get('/templates', async (c) => {
+  const { results } = await c.env.DB.prepare('SELECT * FROM templates ORDER BY sort_order ASC, id DESC').all()
+  return c.json({ success: true, data: results })
+})
+
+// POST /admin/templates
+admin.post('/templates', async (c) => {
+  const body = await c.req.json<any>()
+  const { meta } = await c.env.DB.prepare(
+    'INSERT INTO templates (name, plan_required, cover_url, active, sort_order) VALUES (?,?,?,?,?)'
+  ).bind(
+    body.name,
+    body.plan_required ?? 'free',
+    body.cover_url ?? null,
+    body.active !== false ? 1 : 0,
+    body.sort_order ?? 0
+  ).run()
+  return c.json({ success: true, data: { id: meta.last_row_id } })
+})
+
+// PUT /admin/templates/:id
+admin.put('/templates/:id', async (c) => {
+  const id = c.req.param('id')
+  const body = await c.req.json<any>()
+  await c.env.DB.prepare(
+    'UPDATE templates SET name = ?, plan_required = ?, cover_url = ?, active = ?, sort_order = ? WHERE id = ?'
+  ).bind(
+    body.name,
+    body.plan_required ?? 'free',
+    body.cover_url ?? null,
+    body.active !== false ? 1 : 0,
+    body.sort_order ?? 0,
+    id
+  ).run()
+  return c.json({ success: true })
+})
+
+// DELETE /admin/templates/:id
+admin.delete('/templates/:id', async (c) => {
+  const id = c.req.param('id')
+  await c.env.DB.prepare('DELETE FROM templates WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// ─── TUTORIALS ────────────────────────────────────────────────────────────────
+
+// GET /admin/tutorials
+admin.get('/tutorials', async (c) => {
+  const { results } = await c.env.DB.prepare('SELECT * FROM tutorials ORDER BY sort_order ASC, id DESC').all()
+  return c.json({ success: true, data: results })
+})
+
+// POST /admin/tutorials
+admin.post('/tutorials', async (c) => {
+  const body = await c.req.json<any>()
+  const { meta } = await c.env.DB.prepare(
+    'INSERT INTO tutorials (title, category, type, url, content, thumbnail_url, sort_order, active) VALUES (?,?,?,?,?,?,?,?)'
+  ).bind(
+    body.title,
+    body.category,
+    body.type,
+    body.url ?? null,
+    body.content ?? null,
+    body.thumbnail_url ?? null,
+    body.sort_order ?? 0,
+    body.active !== false ? 1 : 0
+  ).run()
+  return c.json({ success: true, data: { id: meta.last_row_id } })
+})
+
+// PUT /admin/tutorials/:id
+admin.put('/tutorials/:id', async (c) => {
+  const id = c.req.param('id')
+  const body = await c.req.json<any>()
+  await c.env.DB.prepare(
+    'UPDATE tutorials SET title = ?, category = ?, type = ?, url = ?, content = ?, thumbnail_url = ?, sort_order = ?, active = ? WHERE id = ?'
+  ).bind(
+    body.title,
+    body.category,
+    body.type,
+    body.url ?? null,
+    body.content ?? null,
+    body.thumbnail_url ?? null,
+    body.sort_order ?? 0,
+    body.active !== false ? 1 : 0,
+    id
+  ).run()
+  return c.json({ success: true })
+})
+
+// DELETE /admin/tutorials/:id
+admin.delete('/tutorials/:id', async (c) => {
+  const id = c.req.param('id')
+  await c.env.DB.prepare('DELETE FROM tutorials WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
 // ─── STATS ────────────────────────────────────────────────────────────────────
 
 // GET /admin/stats — global stats
