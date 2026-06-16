@@ -1,4 +1,4 @@
-const API_BASE = window.__FLIPBOOK_CONFIG__?.apiBase ?? 'https://intap-flipbook-api.workers.dev'
+const API_BASE = window.__FLIPBOOK_CONFIG__?.apiBase ?? 'https://intap-flipbook-api.fliaprince.workers.dev'
 
 const slug = location.pathname.split('/').filter(Boolean).pop()
 if (!slug) {

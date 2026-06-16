@@ -5,7 +5,7 @@ import { api } from '../lib/api'
 export default function Preview() {
   const { id } = useParams<{ id: string }>()
   const [pub, setPub] = useState<any>(null)
-  const VIEWER_BASE = import.meta.env.VITE_VIEWER_BASE_URL ?? 'https://view.intapflipbook.com'
+  const VIEWER_BASE = import.meta.env.VITE_VIEWER_BASE_URL ?? 'https://intap-flipbook-viewer.pages.dev'
 
   useEffect(() => {
     if (id) api.publications.get(id).then((r) => setPub(r.data))
