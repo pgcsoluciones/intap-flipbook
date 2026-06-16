@@ -4,6 +4,48 @@
 
 ---
 
+## 🌐 DOMINIOS Y ARQUITECTURA
+
+### Producción
+| Componente | Tecnología | URL |
+|-----------|-----------|-----|
+| Viewer público | Cloudflare Pages | `https://flip.intaprd.com` |
+| Dashboard / editor | Cloudflare Pages | `https://studio.flip.intaprd.com` |
+| API | Cloudflare Workers + Hono.js | `https://api.flip.intaprd.com` |
+| Base de datos | Cloudflare D1 (SQLite serverless) | `intap-flipbook-db` |
+| Archivos/imágenes | Cloudflare R2 | `intap-flipbook-media` |
+| Sesiones | Cloudflare KV | `SESSIONS` |
+
+### Desarrollo / pruebas
+| Componente | URL |
+|-----------|-----|
+| Viewer | `https://intap-flipbook-viewer.pages.dev` |
+| Dashboard | `https://intap-flipbook-dashboard.pages.dev` |
+| API | `https://intap-flipbook-api.fliaprince.workers.dev` |
+| API preview | `*-intap-flipbook-api.fliaprince.workers.dev` |
+
+### CORS_ORIGIN — ambos ambientes permitidos
+```toml
+CORS_ORIGIN = "https://flip.intaprd.com,https://studio.flip.intaprd.com,https://intap-flipbook-viewer.pages.dev,https://intap-flipbook-dashboard.pages.dev"
+```
+
+### Variables de entorno
+
+**Worker (`apps/api/wrangler.toml`):**
+```toml
+CORS_ORIGIN = "https://flip.intaprd.com,https://studio.flip.intaprd.com,https://intap-flipbook-viewer.pages.dev,https://intap-flipbook-dashboard.pages.dev"
+JWT_EXPIRY_DAYS = "7"
+R2_PUBLIC_BASE_URL = "https://pub-XXX.r2.dev"  ← ACTUALIZAR con URL real del bucket público
+```
+
+**Dashboard — Cloudflare Pages Settings:**
+```
+VITE_API_BASE_URL    = https://api.flip.intaprd.com
+VITE_VIEWER_BASE_URL = https://flip.intaprd.com
+```
+
+---
+
 ## 🎨 SISTEMA DE DISEÑO
 
 ### Paleta de colores
