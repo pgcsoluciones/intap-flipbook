@@ -18,6 +18,14 @@ function waitForImages(container) {
   )
 }
 
+// Página invisible (color fondo) para acompañar portada/contraportada
+function makeBlank(w, h) {
+  const d = document.createElement('div')
+  d.className = 'page'
+  d.style.cssText = `width:${w}px;height:${h}px;background:#1a1a2e;`
+  return d
+}
+
 async function init() {
   const res = await fetch(`${API_BASE}/view/${slug}`)
   if (!res.ok) {
@@ -35,10 +43,14 @@ async function init() {
     ? Math.min(340, window.innerWidth - 24)
     : Math.min(440, Math.floor(window.innerWidth / 2) - 60)
   const pageHeight = Math.floor(pageWidth * 1.414)
+  const realCount = data.pages.length
 
   const container = document.getElementById('flipbook')
-  const totalPages = data.pages.length
 
+  // índice 0: blank invisible → portada (idx 1) queda sola en lado derecho
+  container.appendChild(makeBlank(pageWidth, pageHeight))
+
+  // índices 1..realCount: páginas reales
   data.pages.forEach((page) => {
     const div = document.createElement('div')
     div.className = 'page'
@@ -58,16 +70,18 @@ async function init() {
     container.appendChild(div)
   })
 
+  // índice realCount+1: blank invisible → contraportada (idx realCount) queda sola en lado izquierdo
+  container.appendChild(makeBlank(pageWidth, pageHeight))
+
   await waitForImages(container)
 
-  // showCover:true → portada y contraportada se muestran solas (como en FlipHTML5)
-  // El centrado dinámico compensa que StPageFlip siempre reserva 2×pageWidth
+  // showCover: false → TODAS las páginas tienen el efecto de hoja flexible
   const pageFlip = new St.PageFlip(container, {
     width: pageWidth,
     height: pageHeight,
-    showCover: true,
+    showCover: false,
     drawShadow: true,
-    maxShadowOpacity: 0.4,
+    maxShadowOpacity: 0.3,
     flippingTime: 900,
     mobileScrollSupport: false,
     usePortrait: portrait,
@@ -78,31 +92,42 @@ async function init() {
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
 
   // Centrado dinámico:
-  // - Portada (idx 0): contenido en mitad DERECHA → desplazar el flipbook -pageWidth/2 hacia la izquierda
-  // - Páginas interiores: centrado normal
-  // - Contraportada (idx totalPages-1): contenido en mitad IZQUIERDA → desplazar +pageWidth/2
+  // El libro siempre ocupa 2×pageWidth. Cuando el spread tiene una página invisible,
+  // desplazamos el libro para centrar la página visible.
+  //
+  // Primer spread [blank(izq) | portada(der)]: desplazar -pageWidth/2 (book va a la izquierda, portada queda centrada)
+  // Último spread [contraportada(izq) | blank(der)]: desplazar +pageWidth/2 (book va a la derecha, contraportada queda centrada)
+  // Spreads interiores: sin desplazamiento
   function applyCenter() {
     if (portrait) return
     const idx = pageFlip.getCurrentPageIndex()
-    const shift = idx === 0
-      ? -(pageWidth / 2)
-      : idx >= totalPages - 1
-      ? pageWidth / 2
+    const shift = idx <= 0 ? -(pageWidth / 2)
+      : idx >= realCount ? (pageWidth / 2)
       : 0
     container.style.transform = `translateX(${shift}px)`
-    container.style.transition = 'transform 0.3s ease'
+    container.style.transition = 'transform 0.35s ease'
+  }
+
+  function updatePageInfo() {
+    const idx = pageFlip.getCurrentPageIndex()
+    // idx 0 = blank inicial, idx 1..realCount = páginas reales, idx realCount+1 = blank final
+    const current = Math.max(1, Math.min(idx, realCount))
+    document.getElementById('page-info').textContent = `${current} / ${realCount}`
   }
 
   pageFlip.on('flip', () => {
     if (soundEnabled) { flipSound.currentTime = 0; flipSound.play().catch(() => {}) }
-    updatePageInfo(pageFlip, totalPages)
+    updatePageInfo()
     applyCenter()
   })
 
-  pageFlip.on('changeState', () => applyCenter())
+  pageFlip.on('changeState', () => {
+    updatePageInfo()
+    applyCenter()
+  })
 
   applyCenter()
-  updatePageInfo(pageFlip, totalPages)
+  updatePageInfo()
 
   document.getElementById('btn-prev').addEventListener('click', () => pageFlip.flipPrev())
   document.getElementById('btn-next').addEventListener('click', () => pageFlip.flipNext())
@@ -110,11 +135,6 @@ async function init() {
     soundEnabled = !soundEnabled
     updateSoundBtn()
   })
-}
-
-function updatePageInfo(pf, total) {
-  const el = document.getElementById('page-info')
-  el.textContent = `${pf.getCurrentPageIndex() + 1} / ${total}`
 }
 
 function updateSoundBtn() {
