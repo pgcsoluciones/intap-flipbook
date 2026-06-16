@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard'
 import NewPublication from './pages/NewPublication'
 import EditPublication from './pages/EditPublication'
 import Preview from './pages/Preview'
+import Publications from './pages/Publications'
 import ComingSoon from './pages/ComingSoon'
 
 function LegacyRedirect({ pattern }: { pattern: string }) {
@@ -24,7 +25,7 @@ export default function App() {
 
         {/* Rutas protegidas con sidebar */}
         <Route path="/dashboard" element={<ProtectedLayout><Dashboard /></ProtectedLayout>} />
-        <Route path="/publications" element={<ProtectedLayout><ComingSoon title="Mis Flipbooks" description="Lista completa con búsqueda, filtros y carpetas." /></ProtectedLayout>} />
+        <Route path="/publications" element={<ProtectedLayout><Publications /></ProtectedLayout>} />
         <Route path="/publications/new" element={<ProtectedLayout><NewPublication /></ProtectedLayout>} />
         <Route path="/publications/:id/editor" element={<ProtectedLayout><EditPublication /></ProtectedLayout>} />
         <Route path="/publications/:id/preview" element={<ProtectedLayout><Preview /></ProtectedLayout>} />
