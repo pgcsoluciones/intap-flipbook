@@ -37,7 +37,6 @@ async function init() {
 
   // Sonido siempre habilitado independientemente del plan
   soundEnabled = true
-  updateSoundBtn()
 
   const portrait = window.innerWidth < 700
   const pageWidth = portrait
@@ -259,10 +258,6 @@ async function init() {
       panel.classList.remove('open')
     }
   })
-}
-
-function updateSoundBtn() {
-  document.getElementById('btn-sound').textContent = soundEnabled ? '🔊' : '🔇'
 }
 
 init().catch((err) => console.error('Flipbook init error:', err))
