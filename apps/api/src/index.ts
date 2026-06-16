@@ -21,8 +21,9 @@ export type Env = {
 const app = new Hono<{ Bindings: Env }>()
 
 app.use('*', async (c, next) => {
+  const allowedOrigins = c.env.CORS_ORIGIN.split(',').map((o) => o.trim())
   const corsMiddleware = cors({
-    origin: c.env.CORS_ORIGIN,
+    origin: (origin) => (allowedOrigins.includes(origin) ? origin : allowedOrigins[0]),
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     maxAge: 86400,
