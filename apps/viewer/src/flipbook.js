@@ -35,8 +35,8 @@ async function init() {
   const { data } = await res.json()
   document.title = data.title
 
-  // Sonido habilitado por defecto — el campo sound_enabled de la API puede restringirlo en el futuro
-  soundEnabled = data.sound_enabled !== false
+  // Sonido siempre habilitado independientemente del plan
+  soundEnabled = true
   updateSoundBtn()
 
   const portrait = window.innerWidth < 700
@@ -125,6 +125,10 @@ async function init() {
   }
 
   function onFlipChange() {
+    const idx = pageFlip.getCurrentPageIndex()
+    // Si el swipe/drag llegó a una página en blanco, volver a la real más cercana
+    if (idx <= 0) { pageFlip.flip(1); return }
+    if (idx > realCount) { pageFlip.flip(realCount); return }
     if (soundEnabled) { flipSound.currentTime = 0; flipSound.play().catch(() => {}) }
     updatePageInfo()
     applyCenter()
@@ -195,7 +199,7 @@ async function init() {
   })
 
   document.addEventListener('fullscreenchange', () => {
-    document.getElementById('btn-fullscreen').textContent = document.fullscreenElement ? '⛶' : '⛶'
+    document.getElementById('btn-fullscreen').textContent = document.fullscreenElement ? '⤡' : '⤢'
     document.getElementById('btn-fullscreen').title = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'
   })
 
