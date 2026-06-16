@@ -182,10 +182,24 @@ npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase8b.sql --r
 
 ---
 
+## 🆕 Editor FlipHTML5 + Viewer interactivo (commits 91b57b4 → f68f692)
+
+- **Editor reescrito** (`EditPublication.tsx`): iconos SVG de línea consistentes, **autoguardado** (1.2s tras cada cambio + al cambiar de página + al cerrar pestaña), barra de herramientas (eliminar, duplicar, traer al frente/fondo).
+- **Acciones por tipo de botón**: cada botón/zona de enlace guarda `data.action` con tipo: `link`, `page`, `call`, `email`, `popup_text`, `popup_image`, `show_hide`. Panel de propiedades cambia según el tipo de elemento (texto/forma/botón/enlace/imagen).
+- **Responsive móvil**: `Layout` ahora usa sidebar tipo cajón con hamburguesa (`hooks/useIsMobile.ts`); catálogo (`Publications`) con header apilado, grid 150px y botones táctiles Editar/Vista previa.
+- **Viewer** (`apps/viewer/flipbook.js`): carga Fabric.js 5.3 por CDN, renderiza `canvas_json` como overlay escalado sobre cada página y ejecuta las acciones al hacer clic. `show_hide` queda como no-op (requiere elementos nombrados, fase futura).
+- **API** (`index.ts`): el endpoint público `/view/:slug` ahora devuelve `canvas_json` por página.
+
+> ⚠️ **REQUIERE DEPLOY MANUAL DEL WORKER**: `cd ~/intap-flipbook/apps/api && npx wrangler deploy` — sin esto, el viewer no recibe `canvas_json` y los elementos/acciones no aparecen en publicaciones.
+
+---
+
 ## 📋 Pendiente
 
 | Tarea | Estado |
 |-------|--------|
+| Deploy Worker para `/view` con canvas_json | **Pendiente (Juan)** |
+| Acción `show_hide` en viewer (elementos nombrados) | Pendiente |
 | Alinear claves de módulos (frontend ↔ DB) | Pendiente |
 | Migración D1 tablas nuevas (modules, publication_views) | Pendiente verificar |
 | Editor: mejorar visual al estilo FlipHTML5 (puntos activos, biblioteca elementos) | Planificado |
