@@ -3,4 +3,4 @@ pages_build_output_dir = "dist"
 compatibility_date = "2024-09-23"
 
 [vars]
-VITE_API_BASE_URL = "https://intap-flipbook-api.workers.dev"
+VITE_API_BASE_URL = "https://intap-flipbook-api.fliaprince.workers.dev"
