@@ -309,9 +309,10 @@ admin.get('/modules', async (c) => {
 // PUT /admin/modules/:key/global — toggle active_globally
 admin.put('/modules/:key/global', async (c) => {
   const key = c.req.param('key')
-  const body = await c.req.json<{ active_globally: boolean }>()
+  const body = await c.req.json<{ active?: boolean; active_globally?: boolean }>()
+  const isActive = body.active ?? body.active_globally ?? false
   await c.env.DB.prepare('UPDATE modules SET active_globally = ? WHERE key = ?')
-    .bind(body.active_globally ? 1 : 0, key).run()
+    .bind(isActive ? 1 : 0, key).run()
   return c.json({ success: true })
 })
 

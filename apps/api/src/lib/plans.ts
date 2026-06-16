@@ -47,6 +47,7 @@ export async function checkPublicationLimit(db: D1Database, userId: string, plan
 }
 
 export async function checkPageLimit(db: D1Database, publicationId: string, plan: Plan): Promise<string | null> {
+  if (plan.max_pages_per_pub === null) return null
   const row = await db
     .prepare('SELECT COUNT(*) as count FROM pages WHERE publication_id = ?')
     .bind(publicationId)
