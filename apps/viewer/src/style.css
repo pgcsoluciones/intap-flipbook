@@ -13,29 +13,38 @@ body {
   min-height: 100vh;
   font-family: sans-serif;
   color: #fff;
+  overflow: hidden;
 }
 
 #flipbook-container {
   display: flex;
   justify-content: center;
   align-items: center;
+  flex: 1;
   width: 100%;
-  padding: 20px;
+  padding: 20px 20px 0;
 }
 
 #flipbook {
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  /* StPageFlip maneja el tamaño internamente */
+}
+
+/* Canvas generado por StPageFlip */
+#flipbook canvas {
+  display: block;
+  margin: 0 auto;
 }
 
 #controls {
   display: flex;
   align-items: center;
   gap: 16px;
-  margin-top: 20px;
-  padding: 12px 24px;
+  margin: 16px auto 20px;
+  padding: 10px 24px;
   background: rgba(255, 255, 255, 0.1);
   border-radius: 50px;
   backdrop-filter: blur(10px);
+  width: fit-content;
 }
 
 #controls button {
@@ -55,12 +64,12 @@ body {
 
 #page-info {
   font-size: 0.9rem;
-  min-width: 80px;
+  min-width: 60px;
   text-align: center;
 }
 
 @media (max-width: 768px) {
   #flipbook-container {
-    padding: 10px;
+    padding: 10px 10px 0;
   }
 }

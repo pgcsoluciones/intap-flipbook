@@ -81,15 +81,15 @@ async function init() {
   const pageFlip = new St.PageFlip(container, {
     width: pageWidth,
     height: pageHeight,
-    showCover: true,
+    showCover: false,
     mobileScrollSupport: false,
     usePortrait: portrait,
-    drawShadow: true,
-    maxShadowOpacity: 0.5,
-    flippingTime: 1000,
+    drawShadow: false,
+    flippingTime: 900,
     startPage: 0,
     useMouseEvents: true,
     size: 'fixed',
+    autoSize: false,
   })
 
   pageFlip.loadFromHTML(document.querySelectorAll('.page'))
