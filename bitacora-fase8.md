@@ -1,5 +1,16 @@
 # Bitácora — Intap Flipbook (desde fix R2 en adelante)
 
+## 🔗 URLs de prueba
+
+| Entorno | URL |
+|---------|-----|
+| Viewer producción | `https://intap-flipbook-viewer.pages.dev` |
+| Catálogo de prueba | `https://intap-flipbook-viewer.pages.dev/view/457e07a0b0` |
+| Dashboard | `https://intap-flipbook-dashboard.pages.dev` |
+| API | `https://intap-flipbook-api.fliaprince.workers.dev` |
+
+---
+
 ## 📍 Rutas locales (Mac de Juan)
 
 | Proyecto | Ruta |
