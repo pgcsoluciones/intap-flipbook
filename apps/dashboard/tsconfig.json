@@ -12,6 +12,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
+    "noImplicitAny": false,
     "paths": {
       "@intap-flipbook/types": ["../../packages/types/index.ts"]
     }

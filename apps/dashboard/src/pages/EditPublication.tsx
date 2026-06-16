@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
+// @ts-ignore
 import { fabric } from 'fabric'
 import { api } from '../lib/api'
 import ImageUploader from '../components/ImageUploader'
