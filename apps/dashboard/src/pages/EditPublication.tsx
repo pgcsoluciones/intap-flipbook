@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 // @ts-ignore
 import { fabric } from 'fabric'
@@ -121,6 +121,24 @@ export default function EditPublication() {
     const c = fabricRef.current; if (!c) return
     const r = new fabric.Rect({ left: 80, top: 80, width: 160, height: 60, fill: 'rgba(79,70,229,0.85)', rx: 8, ry: 8 })
     c.add(r); c.setActiveObject(r); setTool('select')
+  }
+
+  function addCircle() {
+    const c = fabricRef.current; if (!c) return
+    const circle = new fabric.Circle({ radius: 60, fill: 'rgba(79,70,229,0.85)', left: 100, top: 100 })
+    c.add(circle); c.setActiveObject(circle); setTool('select')
+  }
+
+  function addTriangle() {
+    const c = fabricRef.current; if (!c) return
+    const tri = new fabric.Triangle({ width: 120, height: 100, fill: 'rgba(16,185,129,0.85)', left: 100, top: 100 })
+    c.add(tri); c.setActiveObject(tri); setTool('select')
+  }
+
+  function addLine() {
+    const c = fabricRef.current; if (!c) return
+    const line = new fabric.Line([0, 0, 250, 0], { stroke: '#ffffff', strokeWidth: 3, left: 80, top: 200 })
+    c.add(line); c.setActiveObject(line); setTool('select')
   }
 
   function addLink() {
@@ -367,22 +385,19 @@ export default function EditPublication() {
               ? <PropsPanel obj={selected} canvas={fabricRef.current} />
               : <div style={s.rightEmpty}>Selecciona un elemento del canvas para editar sus propiedades.</div>
           ) : (
-            <div style={s.elementsPanel}>
-              <div style={s.elemSectionTitle}>Agregar elemento</div>
-              <div style={s.elemGrid}>
-                <button style={s.elemCard} onClick={addText}>
-                  <span style={s.elemIcon}>T</span>
-                  <span style={s.elemLabel}>Texto</span>
-                </button>
-                <button style={s.elemCard} onClick={addRect}>
-                  <span style={s.elemIcon}>&#9645;</span>
-                  <span style={s.elemLabel}>Forma</span>
-                </button>
-                <button style={s.elemCard} onClick={addLink}>
-                  <span style={s.elemIcon}>&#128279;</span>
-                  <span style={s.elemLabel}>Boton</span>
-                </button>
-              </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              <ElemSection title="Texto">
+                <ElemBtn icon="T" label="Texto" onClick={addText} />
+              </ElemSection>
+              <ElemSection title="Formas">
+                <ElemBtn icon="▭" label="Rectángulo" onClick={addRect} />
+                <ElemBtn icon="⬤" label="Círculo" onClick={addCircle} />
+                <ElemBtn icon="▲" label="Triángulo" onClick={addTriangle} />
+                <ElemBtn icon="─" label="Línea" onClick={addLine} />
+              </ElemSection>
+              <ElemSection title="Botones">
+                <ElemBtn icon="🔗" label="Botón enlace" onClick={addLink} />
+              </ElemSection>
             </div>
           )}
         </aside>
@@ -454,6 +469,34 @@ function PropsPanel({ obj, canvas }: { obj: any; canvas: any }) {
         Eliminar elemento
       </button>
     </div>
+  )
+}
+
+function ElemSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6' }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 10 }}>
+        {title}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 8 }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function ElemBtn({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
+  const [hover, setHover] = React.useState(false)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{ display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: 5, width: 76, height: 68, border: '1px solid #e5e7eb', borderRadius: 8, background: hover ? '#f9fafb' : 'none', cursor: 'pointer', transition: 'background 0.12s' }}
+    >
+      <span style={{ fontSize: 22, lineHeight: 1 }}>{icon}</span>
+      <span style={{ fontSize: 10, fontWeight: 500, color: '#6b7280', textAlign: 'center' as const, lineHeight: 1.2 }}>{label}</span>
+    </button>
   )
 }
 

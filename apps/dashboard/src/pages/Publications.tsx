@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 
@@ -9,28 +9,44 @@ const CATEGORIES: Record<string, string> = {
   revista:    'Revista',
   folleto:    'Folleto',
   otro:       'Otro',
-  // legacy values
-  catalog:   'Catálogo',
-  portfolio: 'Portafolio',
+  catalog:    'Catálogo',
+  portfolio:  'Portafolio',
 }
 
-const STATUS_OPTIONS = [
-  { value: '', label: 'Todos los estados' },
-  { value: 'published', label: 'Publicados' },
-  { value: 'draft', label: 'Borradores' },
+const CAT_OPTIONS = [
+  { value: 'catalogo',   label: 'Catálogo de productos' },
+  { value: 'menu',       label: 'Menú de restaurante' },
+  { value: 'portafolio', label: 'Portafolio / Brochure' },
+  { value: 'revista',    label: 'Revista' },
+  { value: 'folleto',    label: 'Folleto' },
+  { value: 'otro',       label: 'Otro' },
 ]
+
+const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp']
 
 type Tab = 'active' | 'trash'
 
 export default function Publications() {
   const navigate = useNavigate()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Lista
   const [all, setAll]         = useState<any[]>([])
   const [trash, setTrash]     = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab]         = useState<Tab>('active')
   const [search, setSearch]   = useState('')
-  const [status, setStatus]   = useState('')
-  const [category, setCategory] = useState('')
+
+  // Modal de creación
+  const [showModal, setShowModal]     = useState(false)
+  const [modalFiles, setModalFiles]   = useState<File[]>([])
+  const [previews, setPreviews]       = useState<string[]>([])
+  const [title, setTitle]             = useState('')
+  const [category, setCategory]       = useState('catalogo')
+  const [isDragOver, setIsDragOver]   = useState(false)
+  const [creating, setCreating]       = useState(false)
+  const [progress, setProgress]       = useState('')
+  const [modalError, setModalError]   = useState('')
 
   useEffect(() => {
     if (!localStorage.getItem('token')) { navigate('/login'); return }
@@ -40,6 +56,53 @@ export default function Publications() {
       .finally(() => setLoading(false))
   }, [])
 
+  // ── Archivos ──────────────────────────────────────────────
+  function addFiles(incoming: FileList | null) {
+    if (!incoming) return
+    const valid = Array.from(incoming).filter((f) => ACCEPTED.includes(f.type))
+    if (!valid.length) return
+    setModalFiles((prev) => [...prev, ...valid])
+    setPreviews((prev) => [...prev, ...valid.map((f) => URL.createObjectURL(f))])
+  }
+
+  function removeFile(i: number) {
+    URL.revokeObjectURL(previews[i])
+    setModalFiles((prev) => prev.filter((_, j) => j !== i))
+    setPreviews((prev) => prev.filter((_, j) => j !== i))
+  }
+
+  function openModal() {
+    setModalFiles([]); setPreviews([]); setTitle(''); setCategory('catalogo')
+    setModalError(''); setProgress(''); setShowModal(true)
+  }
+
+  function closeModal() {
+    if (creating) return
+    previews.forEach((u) => URL.revokeObjectURL(u))
+    setShowModal(false)
+  }
+
+  // ── Crear flipbook ────────────────────────────────────────
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault()
+    if (!title.trim()) { setModalError('El nombre es requerido.'); return }
+    setCreating(true); setModalError('')
+    try {
+      const pubRes = await api.publications.create({ title: title.trim(), description: '', category })
+      const pubId: string = pubRes.data.id
+      for (let i = 0; i < modalFiles.length; i++) {
+        setProgress(`Subiendo imagen ${i + 1} de ${modalFiles.length}...`)
+        const up = await api.upload(modalFiles[i])
+        await api.pages.add(pubId, { image_url: up.data.url })
+      }
+      navigate(`/publications/${pubId}/editor`)
+    } catch (err: any) {
+      setModalError(err.message ?? 'Error al crear.')
+      setCreating(false); setProgress('')
+    }
+  }
+
+  // ── Acciones sobre publicaciones ──────────────────────────
   async function handleDelete(id: string) {
     if (!confirm('¿Mover a papelera?')) return
     await api.publications.delete(id)
@@ -49,7 +112,6 @@ export default function Publications() {
   }
 
   async function handleRestore(id: string) {
-    // El backend no tiene endpoint de restore aún — se elimina de la papelera local
     setTrash((prev) => prev.filter((p) => p.id !== id))
   }
 
@@ -63,184 +125,211 @@ export default function Publications() {
     setAll((prev) => prev.map((p) => (p.id === id ? res.data : p)))
   }
 
-  const filtered = all.filter((p) => {
-    const matchSearch = !search || p.title.toLowerCase().includes(search.toLowerCase())
-    const matchStatus = !status || p.status === status
-    const matchCat    = !category || p.category === category
-    return matchSearch && matchStatus && matchCat
-  })
-
-  const uniqueCategories = [...new Set(all.map((p) => p.category).filter(Boolean))]
+  const filtered = all.filter((p) =>
+    !search || p.title.toLowerCase().includes(search.toLowerCase())
+  )
 
   if (loading) return <div style={s.loading}>Cargando...</div>
 
   return (
     <div style={s.page}>
-      <div style={s.inner}>
 
-        {/* ── Header ── */}
-        <div style={s.topBar}>
-          <div>
-            <h1 style={s.pageTitle}>Mis Flipbooks</h1>
-            <p style={s.pageSubtitle}>{all.length} publicación{all.length !== 1 ? 'es' : ''}</p>
-          </div>
-          <Link to="/publications/new">
-            <button className="btn btn-primary">+ Nuevo flipbook</button>
-          </Link>
-        </div>
+      {/* ── Modal de creación ── */}
+      {showModal && (
+        <div style={s.overlay} onClick={(e) => e.target === e.currentTarget && closeModal()}>
+          <div style={s.modal}>
+            <div style={s.modalHeader}>
+              <h2 style={s.modalTitle}>Nuevo flipbook</h2>
+              <button style={s.closeBtn} onClick={closeModal} disabled={creating}>✕</button>
+            </div>
 
-        {/* ── Tabs ── */}
-        <div style={s.tabs}>
-          <button style={{ ...s.tab, ...(tab === 'active' ? s.tabActive : {}) }} onClick={() => setTab('active')}>
-            Publicaciones ({all.length})
-          </button>
-          <button style={{ ...s.tab, ...(tab === 'trash' ? s.tabActive : {}) }} onClick={() => setTab('trash')}>
-            Papelera ({trash.length})
-          </button>
-        </div>
-
-        {tab === 'active' && (
-          <>
-            {/* ── Barra de búsqueda y filtros ── */}
-            <div style={s.filterBar}>
+            {/* Zona drag & drop */}
+            <div
+              style={{
+                ...s.dropZone,
+                borderColor: isDragOver ? '#4f46e5' : '#c7d2fe',
+                background:  isDragOver ? '#eef2ff' : '#fafafe',
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={(e) => { e.preventDefault(); setIsDragOver(false); addFiles(e.dataTransfer.files) }}
+            >
+              <div style={{ fontSize: 40 }}>📤</div>
+              <div style={s.dropTitle}>Arrastrá tus imágenes aquí</div>
+              <div style={s.dropSub}>o hacé click para seleccionar</div>
+              <div style={s.dropFormats}>JPG · PNG · WEBP &nbsp;·&nbsp; Múltiples archivos &nbsp;·&nbsp; Máx. 10 MB c/u</div>
               <input
-                className="input"
-                style={{ maxWidth: 280 }}
-                placeholder="Buscar por nombre..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".jpg,.jpeg,.png,.webp"
+                style={{ display: 'none' }}
+                onChange={(e) => addFiles(e.target.files)}
               />
-              <select
-                className="input"
-                style={{ width: 'auto' }}
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-              >
-                {STATUS_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-              <select
-                className="input"
-                style={{ width: 'auto' }}
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-              >
-                <option value="">Todas las categorías</option>
-                {uniqueCategories.map((c) => (
-                  <option key={c} value={c}>{CATEGORIES[c] ?? c}</option>
-                ))}
-              </select>
-              {(search || status || category) && (
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => { setSearch(''); setStatus(''); setCategory('') }}
-                >
-                  Limpiar filtros
+            </div>
+
+            {/* Previews */}
+            {previews.length > 0 && (
+              <div style={s.previewRow}>
+                <div style={s.previewCount}>{previews.length} imagen{previews.length !== 1 ? 'es' : ''} seleccionada{previews.length !== 1 ? 's' : ''}</div>
+                <div style={s.previewScroll}>
+                  {previews.map((src, i) => (
+                    <div key={i} style={s.previewThumb}>
+                      <img src={src} style={s.previewImg} />
+                      <button style={s.previewDel} onClick={() => removeFile(i)}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={handleCreate} style={s.modalForm}>
+              <div style={s.formField}>
+                <label style={s.formLabel}>Nombre del flipbook *</label>
+                <input
+                  style={s.formInput}
+                  required
+                  placeholder="Ej: Catálogo Temporada 2025"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  disabled={creating}
+                />
+              </div>
+              <div style={s.formField}>
+                <label style={s.formLabel}>Categoría</label>
+                <select style={s.formInput} value={category} onChange={(e) => setCategory(e.target.value)} disabled={creating}>
+                  {CAT_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </div>
+              {progress && <div style={s.progressText}>{progress}</div>}
+              {modalError && <div style={s.errorText}>{modalError}</div>}
+              <div style={s.modalFooter}>
+                <button type="button" style={s.btnCancel} onClick={closeModal} disabled={creating}>Cancelar</button>
+                <button type="submit" style={{ ...s.btnCreate, opacity: creating ? 0.7 : 1 }} disabled={creating || !title.trim()}>
+                  {creating ? 'Creando...' : 'Crear flipbook →'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Header ── */}
+      <div style={s.topBar}>
+        <h1 style={s.pageTitle}>Mis Flipbooks</h1>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <input
+            style={s.searchInput}
+            placeholder="Buscar..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <button style={s.btnNew} onClick={openModal}>+ Subir</button>
+        </div>
+      </div>
+
+      {/* ── Tabs ── */}
+      <div style={s.tabs}>
+        <button style={{ ...s.tabBtn, ...(tab === 'active' ? s.tabActive : {}) }} onClick={() => setTab('active')}>
+          Mis archivos ({all.length})
+        </button>
+        <button style={{ ...s.tabBtn, ...(tab === 'trash' ? s.tabActive : {}) }} onClick={() => setTab('trash')}>
+          Papelera ({trash.length})
+        </button>
+      </div>
+
+      {/* ── Contenido ── */}
+      {tab === 'active' && (
+        <>
+          {filtered.length === 0 ? (
+            <div style={s.emptyState}>
+              <div style={{ fontSize: 56, marginBottom: 16, opacity: 0.4 }}>📂</div>
+              <div style={s.emptyTitle}>{search ? 'Sin resultados' : 'Aún no hay archivos'}</div>
+              <div style={s.emptySub}>{search ? 'Probá con otro término.' : 'Subí tus imágenes para crear tu primer flipbook.'}</div>
+              {!search && (
+                <button style={{ ...s.btnNew, marginTop: 20, padding: '12px 28px', fontSize: 15 }} onClick={openModal}>
+                  Cargar ahora
                 </button>
               )}
             </div>
+          ) : (
+            <div style={s.grid}>
+              {filtered.map((pub) => (
+                <PubCard
+                  key={pub.id}
+                  pub={pub}
+                  onDelete={() => handleDelete(pub.id)}
+                  onPublish={() => handlePublish(pub.id)}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
-            {/* ── Grid ── */}
-            {filtered.length === 0 ? (
-              <div className="card" style={s.empty}>
-                <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
-                <p>{search || status || category ? 'No hay resultados para los filtros aplicados.' : 'No tenés publicaciones aún.'}</p>
-                {!search && !status && !category && (
-                  <Link to="/publications/new" style={{ marginTop: 12 }}>
-                    <button className="btn btn-primary">Crear mi primer flipbook</button>
-                  </Link>
-                )}
-              </div>
-            ) : (
-              <div style={s.grid}>
-                {filtered.map((pub) => (
-                  <PubCard
-                    key={pub.id}
-                    pub={pub}
-                    onDelete={() => handleDelete(pub.id)}
-                    onPublish={() => handlePublish(pub.id)}
-                  />
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {tab === 'trash' && (
-          <div>
-            {trash.length === 0 ? (
-              <div className="card" style={s.empty}>
-                <div style={{ fontSize: 40, marginBottom: 12 }}>🗑️</div>
-                <p>La papelera está vacía.</p>
-              </div>
-            ) : (
-              <div style={s.grid}>
-                {trash.map((pub) => (
-                  <TrashCard
-                    key={pub.id}
-                    pub={pub}
-                    onRestore={() => handleRestore(pub.id)}
-                    onDelete={() => handlePermanentDelete(pub.id)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* ── Botón flotante ── */}
-      <Link to="/publications/new" style={s.fab} title="Nuevo flipbook">+</Link>
+      {tab === 'trash' && (
+        <>
+          {trash.length === 0 ? (
+            <div style={s.emptyState}>
+              <div style={{ fontSize: 56, marginBottom: 16, opacity: 0.4 }}>🗑️</div>
+              <div style={s.emptyTitle}>La papelera está vacía</div>
+            </div>
+          ) : (
+            <div style={s.grid}>
+              {trash.map((pub) => (
+                <TrashCard key={pub.id} pub={pub} onRestore={() => handleRestore(pub.id)} onDelete={() => handlePermanentDelete(pub.id)} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
 
 function PubCard({ pub, onDelete, onPublish }: { pub: any; onDelete: () => void; onPublish: () => void }) {
+  const [hover, setHover] = useState(false)
   const isPublished = pub.status === 'published'
-  const catLabel = CATEGORIES[pub.category ?? ''] ?? pub.category ?? '—'
 
   return (
-    <div className="card" style={s.card}>
-      {pub.cover_image_url ? (
-        <img src={pub.cover_image_url} alt={pub.title} style={s.cover} />
-      ) : (
-        <div style={s.coverPlaceholder}>📄</div>
-      )}
-      <div style={s.cardBody}>
-        <div style={s.cardTop}>
-          <span style={s.cardTitle}>{pub.title}</span>
-          <span className={`badge ${isPublished ? 'badge-success' : 'badge-warning'}`}>
-            {isPublished ? 'Publicado' : 'Borrador'}
-          </span>
+    <div
+      style={{ ...s.card, boxShadow: hover ? '0 4px 20px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.07)' }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <div style={s.coverWrap}>
+        {pub.cover_image_url
+          ? <img src={pub.cover_image_url} alt={pub.title} style={s.coverImg} />
+          : <div style={s.coverPlaceholder}><span style={{ fontSize: 40, opacity: 0.3 }}>📄</span></div>
+        }
+        {hover && (
+          <div style={s.hoverOverlay}>
+            <Link to={`/publications/${pub.id}/editor`} style={{ textDecoration: 'none' }}>
+              <button style={s.overlayBtn}>Editar</button>
+            </Link>
+            <Link to={`/publications/${pub.id}/preview`} style={{ textDecoration: 'none' }}>
+              <button style={s.overlayBtn}>Vista previa</button>
+            </Link>
+          </div>
+        )}
+        <div style={{ ...s.statusBadge, background: isPublished ? '#d1fae5', color: '#065f46' }}>
+          {isPublished ? 'Publicado' : 'Borrador'}
         </div>
+      </div>
+      <div style={s.cardInfo}>
+        <div style={s.cardName}>{pub.title}</div>
         <div style={s.cardMeta}>
-          {pub.category && <span className="badge badge-free">{catLabel}</span>}
-          <span style={{ color: 'var(--color-muted)', fontSize: 'var(--text-xs)' }}>
-            📄 {pub.page_count ?? 0} páginas · 👁 {pub.views_count ?? 0} vistas
-          </span>
-        </div>
-        <div style={s.cardDate}>
-          {new Date(pub.created_at).toLocaleDateString('es', { day: '2-digit', month: 'short', year: 'numeric' })}
+          {pub.page_count ?? 0} páginas · {pub.views_count ?? 0} vistas
         </div>
         <div style={s.cardActions}>
-          <Link to={`/publications/${pub.id}/editor`}>
-            <button className="btn btn-secondary btn-sm">Editar</button>
-          </Link>
-          <Link to={`/publications/${pub.id}/preview`}>
-            <button className="btn btn-secondary btn-sm">Vista previa</button>
-          </Link>
           <Link to={`/publications/${pub.id}/settings`}>
-            <button className="btn btn-secondary btn-sm">⚙️</button>
+            <button style={s.actionBtn}>⚙️</button>
           </Link>
           {!isPublished && (
-            <button className="btn btn-sm" style={{ background: 'var(--color-success)', color: '#fff' }} onClick={onPublish}>
-              Publicar
-            </button>
+            <button style={{ ...s.actionBtn, color: '#059669', fontWeight: 600 }} onClick={onPublish}>Publicar</button>
           )}
-          <button className="btn btn-sm" style={{ color: 'var(--color-danger)', marginLeft: 'auto' }} onClick={onDelete}>
-            🗑️
-          </button>
+          <button style={{ ...s.actionBtn, color: '#ef4444', marginLeft: 'auto' }} onClick={onDelete}>🗑️</button>
         </div>
       </div>
     </div>
@@ -249,16 +338,18 @@ function PubCard({ pub, onDelete, onPublish }: { pub: any; onDelete: () => void;
 
 function TrashCard({ pub, onRestore, onDelete }: { pub: any; onRestore: () => void; onDelete: () => void }) {
   return (
-    <div className="card" style={{ ...s.card, opacity: 0.8 }}>
-      {pub.cover_image_url
-        ? <img src={pub.cover_image_url} alt={pub.title} style={{ ...s.cover, filter: 'grayscale(60%)' }} />
-        : <div style={s.coverPlaceholder}>📄</div>
-      }
-      <div style={s.cardBody}>
-        <span style={s.cardTitle}>{pub.title}</span>
+    <div style={{ ...s.card, opacity: 0.75 }}>
+      <div style={s.coverWrap}>
+        {pub.cover_image_url
+          ? <img src={pub.cover_image_url} alt={pub.title} style={{ ...s.coverImg, filter: 'grayscale(70%)' }} />
+          : <div style={s.coverPlaceholder}><span style={{ fontSize: 40, opacity: 0.3 }}>📄</span></div>
+        }
+      </div>
+      <div style={s.cardInfo}>
+        <div style={s.cardName}>{pub.title}</div>
         <div style={s.cardActions}>
-          <button className="btn btn-secondary btn-sm" onClick={onRestore}>↩ Restaurar</button>
-          <button className="btn btn-danger btn-sm" onClick={onDelete}>Eliminar definitivo</button>
+          <button style={{ ...s.actionBtn, color: '#4f46e5' }} onClick={onRestore}>↩ Restaurar</button>
+          <button style={{ ...s.actionBtn, color: '#ef4444', marginLeft: 'auto' }} onClick={onDelete}>Eliminar</button>
         </div>
       </div>
     </div>
@@ -266,48 +357,73 @@ function TrashCard({ pub, onRestore, onDelete }: { pub: any; onRestore: () => vo
 }
 
 const s: Record<string, React.CSSProperties> = {
-  page:    { minHeight: '100vh', position: 'relative' },
-  loading: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--color-muted)' },
-  inner:   { padding: '2rem', maxWidth: 1200, margin: '0 auto' },
-  topBar:  { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' },
-  pageTitle:    { fontSize: 'var(--text-2xl)', fontWeight: 700, margin: 0 },
-  pageSubtitle: { fontSize: 'var(--text-sm)', color: 'var(--color-muted)', marginTop: 4 },
+  page:    { padding: '2rem', maxWidth: 1200, margin: '0 auto', minHeight: '100vh' },
+  loading: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#6b7280' },
 
-  tabs:      { display: 'flex', gap: 4, borderBottom: '2px solid var(--color-border)', marginBottom: '1.5rem' },
-  tab:       { background: 'none', border: 'none', padding: '10px 16px', fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--color-muted)', cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: -2, transition: 'color .15s' },
-  tabActive: { color: 'var(--color-primary)', borderBottomColor: 'var(--color-primary)' },
+  topBar:  { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' },
+  pageTitle: { fontSize: 22, fontWeight: 700, color: '#111827', margin: 0 },
+  searchInput: { border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', fontSize: 13, outline: 'none', width: 200, background: '#fff' },
+  btnNew:  { background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 
-  filterBar: { display: 'flex', gap: 10, marginBottom: '1.5rem', flexWrap: 'wrap' as const, alignItems: 'center' },
+  tabs:    { display: 'flex', gap: 0, borderBottom: '2px solid #f3f4f6', marginBottom: '1.5rem' },
+  tabBtn:  { background: 'none', border: 'none', borderBottom: '2px solid transparent', padding: '10px 18px', fontSize: 13, fontWeight: 500, color: '#6b7280', cursor: 'pointer', marginBottom: -2 },
+  tabActive: { color: '#4f46e5', borderBottomColor: '#4f46e5', fontWeight: 600 },
 
-  grid:  { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' },
-  card:  { padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
-  cover: { width: '100%', height: 160, objectFit: 'cover' as const, display: 'block' },
-  coverPlaceholder: { height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, background: 'var(--color-surface)' },
-  cardBody:    { padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1 },
-  cardTop:     { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
-  cardTitle:   { fontWeight: 600, fontSize: 'var(--text-sm)', flex: 1, lineHeight: 1.3 },
-  cardMeta:    { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' as const },
-  cardDate:    { fontSize: 'var(--text-xs)', color: 'var(--color-muted)' },
-  cardActions: { display: 'flex', gap: 6, flexWrap: 'wrap' as const, marginTop: 4 },
+  grid:    { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 },
 
-  empty: { textAlign: 'center', padding: '3rem', color: 'var(--color-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center' },
+  card:       { background: '#fff', borderRadius: 10, overflow: 'hidden', border: '1px solid #e5e7eb', transition: 'box-shadow 0.18s' },
+  coverWrap:  { position: 'relative', height: 150, background: '#f8fafc' },
+  coverImg:   { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
+  coverPlaceholder: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  hoverOverlay: { position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  overlayBtn: { background: '#fff', color: '#111827', border: 'none', borderRadius: 6, padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
+  statusBadge: { position: 'absolute', top: 8, right: 8, fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10 },
 
-  fab: {
-    position: 'fixed',
-    bottom: 32,
-    right: 32,
-    width: 52,
-    height: 52,
-    borderRadius: '50%',
-    background: 'var(--color-primary)',
-    color: '#fff',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 28,
-    boxShadow: '0 4px 16px rgba(79,70,229,.4)',
-    textDecoration: 'none',
-    zIndex: 50,
-    transition: 'background .15s, transform .15s',
+  cardInfo:    { padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 6 },
+  cardName:    { fontWeight: 600, fontSize: 13, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  cardMeta:    { fontSize: 11, color: '#9ca3af' },
+  cardActions: { display: 'flex', gap: 4, alignItems: 'center', marginTop: 2 },
+  actionBtn:   { background: 'none', border: 'none', fontSize: 12, cursor: 'pointer', color: '#6b7280', padding: '4px 6px', borderRadius: 4 },
+
+  emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 20px', textAlign: 'center' },
+  emptyTitle: { fontSize: 18, fontWeight: 600, color: '#374151', marginBottom: 8 },
+  emptySub:   { fontSize: 14, color: '#9ca3af' },
+
+  // Modal
+  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  modal:   { background: '#fff', borderRadius: 16, width: 560, maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' },
+  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 24px 16px', borderBottom: '1px solid #f3f4f6' },
+  modalTitle: { fontSize: 18, fontWeight: 700, color: '#111827', margin: 0 },
+  closeBtn:   { background: 'none', border: 'none', fontSize: 18, color: '#9ca3af', cursor: 'pointer', lineHeight: 1 },
+
+  dropZone: {
+    margin: '20px 24px 0',
+    borderRadius: 12,
+    border: '2px dashed #c7d2fe',
+    padding: '32px 20px',
+    textAlign: 'center',
+    cursor: 'pointer',
+    transition: 'border-color 0.18s, background 0.18s',
+    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
   },
+  dropTitle:   { fontSize: 15, fontWeight: 600, color: '#374151' },
+  dropSub:     { fontSize: 13, color: '#9ca3af' },
+  dropFormats: { fontSize: 11, color: '#c7d2fe', marginTop: 4, fontWeight: 500 },
+
+  previewRow:   { padding: '16px 24px 0' },
+  previewCount: { fontSize: 12, color: '#6b7280', marginBottom: 8, fontWeight: 500 },
+  previewScroll: { display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 },
+  previewThumb:  { position: 'relative', flexShrink: 0 },
+  previewImg:    { width: 72, height: 90, objectFit: 'cover', borderRadius: 6, display: 'block', border: '1px solid #e5e7eb' },
+  previewDel:    { position: 'absolute', top: -6, right: -6, background: '#ef4444', color: '#fff', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1 },
+
+  modalForm:   { padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 },
+  formField:   { display: 'flex', flexDirection: 'column', gap: 4 },
+  formLabel:   { fontSize: 12, fontWeight: 600, color: '#374151' },
+  formInput:   { border: '1px solid #e5e7eb', borderRadius: 8, padding: '9px 12px', fontSize: 13, outline: 'none', background: '#fff', width: '100%', boxSizing: 'border-box' as const },
+  progressText: { fontSize: 13, color: '#4f46e5', fontWeight: 500, textAlign: 'center' as const },
+  errorText:    { fontSize: 13, color: '#ef4444', textAlign: 'center' as const },
+  modalFooter: { display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 },
+  btnCancel:   { background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 8, padding: '9px 18px', fontSize: 13, fontWeight: 500, cursor: 'pointer' },
+  btnCreate:   { background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 }
