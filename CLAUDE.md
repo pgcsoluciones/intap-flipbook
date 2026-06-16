@@ -109,6 +109,7 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 | `beb23b0` | Fase 10c — Navegador de páginas en editor, viewer: quiz/embed/popup_banner/hotspots/audio/video completos |
 | `e93f1fd` | Fase 10d — Recursos admin: subida con Examinar + arrastrar/soltar (FileField) |
 | `dc3278d` | Fix — Fabric.js via CDN en dashboard (bundle −310 KB, build sin npm install) |
+| `cb79b47` | Fix — quitar `--remote` de `wrangler r2 object put` en import_templates.py |
 
 ### Qué está implementado
 
@@ -161,6 +162,19 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 - Tecla Delete elimina elemento del canvas
 - `fabric` externalizado en Vite → build sin `npm install` previo
 - Tabla `publication_views` creada en D1 ✅
+- Script `import_templates.py`: flag `--remote` eliminado de `wrangler r2 object put` (solo es necesario en `d1 execute`) ✅
+
+### 🔄 Script import_templates.py — cómo usarlo
+```bash
+# Desde Mac de Juan, en la carpeta apps/api:
+cd ~/intap-flipbook/apps/api
+git pull origin claude/kind-shannon-udb4qo   # obtener el fix
+# Dry-run primero (no sube nada, muestra lo que haría):
+python3 scripts/import_templates.py ~/Downloads/intap_flip_generic_templates_v3.zip --dry-run
+# Ejecución real:
+python3 scripts/import_templates.py ~/Downloads/intap_flip_generic_templates_v3.zip
+```
+El script es **idempotente** (se puede volver a correr sin duplicar datos — borra y re-inserta por nombre de plantilla).
 
 ### ⚠️ Pendiente verificar
 - **AdminModules toggle**: claves en D1 (`sound`, `editor`, `links`...) no coinciden con frontend (`editor_canvas`, `active_links`, `page_sound`...). El toggle no persiste.
@@ -221,9 +235,10 @@ npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase8b.sql --r
 | Tarea | Estado |
 |-------|--------|
 | Deploy Worker para `/view` con canvas_json | **Pendiente (Juan)** |
+| Importar plantillas ZIP a R2 + D1 (re-correr script) | **Pendiente (Juan)** — hacer `git pull` y volver a ejecutar |
 | Acción `show_hide` en viewer (elementos nombrados) | Pendiente |
 | Alinear claves de módulos (frontend ↔ DB) | Pendiente |
-| Migración D1 tablas nuevas (modules, publication_views) | Pendiente verificar |
+| Migración D1 tablas nuevas (modules, publication_views) | `publication_views` ✅, `modules`/`plan_modules` pendiente verificar |
 | Editor: mejorar visual al estilo FlipHTML5 (puntos activos, biblioteca elementos) | Planificado |
 | Dominios personalizados (`*.intapflipbook.com`) | No configurado |
 | Pagos / Stripe | No iniciado |
