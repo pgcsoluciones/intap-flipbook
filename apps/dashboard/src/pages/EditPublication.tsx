@@ -325,7 +325,7 @@ function PropsPanel({ obj, canvas }: { obj: any; canvas: any }) {
         <>
           <PropGroup label="Texto">
             <textarea className="input" style={{ height: 60, resize: 'vertical' }}
-              defaultValue={(obj as fabric.Textbox).text ?? ''}
+              defaultValue={(obj as any).text ?? ''}
               onChange={(e) => { (obj as any).set('text', e.target.value); canvas?.renderAll() }} />
           </PropGroup>
           <PropGroup label="Tamaño de fuente">
