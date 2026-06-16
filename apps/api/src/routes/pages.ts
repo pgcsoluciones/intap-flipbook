@@ -80,6 +80,7 @@ pages.put('/pages/:pageId', async (c) => {
     description?: string
     price?: string
     page_number?: number
+    canvas_json?: string
   }>()
 
   await c.env.DB.prepare(
@@ -87,10 +88,11 @@ pages.put('/pages/:pageId', async (c) => {
      SET title = COALESCE(?, title),
          description = COALESCE(?, description),
          price = COALESCE(?, price),
-         page_number = COALESCE(?, page_number)
+         page_number = COALESCE(?, page_number),
+         canvas_json = COALESCE(?, canvas_json)
      WHERE id = ?`,
   )
-    .bind(body.title ?? null, body.description ?? null, body.price ?? null, body.page_number ?? null, pageId)
+    .bind(body.title ?? null, body.description ?? null, body.price ?? null, body.page_number ?? null, body.canvas_json ?? null, pageId)
     .run()
 
   await c.env.DB.prepare(`UPDATE publications SET updated_at = datetime('now') WHERE id = ?`)

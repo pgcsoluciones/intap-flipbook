@@ -56,6 +56,8 @@ export const api = {
       }),
     update: (pageId: string, body: Record<string, unknown>) =>
       request<{ success: true; data: any }>(`/api/pages/${pageId}`, { method: 'PUT', body: JSON.stringify(body) }),
+    saveCanvas: (pageId: string, canvasJson: string) =>
+      request<{ success: true; data: any }>(`/api/pages/${pageId}`, { method: 'PUT', body: JSON.stringify({ canvas_json: canvasJson }) }),
     delete: (pageId: string) =>
       request<{ success: true; data: any }>(`/api/pages/${pageId}`, { method: 'DELETE' }),
     reorder: (publicationId: string, pageIds: string[]) =>

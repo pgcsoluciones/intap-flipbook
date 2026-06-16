@@ -3,9 +3,10 @@ import { useRef, useState } from 'react'
 interface Props {
   onUpload: (file: File) => Promise<void>
   uploading: boolean
+  compact?: boolean
 }
 
-export default function ImageUploader({ onUpload, uploading }: Props) {
+export default function ImageUploader({ onUpload, uploading, compact }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
 
@@ -35,7 +36,7 @@ export default function ImageUploader({ onUpload, uploading }: Props) {
 
   return (
     <div
-      style={{ ...styles.zone, opacity: busy ? 0.8 : 1, cursor: busy ? 'not-allowed' : 'pointer' }}
+      style={{ ...styles.zone, ...(compact ? styles.zoneCompact : {}), opacity: busy ? 0.8 : 1, cursor: busy ? 'not-allowed' : 'pointer' }}
       onClick={() => !busy && inputRef.current?.click()}
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
@@ -50,12 +51,14 @@ export default function ImageUploader({ onUpload, uploading }: Props) {
       />
       {progress ? (
         <>
-          <p style={styles.icon}>⏳</p>
-          <p style={styles.text}>Subiendo {progress.done} de {progress.total} imágenes...</p>
+          {!compact && <p style={styles.icon}>⏳</p>}
+          <p style={styles.text}>{compact ? `${progress.done}/${progress.total}` : `Subiendo ${progress.done} de ${progress.total} imágenes...`}</p>
           <div style={styles.barBg}>
             <div style={{ ...styles.barFill, width: `${(progress.done / progress.total) * 100}%` }} />
           </div>
         </>
+      ) : compact ? (
+        <p style={{ margin: 0, color: '#4f46e5', fontSize: '0.8rem', fontWeight: 500 }}>+ Agregar página</p>
       ) : (
         <>
           <p style={styles.icon}>📷</p>
@@ -70,6 +73,7 @@ export default function ImageUploader({ onUpload, uploading }: Props) {
 
 const styles: Record<string, React.CSSProperties> = {
   zone: { border: '2px dashed #c7d2fe', borderRadius: 12, padding: '2rem', textAlign: 'center', marginBottom: '1rem', transition: 'background .15s' },
+  zoneCompact: { padding: '0.5rem', borderRadius: 8, marginBottom: 0 },
   icon: { fontSize: '2rem', margin: '0 0 0.5rem' },
   text: { color: '#4f46e5', fontWeight: 500, margin: '0 0 0.25rem' },
   hint: { color: '#999', fontSize: '0.8rem', margin: 0 },
