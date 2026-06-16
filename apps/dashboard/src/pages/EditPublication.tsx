@@ -128,7 +128,8 @@ export default function EditPublication() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
   const pageIdRef = useRef<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)      // para agregar PÁGINAS nuevas
+  const imgInputRef  = useRef<HTMLInputElement>(null)      // para insertar imagen como ELEMENTO del canvas
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
 
@@ -303,6 +304,29 @@ export default function EditPublication() {
     })
     c.add(btn); c.setActiveObject(btn); c.requestRenderAll()
     setActiveTool('buttons')
+  }
+
+  // Inserta la imagen como un objeto editable Fabric sobre el canvas actual (NO crea página nueva)
+  async function addImageElement(file: File) {
+    const c = fabricRef.current; if (!c) return
+    setUploading(true)
+    try {
+      const up = await api.upload(file)
+      if (!up.success) throw new Error('Upload falló')
+      fabric.Image.fromURL(up.data.url, (img: any) => {
+        // Escala la imagen para que no ocupe más del 60 % del ancho del canvas
+        const maxW = c.getWidth() * 0.6
+        if (img.width > maxW) img.scaleToWidth(maxW)
+        img.set({ left: 60, top: 60, data: { kind: 'image', src: up.data.url } })
+        c.add(img); c.setActiveObject(img); c.requestRenderAll()
+        scheduleAutosave()
+      })
+    } finally { setUploading(false) }
+  }
+  async function handleImgInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    for (const file of files) await addImageElement(file)
   }
 
   function addLinkZone() {
@@ -483,6 +507,8 @@ export default function EditPublication() {
               addShape={addShape}
               addButton={addButton}
               addLinkZone={addLinkZone}
+              imgInputRef={imgInputRef}
+              uploadingImg={uploading}
             />
           </aside>
         )}
@@ -542,6 +568,16 @@ export default function EditPublication() {
         </aside>
       </div>
 
+      {/* Input para insertar imagen como elemento editable del canvas */}
+      <input
+        ref={imgInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleImgInputChange}
+      />
+      {/* Input para agregar páginas nuevas al flipbook */}
       <input
         ref={fileInputRef}
         type="file"
@@ -642,10 +678,17 @@ function ContextPanel(p: any) {
       return (
         <>
           <PanelTitle title={p.tool === 'image' ? 'Imagen' : 'Cargas'} />
-          <button style={cp.primaryBtn} onClick={() => p.fileInputRef.current?.click()} disabled={p.uploading}>
-            {p.uploading ? 'Subiendo...' : 'Subir imágenes'}
+          {/* Insertar como elemento editable (NO crea página) */}
+          <button style={cp.primaryBtn} onClick={() => p.imgInputRef.current?.click()} disabled={p.uploadingImg}>
+            {p.uploadingImg ? 'Subiendo...' : 'Insertar imagen en la página'}
           </button>
-          <p style={cp.hint}>Cada imagen subida se agrega como una nueva página del flipbook.</p>
+          <p style={cp.hint}>La imagen se agrega como elemento editable sobre la página actual. Podés moverla, escalarla y asignarle una acción.</p>
+          <div style={{ height: 1, background: '#f3f4f6', margin: '14px 0' }} />
+          {/* Agregar como nueva página del flipbook */}
+          <button style={{ ...cp.primaryBtn, background: '#64748b' }} onClick={() => p.fileInputRef.current?.click()} disabled={p.uploading}>
+            {p.uploading ? 'Subiendo...' : '+ Agregar como nueva página'}
+          </button>
+          <p style={cp.hint}>Agrega la imagen como página nueva del flipbook (igual que en el panel Páginas).</p>
         </>
       )
 
@@ -885,21 +928,25 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
           </>
         )}
 
-        {/* ── BOTÓN ── */}
+        {/* ── BOTÓN: estilo visual + acción ── */}
         {kind === 'button' && (
           <ButtonProps obj={obj} canvas={canvas} pages={pages} setData={setData} onChange={onChange} />
         )}
 
-        {/* ── ZONA DE ENLACE ── */}
-        {kind === 'linkzone' && (
-          <ActionEditor data={(obj as any).data} pages={pages} setData={setData} />
-        )}
-
-        {/* ── IMAGEN ── */}
+        {/* ── IMAGEN: sugerencia de uso ── */}
         {kind === 'image' && (
           <PropGroup label="Imagen">
-            <p style={cp.hint}>Usa las esquinas del lienzo para redimensionar y rotar.</p>
+            <p style={cp.hint}>Usa las esquinas para redimensionar y rotar. Asigna una acción abajo.</p>
           </PropGroup>
+        )}
+
+        {/* ── ACCIÓN: disponible para TODOS los elementos que no sean botón
+            (el botón ya incluye su propio ActionEditor dentro de ButtonProps) ── */}
+        {kind !== 'button' && (
+          <>
+            <div style={s.actionDivider}>Acción al hacer clic</div>
+            <ActionEditor data={(obj as any).data ?? {}} pages={pages} setData={setData} />
+          </>
         )}
 
         <button style={s.deleteBtn} onClick={() => { canvas?.remove(obj); canvas?.requestRenderAll(); onChange() }}>Eliminar elemento</button>
