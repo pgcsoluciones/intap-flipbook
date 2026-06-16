@@ -38,8 +38,8 @@ async function init() {
   const container = document.getElementById('flipbook')
   const portrait = window.innerWidth < 700
   const pageWidth = portrait
-    ? Math.min(380, window.innerWidth - 20)
-    : Math.min(480, Math.floor(window.innerWidth / 2) - 40)
+    ? Math.min(360, window.innerWidth - 20)
+    : Math.min(460, Math.floor(window.innerWidth / 2) - 60)
   const pageHeight = Math.floor(pageWidth * 1.414)
 
   data.pages.forEach((page) => {
@@ -75,13 +75,12 @@ async function init() {
     container.appendChild(div)
   })
 
-  // Esperar que todas las imágenes carguen antes de inicializar StPageFlip
   await waitForImages(container.querySelectorAll('img'))
 
   const pageFlip = new St.PageFlip(container, {
     width: pageWidth,
     height: pageHeight,
-    showCover: false,
+    showCover: true,
     mobileScrollSupport: false,
     usePortrait: portrait,
     drawShadow: false,
@@ -94,14 +93,35 @@ async function init() {
 
   pageFlip.loadFromHTML(document.querySelectorAll('.page'))
 
+  // Centrar el libro según si muestra portada/contraportada (1 página) o spread (2 páginas)
+  function centerBook() {
+    if (portrait) return
+    const total = pageFlip.getPageCount()
+    const idx = pageFlip.getCurrentPageIndex()
+    const wrap = document.getElementById('flipbook-container')
+    const isSinglePage = idx === 0 || idx >= total - 1
+    // En modo libro cerrado (portada/contraportada) centramos la página sola
+    wrap.style.justifyContent = isSinglePage ? 'center' : 'center'
+    container.style.marginLeft = (idx === 0) ? `${pageWidth / 2}px`
+      : (idx >= total - 1) ? `-${pageWidth / 2}px`
+      : '0'
+  }
+
   pageFlip.on('flip', () => {
     if (soundEnabled) {
       flipSound.currentTime = 0
       flipSound.play().catch(() => {})
     }
     updatePageInfo(pageFlip)
+    centerBook()
   })
 
+  pageFlip.on('changeState', () => {
+    updatePageInfo(pageFlip)
+    centerBook()
+  })
+
+  centerBook()
   updatePageInfo(pageFlip)
 
   document.getElementById('btn-prev').addEventListener('click', () => pageFlip.flipPrev())
@@ -114,6 +134,7 @@ async function init() {
   window.addEventListener('resize', () => {
     const p = window.innerWidth < 700
     pageFlip.updateState({ orientation: p ? 'portrait' : 'landscape' })
+    centerBook()
   })
 }
 
