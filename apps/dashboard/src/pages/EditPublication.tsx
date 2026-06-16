@@ -16,12 +16,12 @@ export default function EditPublication() {
   const [saving, setSaving]         = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [tool, setTool]   = useState<Tool>('select')
-  const [selected, setSelected] = useState<fabric.Object | null>(null)
+  const [selected, setSelected] = useState<any>(null)
   const [zoom, setZoom]   = useState(100)
   const [msg, setMsg]     = useState('')
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const fabricRef = useRef<fabric.Canvas | null>(null)
+  const fabricRef = useRef<any>(null)
   const pageIdRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -82,7 +82,7 @@ export default function EditPublication() {
     c.defaultCursor = tool === 'select' ? 'default' : 'crosshair'
   }, [tool])
 
-  async function persistCanvas(pageId: string, canvas: fabric.Canvas) {
+  async function persistCanvas(pageId: string, canvas: any) {
     try { await api.pages.saveCanvas(pageId, JSON.stringify(canvas.toJSON())) } catch {}
   }
 
@@ -291,7 +291,7 @@ export default function EditPublication() {
   )
 }
 
-function PropsPanel({ obj, canvas }: { obj: fabric.Object; canvas: fabric.Canvas | null }) {
+function PropsPanel({ obj, canvas }: { obj: any; canvas: any }) {
   const update = (props: any) => { obj.set(props); canvas?.renderAll() }
   const isText = obj instanceof fabric.Textbox || obj instanceof fabric.Text
   const fill = typeof obj.fill === 'string' ? obj.fill : '#000000'
