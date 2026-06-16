@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 
 [vars]
-CORS_ORIGIN = "https://intap-flipbook-dashboard.pages.dev,https://f9ade95a.intap-flipbook-dashboard.pages.dev"
+CORS_ORIGIN = "https://intap-flipbook-dashboard.pages.dev,https://f9ade95a.intap-flipbook-dashboard.pages.dev,https://intap-flipbook-viewer.pages.dev"
 JWT_EXPIRY_DAYS = "7"
 R2_PUBLIC_BASE_URL = "https://pub-b720f233e0f84125b246181d82f993da.r2.dev"
 
