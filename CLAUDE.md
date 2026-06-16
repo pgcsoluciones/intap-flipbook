@@ -92,7 +92,7 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 
 ---
 
-## ✅ Estado actual — Fases 1–9 completadas
+## ✅ Estado actual — Fases 1–10 completadas y en producción
 
 | Commit | Contenido |
 |--------|-----------|
@@ -104,6 +104,11 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 | `d886178` | Fase 8 — Super Admin panel completo (13 páginas + API expandida) |
 | `0c0f7b8` | Fase 9 — Rediseño Publications (modal drag&drop) + Editor profesional |
 | `d6cf15d` | Fix — null guard páginas ilimitadas, toggle módulos, AdminStats resiliente |
+| `666705a` | Fase 10a — Tipografías, galería de iconos SVG, widgets interactivos (11 tipos) |
+| `915de4a` | Fase 10b — Banco de imágenes del proyecto en panel Imagen |
+| `beb23b0` | Fase 10c — Navegador de páginas en editor, viewer: quiz/embed/popup_banner/hotspots/audio/video completos |
+| `e93f1fd` | Fase 10d — Recursos admin: subida con Examinar + arrastrar/soltar (FileField) |
+| `dc3278d` | Fix — Fabric.js via CDN en dashboard (bundle −310 KB, build sin npm install) |
 
 ### Qué está implementado
 
@@ -112,24 +117,29 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 - CRUD completo `/api/publications` con límites por plan
 - CRUD páginas + reordenamiento por batch (`PUT /api/publications/:id/pages/reorder`)
 - `POST /api/upload` → R2 (valida JPG/PNG/WEBP, máx. 10 MB, tracking de `size_bytes`)
-- `GET /view/:slug` → endpoint público sin auth (para el viewer)
+- `GET /view/:slug` → endpoint público, devuelve `canvas_json` por página
 - `GET /api/me/usage` → estadísticas de uso del usuario autenticado
 - **Admin routes** `/admin/*`: users, plans, payments, gateways, modules, stats, notifications, promotions, referrals, branding, resources (templates, elements, tutorials)
 
 **Viewer (`apps/viewer`):**
-- StPageFlip via CDN — efecto de voltear páginas
-- Toggle de sonido 🔊/🔇
-- Responsive: portrait en móvil, landscape en desktop
+- StPageFlip via CDN — efecto de voltear páginas + sonido
+- Fabric.js 5.3 via CDN — renderiza `canvas_json` como overlay escalado sobre cada página
+- Acciones al clic: `link`, `page`, `call`, `email`, `whatsapp`, `popup_text`, `popup_image`, `popup_video`, `download`
+- **Widgets completos** (11 tipos): mapa (dirección o URL directa), video (YouTube/Vimeo/MP4 con autoplay/controls/muted/loop/poster), audio (con color de reproductor), QR, tabla CSV, like (localStorage), formulario de contacto (nombre/email/teléfono/comentario/campos obligatorios), cuestionario interactivo, embed HTML, popup cintillo (posición/delay/colores/imagen/botón/auto-dismiss)
+- **Hotspots animados**: div CSS con clases `hs-pulse`, `hs-blink`, `hs-ring`
+- Responsive: portrait móvil, landscape desktop
 
 **Dashboard React (`apps/dashboard`):**
 - Login / Register con JWT guardado en localStorage
-- **Publications**: estilo file manager, modal drag & drop multi-imagen (JPG/PNG/WEBP), preview thumbnails, crea publicación + sube páginas + navega al editor
-- **Editor**: pantalla completa (sin Layout), Fabric.js canvas, sidebar izquierdo de páginas, panel derecho de elementos/propiedades, barra superior con breadcrumb y publicar
-- Vista previa con iframe + link público copiable
-- PlanBadge coloreado (Free / Basic / Pro)
-- UsageBar: barra de uso de publicaciones, storage (MB), páginas
-- **Páginas tenant**: TenantStats, TenantTemplates, TenantTutorials, TenantPromotions, TenantReferrals, Settings, PlanPage, ProfilePage
-- **Super Admin (13 páginas)**: Dashboard, Tenants, TenantProfile, Plans, Payments, Gateways, Modules, Resources (Templates/Elements/Tutorials), Promotions, Referrals, Branding, Notifications, Stats
+- **Publications**: file manager, modal drag & drop multi-imagen
+- **Editor** (`EditPublication.tsx`): Fabric.js canvas, autoguardado 1.2s
+  - Rail izquierdo: Páginas, Plantillas, Texto (14 fuentes Google), Imagen (+ banco de imágenes del proyecto), Formas, Botones, Elementos (galería SVG categorizada + hotspots animados), Enlace (10 tipos de acción), Widgets (11 tipos), Subidas
+  - **Navegador de páginas** bajo el canvas: ⟸ Primera / ◀ Anterior / Pág N/Total / ▶ Siguiente / ⟹ Última
+  - Panel derecho: propiedades por tipo (texto/forma/botón/enlace/hotspot/widget), selector de tipografía, control de color
+  - Tecla Delete/Backspace elimina el elemento seleccionado
+  - Fix: `rightPanelRef` evita que el selector de color nativo cierre el panel
+- **Recursos Admin**: Templates/Elements/Tutorials con `FileField` (Examinar + arrastar/soltar + URL)
+- **Páginas tenant y Super Admin (13 páginas)** sin cambios
 
 **Límites por plan (`lib/plans.ts`):**
 
@@ -141,24 +151,24 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 
 ---
 
-## 🚨 Estado de bugs conocidos
+## 🚨 Estado de bugs / pendientes
 
-### ✅ Resueltos en código (commit d6cf15d)
-- **"máximo null páginas"**: `checkPageLimit()` ahora retorna null para planes ilimitados (Pro)
-- **AdminStats página en blanco**: cada fetch es independiente, un endpoint caído no rompe la página
-- **AdminStats campos erróneos**: corregido `tenant_email→email` y `total_views→views_count`
-- **Toggle módulos (`active` vs `active_globally`)**: API ahora acepta ambos
+### ✅ Resueltos
+- `checkPageLimit()` retorna null para planes ilimitados (Pro)
+- AdminStats resiliente (cada fetch independiente)
+- Toggle módulos acepta `active` y `active_globally`
+- Selector de color nativo no cierra el panel de propiedades
+- Tecla Delete elimina elemento del canvas
+- `fabric` externalizado en Vite → build sin `npm install` previo
+- Tabla `publication_views` creada en D1 ✅
 
-### ⚠️ Pendiente verificar (requiere migración D1)
-- **AdminModules toggle**: el Worker fue re-deployado (commit `ab79415e`), pero las claves de módulos en D1 (`sound`, `editor`, `links`...) no coinciden con las claves del frontend (`editor_canvas`, `active_links`, `page_sound`...). El toggle funciona pero no persiste porque el `UPDATE` no encuentra el key.
-- **Migración D1 pendiente**: `migration_fase8a.sql` y `migration_fase8b.sql` fallaron por ALTER TABLE en columnas ya existentes. Tablas nuevas podrían no haberse creado.
-
-### Comando para re-intentar solo la creación de tablas nuevas
+### ⚠️ Pendiente verificar
+- **AdminModules toggle**: claves en D1 (`sound`, `editor`, `links`...) no coinciden con frontend (`editor_canvas`, `active_links`, `page_sound`...). El toggle no persiste.
+- **Tablas `modules` y `plan_modules`**: ejecutar si aún no existen:
 ```bash
 cd ~/intap-flipbook/apps/api
 npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NOT EXISTS modules (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE NOT NULL, name TEXT NOT NULL, description TEXT, active_globally INTEGER DEFAULT 1)"
 npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NOT EXISTS plan_modules (plan_id TEXT NOT NULL, module_key TEXT NOT NULL, PRIMARY KEY (plan_id, module_key))"
-npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NOT EXISTS publication_views (id INTEGER PRIMARY KEY AUTOINCREMENT, publication_id TEXT NOT NULL, page_number INTEGER, device TEXT, viewed_at TEXT DEFAULT (datetime('now')))"
 ```
 
 ---
