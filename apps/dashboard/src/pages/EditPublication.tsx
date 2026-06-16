@@ -50,7 +50,7 @@ export default function EditPublication() {
     const canvas = new fabric.Canvas(canvasRef.current, { width: W, height: H })
     fabricRef.current = canvas
 
-    fabric.Image.fromURL(activePage.image_url, (img) => {
+    fabric.Image.fromURL(activePage.image_url, (img: any) => {
       img.scaleToWidth(W)
       img.scaleToHeight(H)
       img.set({ selectable: false, evented: false })
@@ -61,8 +61,8 @@ export default function EditPublication() {
       canvas.loadFromJSON(activePage.canvas_json, () => canvas.renderAll())
     }
 
-    canvas.on('selection:created', (e) => setSelected(e.selected?.[0] ?? null))
-    canvas.on('selection:updated', (e) => setSelected(e.selected?.[0] ?? null))
+    canvas.on('selection:created', (e: any) => setSelected(e.selected?.[0] ?? null))
+    canvas.on('selection:updated', (e: any) => setSelected(e.selected?.[0] ?? null))
     canvas.on('selection:cleared', () => setSelected(null))
 
     return () => {
