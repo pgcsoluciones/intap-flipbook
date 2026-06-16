@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { API_BASE } from '../../lib/api'
+import FileField from '../../components/FileField'
 
 function authH() {
   const t = localStorage.getItem('token')
@@ -205,8 +206,12 @@ export default function AdminResourcesTemplates() {
               {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
 
-            <label style={s.label}>URL de portada (cover_url)</label>
-            <input style={s.input} value={form.cover_url} onChange={(e) => setForm({ ...form, cover_url: e.target.value })} placeholder="https://..." />
+            <label style={s.label}>Portada</label>
+            <FileField
+              value={form.cover_url}
+              onChange={(url) => setForm({ ...form, cover_url: url })}
+              hint="JPG, PNG, WEBP · máx 10 MB"
+            />
 
             <label style={{ ...s.label, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
               <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />

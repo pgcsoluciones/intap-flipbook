@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { API_BASE } from '../../lib/api'
+import FileField from '../../components/FileField'
 
 function authH() {
   const t = localStorage.getItem('token')
@@ -249,8 +250,12 @@ export default function AdminResourcesTutorials() {
               </>
             )}
 
-            <label style={s.label}>URL de thumbnail (opcional)</label>
-            <input style={s.input} value={form.thumbnail_url} onChange={(e) => setForm({ ...form, thumbnail_url: e.target.value })} placeholder="https://..." />
+            <label style={s.label}>Miniatura / thumbnail (opcional)</label>
+            <FileField
+              value={form.thumbnail_url}
+              onChange={(url) => setForm({ ...form, thumbnail_url: url })}
+              hint="JPG, PNG, WEBP · máx 10 MB"
+            />
 
             <label style={s.label}>Orden (sort_order)</label>
             <input style={s.input} type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: parseInt(e.target.value) || 0 })} />
