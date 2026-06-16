@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../lib/api'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const NAV_ITEMS = [
   { to: '/dashboard',    icon: '🏠', label: 'Inicio' },
@@ -25,7 +26,10 @@ interface Props {
 
 export default function Layout({ children }: Props) {
   const navigate = useNavigate()
+  const location = useLocation()
+  const isMobile = useIsMobile()
   const [user, setUser] = useState<any>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   useEffect(() => {
     if (!localStorage.getItem('token')) { navigate('/login'); return }
@@ -34,15 +38,34 @@ export default function Layout({ children }: Props) {
       .catch(() => { localStorage.removeItem('token'); navigate('/login') })
   }, [])
 
+  // Cierra el cajón al navegar a otra página en móvil
+  useEffect(() => { setDrawerOpen(false) }, [location.pathname])
+
   function logout() {
     localStorage.removeItem('token')
     navigate('/login')
   }
 
+  // En móvil el sidebar es un cajón deslizable; en escritorio queda fijo.
+  const sidebarStyle: React.CSSProperties = isMobile
+    ? { ...s.sidebar, transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform .25s ease', boxShadow: drawerOpen ? '0 0 40px rgba(0,0,0,.4)' : 'none' }
+    : s.sidebar
+
   return (
     <div style={s.root}>
+      {/* Barra superior solo en móvil con botón hamburguesa */}
+      {isMobile && (
+        <header style={s.mobileBar}>
+          <button style={s.hamburger} onClick={() => setDrawerOpen(true)} aria-label="Abrir menú">☰</button>
+          <span style={s.mobileLogo}>📖 Intap Flipbook</span>
+        </header>
+      )}
+
+      {/* Fondo oscuro al abrir el cajón en móvil */}
+      {isMobile && drawerOpen && <div style={s.backdrop} onClick={() => setDrawerOpen(false)} />}
+
       {/* Sidebar */}
-      <aside style={s.sidebar}>
+      <aside style={sidebarStyle}>
         <div style={s.sidebarLogo}>
           <span style={s.logoIcon}>📖</span>
           <span style={s.logoText}>Intap Flipbook</span>
@@ -99,7 +122,7 @@ export default function Layout({ children }: Props) {
       </aside>
 
       {/* Área principal */}
-      <main style={s.main}>
+      <main style={{ ...s.main, marginLeft: isMobile ? 0 : 240, paddingTop: isMobile ? 52 : 0 }}>
         {children}
       </main>
     </div>
@@ -207,10 +230,36 @@ const s: Record<string, React.CSSProperties> = {
     transition: 'color .15s',
   },
   main: {
-    marginLeft: 240,
     flex: 1,
     minHeight: '100vh',
     background: 'var(--color-surface)',
     overflowX: 'hidden',
+  },
+  mobileBar: {
+    position: 'fixed',
+    top: 0, left: 0, right: 0,
+    height: 52,
+    background: '#1E1B4B',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '0 16px',
+    zIndex: 90,
+  },
+  hamburger: {
+    background: 'none',
+    border: 'none',
+    color: '#fff',
+    fontSize: 24,
+    cursor: 'pointer',
+    lineHeight: 1,
+    padding: 0,
+  },
+  mobileLogo: { color: '#fff', fontWeight: 700, fontSize: 15 },
+  backdrop: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,.45)',
+    zIndex: 99,
   },
 }

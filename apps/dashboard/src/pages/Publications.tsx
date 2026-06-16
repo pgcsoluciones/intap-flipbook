@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const CATEGORIES: Record<string, string> = {
   catalogo:   'Catálogo',
@@ -28,6 +29,7 @@ type Tab = 'active' | 'trash'
 
 export default function Publications() {
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Lista
@@ -132,7 +134,7 @@ export default function Publications() {
   if (loading) return <div style={s.loading}>Cargando...</div>
 
   return (
-    <div style={s.page}>
+    <div style={{ ...s.page, padding: isMobile ? '1rem' : '2rem' }}>
 
       {/* ── Modal de creación ── */}
       {showModal && (
@@ -216,16 +218,16 @@ export default function Publications() {
       )}
 
       {/* ── Header ── */}
-      <div style={s.topBar}>
+      <div style={{ ...s.topBar, ...(isMobile ? { flexDirection: 'column', alignItems: 'stretch', gap: 12 } : {}) }}>
         <h1 style={s.pageTitle}>Mis Flipbooks</h1>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <input
-            style={s.searchInput}
+            style={{ ...s.searchInput, ...(isMobile ? { flex: 1, width: 'auto' } : {}) }}
             placeholder="Buscar..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <button style={s.btnNew} onClick={openModal}>+ Subir</button>
+          <button style={{ ...s.btnNew, whiteSpace: 'nowrap' }} onClick={openModal}>+ Subir</button>
         </div>
       </div>
 
@@ -254,11 +256,12 @@ export default function Publications() {
               )}
             </div>
           ) : (
-            <div style={s.grid}>
+            <div style={{ ...s.grid, gridTemplateColumns: isMobile ? 'repeat(auto-fill, minmax(150px, 1fr))' : 'repeat(auto-fill, minmax(220px, 1fr))' }}>
               {filtered.map((pub) => (
                 <PubCard
                   key={pub.id}
                   pub={pub}
+                  isMobile={isMobile}
                   onDelete={() => handleDelete(pub.id)}
                   onPublish={() => handlePublish(pub.id)}
                 />
@@ -276,7 +279,7 @@ export default function Publications() {
               <div style={s.emptyTitle}>La papelera está vacía</div>
             </div>
           ) : (
-            <div style={s.grid}>
+            <div style={{ ...s.grid, gridTemplateColumns: isMobile ? 'repeat(auto-fill, minmax(150px, 1fr))' : 'repeat(auto-fill, minmax(220px, 1fr))' }}>
               {trash.map((pub) => (
                 <TrashCard key={pub.id} pub={pub} onRestore={() => handleRestore(pub.id)} onDelete={() => handlePermanentDelete(pub.id)} />
               ))}
@@ -288,7 +291,7 @@ export default function Publications() {
   )
 }
 
-function PubCard({ pub, onDelete, onPublish }: { pub: any; onDelete: () => void; onPublish: () => void }) {
+function PubCard({ pub, isMobile, onDelete, onPublish }: { pub: any; isMobile?: boolean; onDelete: () => void; onPublish: () => void }) {
   const [hover, setHover] = useState(false)
   const isPublished = pub.status === 'published'
 
@@ -322,6 +325,16 @@ function PubCard({ pub, onDelete, onPublish }: { pub: any; onDelete: () => void;
         <div style={s.cardMeta}>
           {pub.page_count ?? 0} páginas · {pub.views_count ?? 0} vistas
         </div>
+        {isMobile && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: 2 }}>
+            <Link to={`/publications/${pub.id}/editor`} style={{ flex: 1, textDecoration: 'none' }}>
+              <button style={s.mobilePrimary}>Editar</button>
+            </Link>
+            <Link to={`/publications/${pub.id}/preview`} style={{ flex: 1, textDecoration: 'none' }}>
+              <button style={s.mobileGhost}>Vista previa</button>
+            </Link>
+          </div>
+        )}
         <div style={s.cardActions}>
           <Link to={`/publications/${pub.id}/settings`}>
             <button style={s.actionBtn}>⚙️</button>
@@ -384,6 +397,8 @@ const s: Record<string, React.CSSProperties> = {
   cardMeta:    { fontSize: 11, color: '#9ca3af' },
   cardActions: { display: 'flex', gap: 4, alignItems: 'center', marginTop: 2 },
   actionBtn:   { background: 'none', border: 'none', fontSize: 12, cursor: 'pointer', color: '#6b7280', padding: '4px 6px', borderRadius: 4 },
+  mobilePrimary: { width: '100%', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 6, padding: '8px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
+  mobileGhost:   { width: '100%', background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 6, padding: '8px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
 
   emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 20px', textAlign: 'center' },
   emptyTitle: { fontSize: 18, fontWeight: 600, color: '#374151', marginBottom: 8 },
