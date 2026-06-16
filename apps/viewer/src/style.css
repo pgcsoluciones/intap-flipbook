@@ -39,21 +39,34 @@ body {
   background: none;
   border: none;
   color: #fff;
-  font-size: 1.5rem;
+  font-size: 1.1rem;
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 4px;
   transition: background .2s;
+  line-height: 1;
 }
 
 #controls button:hover { background: rgba(255,255,255,.2); }
 #controls button:disabled { opacity: 0.3; cursor: default; }
 #controls button:disabled:hover { background: none; }
 
+#controls button#btn-autoplay.playing { color: #a78bfa; }
+
+.ctrl-sep {
+  width: 1px;
+  height: 20px;
+  background: rgba(255,255,255,.25);
+  margin: 0 2px;
+}
+
 #page-info {
-  font-size: 0.9rem;
-  min-width: 60px;
+  font-size: 0.85rem;
+  min-width: 64px;
   text-align: center;
+  background: rgba(255,255,255,.15);
+  border-radius: 6px;
+  padding: 3px 8px;
 }
 
 /* Panel de miniaturas */

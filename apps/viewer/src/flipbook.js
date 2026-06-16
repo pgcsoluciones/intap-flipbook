@@ -92,14 +92,20 @@ async function init() {
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
 
   // Centrado dinámico: cubre/contraportada centradas, spreads interiores sin desplazamiento
+  let currentShift = 0
+  let currentScale = 1
+  function applyTransform() {
+    container.style.transform = `translateX(${currentShift}px) scale(${currentScale})`
+    container.style.transformOrigin = 'center center'
+    container.style.transition = 'transform 0.35s ease'
+  }
   function applyCenter() {
     if (portrait) return
     const idx = pageFlip.getCurrentPageIndex()
-    const shift = idx <= 0 ? -(pageWidth / 2)
+    currentShift = idx <= 0 ? -(pageWidth / 2)
       : idx >= realCount ? (pageWidth / 2)
       : 0
-    container.style.transform = `translateX(${shift}px)`
-    container.style.transition = 'transform 0.35s ease'
+    applyTransform()
   }
 
   function updatePageInfo() {
@@ -168,7 +174,37 @@ async function init() {
     thumbList.appendChild(item)
   })
 
-  // Controles
+  // Autoplay
+  let autoplayTimer = null
+  function startAutoplay() {
+    stopAutoplay()
+    autoplayTimer = setInterval(() => {
+      const idx = pageFlip.getCurrentPageIndex()
+      if (idx >= realCount) { stopAutoplay(); return }
+      pageFlip.flipNext()
+    }, 3000)
+    document.getElementById('btn-autoplay').textContent = '⏸'
+    document.getElementById('btn-autoplay').classList.add('playing')
+  }
+  function stopAutoplay() {
+    clearInterval(autoplayTimer)
+    autoplayTimer = null
+    document.getElementById('btn-autoplay').textContent = '▶'
+    document.getElementById('btn-autoplay').classList.remove('playing')
+  }
+
+  // Zoom simple: cicla entre 3 escalas
+  const zoomLevels = [1, 1.25, 1.5]
+  let zoomIdx = 0
+  document.getElementById('btn-zoom').addEventListener('click', () => {
+    zoomIdx = (zoomIdx + 1) % zoomLevels.length
+    currentScale = zoomLevels[zoomIdx]
+    applyTransform()
+  })
+
+  document.getElementById('btn-first').addEventListener('click', () => pageFlip.flip(1))
+  document.getElementById('btn-last').addEventListener('click', () => pageFlip.flip(realCount))
+
   document.getElementById('btn-prev').addEventListener('click', () => {
     const idx = pageFlip.getCurrentPageIndex()
     if (idx > 1) pageFlip.flipPrev()
@@ -179,9 +215,21 @@ async function init() {
     if (idx < realCount) pageFlip.flipNext()
   })
 
-  document.getElementById('btn-sound').addEventListener('click', () => {
-    soundEnabled = !soundEnabled
-    updateSoundBtn()
+  document.getElementById('btn-autoplay').addEventListener('click', () => {
+    autoplayTimer ? stopAutoplay() : startAutoplay()
+  })
+
+  document.getElementById('btn-share').addEventListener('click', () => {
+    const url = location.href
+    if (navigator.share) {
+      navigator.share({ title: data.title, url }).catch(() => {})
+    } else {
+      navigator.clipboard.writeText(url).then(() => {
+        const btn = document.getElementById('btn-share')
+        btn.textContent = '✓'
+        setTimeout(() => { btn.textContent = '↗' }, 1500)
+      })
+    }
   })
 
   document.getElementById('btn-thumbnails').addEventListener('click', () => {
@@ -199,7 +247,7 @@ async function init() {
   })
 
   document.addEventListener('fullscreenchange', () => {
-    document.getElementById('btn-fullscreen').textContent = document.fullscreenElement ? '⤡' : '⤢'
+    document.getElementById('btn-fullscreen').textContent = document.fullscreenElement ? '⛶' : '⛶'
     document.getElementById('btn-fullscreen').title = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'
   })
 
