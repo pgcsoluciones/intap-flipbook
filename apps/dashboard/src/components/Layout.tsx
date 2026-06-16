@@ -64,6 +64,21 @@ export default function Layout({ children }: Props) {
               <span>{item.label}</span>
             </NavLink>
           ))}
+          {user?.is_admin ? (
+            <NavLink
+              to="/admin"
+              style={({ isActive }) => ({
+                ...s.navItem,
+                background: isActive ? 'rgba(124,58,237,.4)' : 'rgba(124,58,237,.15)',
+                color: isActive ? '#fff' : 'rgba(255,255,255,.85)',
+                fontWeight: isActive ? 600 : 500,
+                marginTop: 8,
+              })}
+            >
+              <span style={s.navIcon}>🛡️</span>
+              <span>Admin</span>
+            </NavLink>
+          ) : null}
         </nav>
 
         {/* Usuario + plan al pie del sidebar */}

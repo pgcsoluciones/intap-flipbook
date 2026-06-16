@@ -4,6 +4,7 @@ import authRoutes from './routes/auth'
 import publicationRoutes from './routes/publications'
 import pageRoutes from './routes/pages'
 import uploadRoutes from './routes/upload'
+import adminRoutes from './routes/admin'
 import { jwtMiddleware } from './middleware/jwt'
 import { getUserPlan, getPlanUsage } from './lib/plans'
 import type { AuthVariables } from './middleware/jwt'
@@ -40,6 +41,7 @@ app.route('/auth', authRoutes)
 app.route('/api/publications', publicationRoutes)
 app.route('/api', pageRoutes)
 app.route('/api/upload', uploadRoutes)
+app.route('/admin', adminRoutes)
 
 // Plan usage — protected
 app.get('/api/me/usage', jwtMiddleware, async (c) => {

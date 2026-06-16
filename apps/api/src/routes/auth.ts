@@ -71,14 +71,48 @@ auth.get('/me', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
 
   const user = await c.env.DB.prepare(
-    'SELECT id, email, name, plan_id, created_at FROM users WHERE id = ?',
+    'SELECT id, email, name, plan_id, is_admin, created_at FROM users WHERE id = ?',
   )
     .bind(sub)
-    .first<{ id: string; email: string; name: string | null; plan_id: string; created_at: string }>()
+    .first<{ id: string; email: string; name: string | null; plan_id: string; is_admin: number; created_at: string }>()
 
   if (!user) return c.json({ success: false, error: 'User not found' }, 404)
 
   return c.json({ success: true, data: user })
+})
+
+// PUT /auth/me — update profile name
+auth.put('/me', jwtMiddleware, async (c) => {
+  const { sub } = c.get('user')
+  const body = await c.req.json<{ name?: string }>()
+  await c.env.DB.prepare('UPDATE users SET name = COALESCE(?, name) WHERE id = ?')
+    .bind(body.name ?? null, sub)
+    .run()
+  const user = await c.env.DB.prepare('SELECT id, email, name, plan_id FROM users WHERE id = ?')
+    .bind(sub)
+    .first()
+  return c.json({ success: true, data: user })
+})
+
+// PUT /auth/password — change password
+auth.put('/password', jwtMiddleware, async (c) => {
+  const { sub } = c.get('user')
+  const body = await c.req.json<{ current_password: string; new_password: string }>()
+  if (!body.current_password || !body.new_password) {
+    return c.json({ success: false, error: 'current_password y new_password son requeridos' }, 400)
+  }
+  if (body.new_password.length < 8) {
+    return c.json({ success: false, error: 'La nueva contraseña debe tener al menos 8 caracteres' }, 400)
+  }
+  const user = await c.env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
+    .bind(sub)
+    .first<{ password_hash: string }>()
+  if (!user || !(await verifyPassword(body.current_password, user.password_hash))) {
+    return c.json({ success: false, error: 'Contraseña actual incorrecta' }, 401)
+  }
+  const newHash = await hashPassword(body.new_password)
+  await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(newHash, sub).run()
+  return c.json({ success: true })
 })
 
 // PBKDF2 password hashing via Web Crypto API
