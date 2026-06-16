@@ -25,7 +25,7 @@ app.use('*', async (c, next) => {
   const allowedOrigins = c.env.CORS_ORIGIN.split(',').map((o) => o.trim())
   const corsMiddleware = cors({
     origin: (origin) => (allowedOrigins.includes(origin) ? origin : allowedOrigins[0]),
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     maxAge: 86400,
   })

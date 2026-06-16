@@ -14,6 +14,20 @@ type StatsData = {
   by_plan: { plan_id: string; count: number }[]
 }
 
+const PLAN_PRICES: Record<string, number> = { basic: 9.99, pro: 29.99 }
+
+function buildStats(raw: any): StatsData {
+  const byPlan: { plan_id: string; count: number }[] = raw.by_plan ?? []
+  const mrr = byPlan.reduce((acc, p) => acc + (PLAN_PRICES[p.plan_id] ?? 0) * (p.count ?? 0), 0)
+  return {
+    mrr,
+    arr: mrr * 12,
+    storage_total_mb: raw.storage_mb ?? 0,
+    active_tenants: raw.users ?? 0,
+    by_plan: byPlan,
+  }
+}
+
 type TopPublication = {
   id: string
   title: string
@@ -70,7 +84,7 @@ export default function AdminStats() {
       if (!sr.ok) throw new Error(sd.error ?? `HTTP ${sr.status}`)
       if (!tr.ok) throw new Error(td.error ?? `HTTP ${tr.status}`)
       if (!vr.ok) throw new Error(vd.error ?? `HTTP ${vr.status}`)
-      setStats(sd.data)
+      setStats(buildStats(sd.data))
       setTopPubs(td.data ?? [])
       setRecentViews(vd.data ?? [])
     } catch (e: any) { setMsg(e.message) }
@@ -79,7 +93,7 @@ export default function AdminStats() {
 
   if (loading) return <div style={{ padding: '3rem', color: '#666' }}>Cargando estadísticas...</div>
 
-  const totalTenants = stats?.by_plan.reduce((acc, p) => acc + (p.count ?? 0), 0) ?? 0
+  const totalTenants = (stats?.by_plan ?? []).reduce((acc, p) => acc + (p.count ?? 0), 0)
 
   return (
     <div style={s.page}>
