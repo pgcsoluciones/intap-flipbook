@@ -169,45 +169,72 @@ const BUTTON_PRESETS: { label: string; variant: 'solid' | 'outline' | 'pill' }[]
 ]
 
 // Tipos de acción de un botón (qué ocurre al hacer clic en el viewer)
-type ActionType = 'link' | 'page' | 'call' | 'email' | 'popup_text' | 'popup_image' | 'show_hide'
+type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'download' | 'show_hide'
 const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
-  { type: 'link',        label: 'Abrir Enlace',     icon: 'link' },
-  { type: 'page',        label: 'Ir a Página',      icon: 'pages' },
-  { type: 'call',        label: 'Llamar',           icon: 'badge' },
-  { type: 'email',       label: 'Email',            icon: 'text' },
-  { type: 'popup_text',  label: 'Texto emergente',  icon: 'text' },
-  { type: 'popup_image', label: 'Imagen emergente', icon: 'image' },
-  { type: 'show_hide',   label: 'Mostrar/Ocultar',  icon: 'elements' },
+  { type: 'link',        label: 'Abrir Enlace',      icon: 'link' },
+  { type: 'page',        label: 'Ir a Página',       icon: 'pages' },
+  { type: 'call',        label: 'Llamar',            icon: 'badge' },
+  { type: 'whatsapp',    label: 'WhatsApp',          icon: 'whatsapp' },
+  { type: 'email',       label: 'Email',             icon: 'contact' },
+  { type: 'popup_text',  label: 'Texto emergente',   icon: 'text' },
+  { type: 'popup_image', label: 'Imagen emergente',  icon: 'image' },
+  { type: 'popup_video', label: 'Video emergente',   icon: 'video' },
+  { type: 'download',    label: 'Descargar archivo', icon: 'uploads' },
+  { type: 'show_hide',   label: 'Mostrar/Ocultar',   icon: 'elements' },
 ]
 
 // Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
-type WidgetType = 'map' | 'whatsapp' | 'contact' | 'video' | 'audio' | 'qr' | 'table' | 'like' | 'embed' | 'quiz'
+type WidgetType = 'map' | 'whatsapp' | 'contact' | 'video' | 'audio' | 'qr' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner'
 const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean }[] = [
-  { type: 'map',      label: 'Mapa',                  icon: 'map',      premium: false },
-  { type: 'whatsapp', label: 'WhatsApp',              icon: 'whatsapp', premium: false },
-  { type: 'contact',  label: 'Formulario de contacto',icon: 'contact',  premium: false },
-  { type: 'video',    label: 'Video',                 icon: 'video',    premium: false },
-  { type: 'audio',    label: 'Audio',                 icon: 'audio',    premium: false },
-  { type: 'qr',       label: 'Código QR',             icon: 'qr',       premium: false },
-  { type: 'table',    label: 'Tabla',                 icon: 'table',    premium: false },
-  { type: 'like',     label: 'Me gusta',              icon: 'like',     premium: false },
-  { type: 'embed',    label: 'Incrustar terceros',    icon: 'embed',    premium: true },
-  { type: 'quiz',     label: 'Cuestionario',          icon: 'quiz',     premium: true },
+  { type: 'map',          label: 'Mapa',                  icon: 'map',      premium: false },
+  { type: 'whatsapp',     label: 'WhatsApp',              icon: 'whatsapp', premium: false },
+  { type: 'contact',      label: 'Formulario',            icon: 'contact',  premium: false },
+  { type: 'video',        label: 'Video',                 icon: 'video',    premium: false },
+  { type: 'audio',        label: 'Audio',                 icon: 'audio',    premium: false },
+  { type: 'qr',           label: 'Código QR',             icon: 'qr',       premium: false },
+  { type: 'table',        label: 'Tabla',                 icon: 'table',    premium: false },
+  { type: 'like',         label: 'Me gusta',              icon: 'like',     premium: false },
+  { type: 'popup_banner', label: 'Pop-up emergente',      icon: 'badge',    premium: false },
+  { type: 'embed',        label: 'Incrustar / HTML',      icon: 'embed',    premium: false },
+  { type: 'quiz',         label: 'Cuestionario',          icon: 'quiz',     premium: false },
 ]
 
 // Configuración inicial de cada widget (la edita el usuario en el panel derecho).
 const WIDGET_DEFAULTS: Record<WidgetType, any> = {
-  map:      { address: '', zoom: 14 },
+  map:      { address: '', mapsUrl: '', zoom: 14 },
   whatsapp: { phone: '', message: 'Hola, vi tu catálogo y quiero más información', label: 'Escríbenos por WhatsApp' },
-  contact:  { title: 'Contáctanos', toEmail: '', button: 'Enviar' },
-  video:    { url: '' },
-  audio:    { url: '' },
+  contact:  { title: 'Contáctanos', toEmail: '', button: 'Enviar', showPhone: true, showComment: true, nameRequired: true, emailRequired: true, phoneRequired: false },
+  video:    { url: '', autoplay: false, controls: true, muted: false, poster: '', loop: false },
+  audio:    { url: '', playerColor: '#4F46E5', autoplay: false, loop: false },
   qr:       { data: '', caption: 'Escanéame' },
   table:    { csv: 'Producto, Precio\nCafé, $2.50\nTé, $2.00' },
   like:     { label: 'Me gusta' },
   embed:    { html: '' },
-  quiz:     { question: '¿Tu pregunta?', options: 'Opción A\nOpción B\nOpción C' },
+  quiz:     { title: 'Cuestionario', questions: [{ text: '¿Tu pregunta?', options: ['Opción A', 'Opción B'], type: 'single' }] },
+  popup_banner: {
+    template: 'offer',
+    position: 'bottom',
+    trigger: 'delay',
+    delay: 5,
+    title: '¡Oferta relámpago!',
+    text: 'Aprovechá este descuento exclusivo por tiempo limitado.',
+    buttonText: 'Ver oferta',
+    buttonUrl: '',
+    bgColor: '#1e1b4b',
+    textColor: '#ffffff',
+    image: '',
+    showOnce: true,
+  },
 }
+
+// Plantillas prediseñadas para el pop-up emergente
+const POPUP_TEMPLATES: { key: string; label: string; defaults: Partial<typeof WIDGET_DEFAULTS['popup_banner']> }[] = [
+  { key: 'offer',   label: '⚡ Oferta relámpago', defaults: { title: '¡Oferta relámpago!', text: 'Solo por hoy — 30% OFF en toda la tienda.', buttonText: 'Ver ofertas', bgColor: '#7c3aed', textColor: '#fff' } },
+  { key: 'contact', label: '📞 Datos de contacto', defaults: { title: '¿Necesitás ayuda?', text: 'Nuestro equipo está disponible. ¡Escribinos!', buttonText: 'Contactar', bgColor: '#0369a1', textColor: '#fff' } },
+  { key: 'bonus',   label: '🎁 Bono / Descuento',  defaults: { title: '¡Bono exclusivo!', text: 'Registrate y obtené un bono de bienvenida.', buttonText: 'Reclamar', bgColor: '#15803d', textColor: '#fff' } },
+  { key: 'news',    label: '📰 Novedad',            defaults: { title: 'Nueva colección disponible', text: 'Mirá las últimas novedades de temporada.', buttonText: 'Ver ahora', bgColor: '#b45309', textColor: '#fff' } },
+  { key: 'custom',  label: '✏️ Personalizado',      defaults: { bgColor: '#111827', textColor: '#fff' } },
+]
 
 // Reúne todas las URLs de imágenes ya usadas en el proyecto: fondos de página
 // y elementos de imagen dentro del canvas de cada página.
@@ -254,8 +281,9 @@ export default function EditPublication() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
   const pageIdRef = useRef<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)      // para agregar PÁGINAS nuevas
-  const imgInputRef  = useRef<HTMLInputElement>(null)      // para insertar imagen como ELEMENTO del canvas
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const imgInputRef  = useRef<HTMLInputElement>(null)
+  const rightPanelRef = useRef<HTMLDivElement>(null)
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
 
@@ -348,7 +376,23 @@ export default function EditPublication() {
     const onSel = (e: any) => { setSelected(e.selected?.[0] ?? canvas.getActiveObject() ?? null); setSelectVersion((v) => v + 1) }
     canvas.on('selection:created', onSel)
     canvas.on('selection:updated', onSel)
-    canvas.on('selection:cleared', () => setSelected(null))
+    canvas.on('selection:cleared', (e: any) => {
+      // No desmonta el panel de propiedades si el clic fue dentro de él
+      // (evita que el selector de colores nativo se cierre al hacer clic en el gradiente)
+      if (rightPanelRef.current && e?.e?.target && rightPanelRef.current.contains(e.e.target as Node)) return
+      setSelected(null)
+    })
+
+    // Tecla Supr / Delete para eliminar el objeto seleccionado
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        const o = canvas.getActiveObject()
+        if (o) { canvas.remove(o); setSelected(null); scheduleAutosave() }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
 
     // Autoguardado en cada cambio del lienzo
     const onChange = () => scheduleAutosave()
@@ -358,6 +402,7 @@ export default function EditPublication() {
     canvas.on('text:changed', onChange)
 
     return () => {
+      window.removeEventListener('keydown', onKeyDown)
       if (fabricRef.current) {
         clearTimeout(autosaveTimer.current)
         persistCanvas(activePage.id, fabricRef.current, false)
@@ -486,6 +531,22 @@ export default function EditPublication() {
       data: { kind: 'linkzone', action: { type: 'link' as ActionType, url: 'https://' } },
     })
     c.add(zone); c.setActiveObject(zone); c.requestRenderAll()
+  }
+
+  // Agrega un punto activo animado. En el editor aparece como círculo con anillo;
+  // en el visor se renderiza con animación CSS según el estilo elegido.
+  function addHotspot(style: 'pulse' | 'blink' | 'ripple') {
+    const c = fabricRef.current; if (!c) return
+    const colorMap = { pulse: '#4F46E5', blink: '#ef4444', ripple: '#059669' }
+    const color = colorMap[style]
+    const ring = new fabric.Circle({ radius: 24, fill: `${color}33`, stroke: color, strokeWidth: 1.5, originX: 'center', originY: 'center' })
+    const dot  = new fabric.Circle({ radius: 14, fill: color, originX: 'center', originY: 'center' })
+    const group = new fabric.Group([ring, dot], {
+      left: 120, top: 120,
+      data: { kind: 'hotspot', hotspot: { style, color }, action: { type: 'link' as ActionType, url: 'https://' } },
+    })
+    c.add(group); c.setActiveObject(group); c.requestRenderAll()
+    scheduleAutosave()
   }
 
   // Inserta un icono/figura de la galería como objeto vectorial editable
@@ -699,6 +760,7 @@ export default function EditPublication() {
               imgInputRef={imgInputRef}
               uploadingImg={uploading}
               addIcon={addIcon}
+              addHotspot={addHotspot}
               addWidget={addWidget}
               defaultFont={defaultFont}
               setDefaultFont={setDefaultFont}
@@ -745,10 +807,43 @@ export default function EditPublication() {
               </div>
             )}
           </div>
+
+          {/* ── Navegador de páginas ── */}
+          {pages.length > 0 && (
+            <div style={s.pageNav}>
+              <button
+                style={{ ...s.pageNavBtn, opacity: activePageIndex <= 0 ? 0.35 : 1 }}
+                disabled={activePageIndex <= 0}
+                title="Primera página"
+                onClick={() => setActivePage(pages[0])}
+              >⟸</button>
+              <button
+                style={{ ...s.pageNavBtn, opacity: activePageIndex <= 0 ? 0.35 : 1 }}
+                disabled={activePageIndex <= 0}
+                title="Página anterior"
+                onClick={() => activePageIndex > 0 && setActivePage(pages[activePageIndex - 1])}
+              >◀</button>
+              <span style={s.pageNavInfo}>
+                Pág {activePageIndex >= 0 ? activePageIndex + 1 : '—'} / {pages.length}
+              </span>
+              <button
+                style={{ ...s.pageNavBtn, opacity: activePageIndex >= pages.length - 1 ? 0.35 : 1 }}
+                disabled={activePageIndex >= pages.length - 1}
+                title="Página siguiente"
+                onClick={() => activePageIndex < pages.length - 1 && setActivePage(pages[activePageIndex + 1])}
+              >▶</button>
+              <button
+                style={{ ...s.pageNavBtn, opacity: activePageIndex >= pages.length - 1 ? 0.35 : 1 }}
+                disabled={activePageIndex >= pages.length - 1}
+                title="Última página"
+                onClick={() => setActivePage(pages[pages.length - 1])}
+              >⟹</button>
+            </div>
+          )}
         </main>
 
         {/* ── Panel derecho: propiedades o configuración de página ── */}
-        <aside style={s.right}>
+        <aside ref={rightPanelRef} style={s.right}>
           {selected ? (
             <PropsPanel
               key={selectVersion}
@@ -977,6 +1072,20 @@ function ContextPanel(p: any) {
               </div>
             </div>
           ))}
+          <div style={cp.sectionLabel}>Puntos activos animados</div>
+          <p style={cp.hint}>Indicadores que parpadean/pulsan en la publicación para llamar la atención del visitante. Configurá su acción en el panel derecho.</p>
+          <div style={cp.iconGrid}>
+            {([
+              { style: 'pulse',  label: 'Pulso',     color: '#4F46E5' },
+              { style: 'blink',  label: 'Parpadeo',  color: '#ef4444' },
+              { style: 'ripple', label: 'Onda',       color: '#059669' },
+            ] as const).map((h) => (
+              <button key={h.style} style={cp.iconBtn} onClick={() => p.addHotspot(h.style)}>
+                <span style={{ width: 24, height: 24, borderRadius: '50%', background: h.color, display: 'inline-block', boxShadow: `0 0 0 5px ${h.color}44` }} />
+                <span style={cp.iconName}>{h.label}</span>
+              </button>
+            ))}
+          </div>
         </>
       )
 
@@ -1100,7 +1209,7 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
   const setData = (patch: any) => { (obj as any).data = { ...((obj as any).data ?? {}), ...patch }; onChange() }
 
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'
-  const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen', icon: 'Icono', widget: 'Widget' }
+  const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen', icon: 'Icono', widget: 'Widget', hotspot: 'Punto activo' }
 
   return (
     <div style={s.propsScroll}>
@@ -1196,6 +1305,21 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
           </PropGroup>
         )}
 
+        {/* ── PUNTO ACTIVO: color de animación ── */}
+        {kind === 'hotspot' && (
+          <PropGroup label="Color del punto">
+            <input type="color" defaultValue={(obj as any).data?.hotspot?.color ?? '#4F46E5'} onChange={(e) => {
+              const col = e.target.value
+              setData({ hotspot: { ...((obj as any).data?.hotspot ?? {}), color: col } })
+              const objs = obj.getObjects?.() ?? []
+              objs.forEach((o: any) => {
+                if (o.fill && o.fill !== 'transparent') { const isRing = o.radius > 16; o.set({ fill: isRing ? `${col}33` : col, stroke: col }) }
+              })
+              canvas?.requestRenderAll(); onChange()
+            }} style={s.colorInput} />
+          </PropGroup>
+        )}
+
         {/* ── WIDGET: configuración propia según el tipo ── */}
         {kind === 'widget' && (
           <WidgetProps obj={obj} setData={setData} />
@@ -1283,13 +1407,21 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
   const cfg = widget.config ?? {}
   const type: WidgetType = widget.type
   const setCfg = (patch: any) => setData({ widget: { ...widget, config: { ...cfg, ...patch } } })
+  const [quizQuestions, setQuizQuestions] = React.useState<any[]>(cfg.questions ?? [{ text: '¿Tu pregunta?', options: ['Opción A', 'Opción B'], type: 'single' }])
 
   const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <PropGroup label={label}>{children}</PropGroup>
   )
+  const Check = ({ k, label, def = true }: { k: string; label: string; def?: boolean }) => (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
+      <input type="checkbox" defaultChecked={cfg[k] !== undefined ? !!cfg[k] : def} onChange={(e) => setCfg({ [k]: e.target.checked })} />
+      {label}
+    </label>
+  )
   const labels: Record<WidgetType, string> = {
-    map: 'Mapa', whatsapp: 'WhatsApp', contact: 'Formulario de contacto', video: 'Video',
-    audio: 'Audio', qr: 'Código QR', table: 'Tabla', like: 'Me gusta', embed: 'Incrustar', quiz: 'Cuestionario',
+    map: 'Mapa', whatsapp: 'WhatsApp', contact: 'Formulario', video: 'Video',
+    audio: 'Audio', qr: 'Código QR', table: 'Tabla', like: 'Me gusta',
+    embed: 'Incrustar / HTML', quiz: 'Cuestionario', popup_banner: 'Pop-up emergente',
   }
 
   return (
@@ -1298,63 +1430,109 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
 
       {type === 'map' && (
         <>
-          <Field label="Dirección o lugar">
-            <input style={s.propInput} placeholder="Ej: Av. Lincoln 100, Santo Domingo" defaultValue={cfg.address ?? ''} onChange={(e) => setCfg({ address: e.target.value })} />
+          <Field label="Dirección o nombre del lugar">
+            <input style={s.propInput} placeholder="Av. Lincoln 100, Santo Domingo" defaultValue={cfg.address ?? ''} onChange={(e) => setCfg({ address: e.target.value })} />
+          </Field>
+          <Field label="Pegar link de Google Maps (prioridad sobre dirección)">
+            <input style={s.propInput} placeholder="https://www.google.com/maps/embed?pb=..." defaultValue={cfg.mapsUrl ?? ''} onChange={(e) => setCfg({ mapsUrl: e.target.value })} />
           </Field>
           <Field label="Zoom (1–20)">
             <input style={s.propInput} type="number" min={1} max={20} defaultValue={cfg.zoom ?? 14} onChange={(e) => setCfg({ zoom: +e.target.value })} />
           </Field>
+          <p style={cp.hint}>Para el link de Google Maps: abrí Maps → Compartir → Insertar mapa → copiá el src del iframe.</p>
         </>
       )}
 
       {type === 'whatsapp' && (
         <>
-          <Field label="Número (con código de país)">
+          <Field label="Número (código de país sin +, ej: 18095551234)">
             <input style={s.propInput} placeholder="18095551234" defaultValue={cfg.phone ?? ''} onChange={(e) => setCfg({ phone: e.target.value })} />
           </Field>
           <Field label="Mensaje prellenado">
             <textarea style={{ ...s.propInput, height: 64, resize: 'vertical' } as any} defaultValue={cfg.message ?? ''} onChange={(e) => setCfg({ message: e.target.value })} />
           </Field>
           <Field label="Texto del botón">
-            <input style={s.propInput} defaultValue={cfg.label ?? ''} onChange={(e) => setCfg({ label: e.target.value })} />
+            <input style={s.propInput} defaultValue={cfg.label ?? 'Escríbenos'} onChange={(e) => setCfg({ label: e.target.value })} />
           </Field>
         </>
       )}
 
       {type === 'contact' && (
         <>
-          <Field label="Título del formulario">
+          <Field label="Título">
             <input style={s.propInput} defaultValue={cfg.title ?? ''} onChange={(e) => setCfg({ title: e.target.value })} />
           </Field>
-          <Field label="Email destino (recibe los mensajes)">
+          <Field label="Email destino">
             <input style={s.propInput} placeholder="ventas@dominio.com" defaultValue={cfg.toEmail ?? ''} onChange={(e) => setCfg({ toEmail: e.target.value })} />
           </Field>
           <Field label="Texto del botón">
             <input style={s.propInput} defaultValue={cfg.button ?? 'Enviar'} onChange={(e) => setCfg({ button: e.target.value })} />
           </Field>
+          <Field label="Campos y obligatorios">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Check k="showPhone"     label="Incluir Teléfono / Móvil" />
+              <Check k="showComment"   label="Incluir Comentario / Mensaje" />
+              <Check k="nameRequired"  label="Nombre obligatorio (*)" />
+              <Check k="emailRequired" label="Email obligatorio (*)" />
+              <Check k="phoneRequired" label="Teléfono obligatorio (*)" def={false} />
+            </div>
+          </Field>
         </>
       )}
 
-      {(type === 'video' || type === 'audio') && (
-        <Field label={type === 'video' ? 'URL del video (YouTube, Vimeo o .mp4)' : 'URL del audio (.mp3)'}>
-          <input style={s.propInput} placeholder="https://..." defaultValue={cfg.url ?? ''} onChange={(e) => setCfg({ url: e.target.value })} />
-        </Field>
+      {type === 'video' && (
+        <>
+          <Field label="URL del video (YouTube, Vimeo o archivo .mp4)">
+            <input style={s.propInput} placeholder="https://youtube.com/watch?v=..." defaultValue={cfg.url ?? ''} onChange={(e) => setCfg({ url: e.target.value })} />
+          </Field>
+          <Field label="Portada / thumbnail (URL — opcional, para MP4)">
+            <input style={s.propInput} placeholder="https://..." defaultValue={cfg.poster ?? ''} onChange={(e) => setCfg({ poster: e.target.value })} />
+          </Field>
+          <Field label="Opciones de reproducción">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Check k="autoplay" label="Autoplay (inicia automáticamente)" def={false} />
+              <Check k="controls" label="Mostrar controles de reproducción" />
+              <Check k="muted"    label="Silenciar (recomendado con autoplay)" def={false} />
+              <Check k="loop"     label="Repetir en bucle" def={false} />
+            </div>
+          </Field>
+        </>
+      )}
+
+      {type === 'audio' && (
+        <>
+          <Field label="URL del audio (.mp3, .ogg, etc.)">
+            <input style={s.propInput} placeholder="https://..." defaultValue={cfg.url ?? ''} onChange={(e) => setCfg({ url: e.target.value })} />
+          </Field>
+          <Field label="Color del reproductor">
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input type="color" defaultValue={cfg.playerColor ?? '#4F46E5'} onChange={(e) => setCfg({ playerColor: e.target.value })} style={s.colorInput} />
+              <span style={{ fontSize: 11, color: '#6b7280' }}>Color del botón y barra de progreso</span>
+            </div>
+          </Field>
+          <Field label="Opciones">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Check k="autoplay" label="Autoplay al abrir la página" def={false} />
+              <Check k="loop"     label="Repetir en bucle" def={false} />
+            </div>
+          </Field>
+        </>
       )}
 
       {type === 'qr' && (
         <>
-          <Field label="Contenido (URL o texto). Vacío = enlace del flipbook">
+          <Field label="Contenido (URL o texto — vacío = link del flipbook)">
             <input style={s.propInput} placeholder="https://..." defaultValue={cfg.data ?? ''} onChange={(e) => setCfg({ data: e.target.value })} />
           </Field>
           <Field label="Leyenda">
-            <input style={s.propInput} defaultValue={cfg.caption ?? ''} onChange={(e) => setCfg({ caption: e.target.value })} />
+            <input style={s.propInput} placeholder="Escanéame" defaultValue={cfg.caption ?? ''} onChange={(e) => setCfg({ caption: e.target.value })} />
           </Field>
         </>
       )}
 
       {type === 'table' && (
-        <Field label="Datos (una fila por línea, columnas separadas por coma)">
-          <textarea style={{ ...s.propInput, height: 120, resize: 'vertical', fontFamily: 'monospace' } as any} defaultValue={cfg.csv ?? ''} onChange={(e) => setCfg({ csv: e.target.value })} />
+        <Field label="Datos (fila por línea, columnas separadas por coma)">
+          <textarea style={{ ...s.propInput, height: 120, resize: 'vertical', fontFamily: 'monospace', fontSize: 11 } as any} defaultValue={cfg.csv ?? ''} onChange={(e) => setCfg({ csv: e.target.value })} />
         </Field>
       )}
 
@@ -1362,6 +1540,110 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
         <Field label="Texto del botón">
           <input style={s.propInput} defaultValue={cfg.label ?? 'Me gusta'} onChange={(e) => setCfg({ label: e.target.value })} />
         </Field>
+      )}
+
+      {type === 'embed' && (
+        <>
+          <Field label="Código HTML / iframe a incrustar">
+            <textarea style={{ ...s.propInput, height: 120, resize: 'vertical', fontFamily: 'monospace', fontSize: 11 } as any} placeholder={'<iframe src="https://..." ...></iframe>\no código HTML corto'} defaultValue={cfg.html ?? ''} onChange={(e) => setCfg({ html: e.target.value })} />
+          </Field>
+          <p style={cp.hint}>Pegá el código de inserción de cualquier servicio externo (Google Forms, Typeform, calendarios, mapas custom, etc.).</p>
+        </>
+      )}
+
+      {type === 'quiz' && (
+        <>
+          <Field label="Título del cuestionario">
+            <input style={s.propInput} defaultValue={cfg.title ?? 'Cuestionario'} onChange={(e) => setCfg({ title: e.target.value })} />
+          </Field>
+          <div style={cp.sectionLabel}>Preguntas</div>
+          {quizQuestions.map((q: any, qi: number) => (
+            <div key={qi} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#374151' }}>Pregunta {qi + 1}</span>
+                <button onClick={() => { const next = quizQuestions.filter((_: any, i: number) => i !== qi); setQuizQuestions(next); setCfg({ questions: next }) }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 13 }}>✕</button>
+              </div>
+              <input style={{ ...s.propInput, marginBottom: 6 }} placeholder="Texto de la pregunta" defaultValue={q.text} onChange={(e) => { const next = quizQuestions.map((qq: any, i: number) => i === qi ? { ...qq, text: e.target.value } : qq); setQuizQuestions(next); setCfg({ questions: next }) }} />
+              <select style={{ ...s.propInput, marginBottom: 6 }} defaultValue={q.type ?? 'single'} onChange={(e) => { const next = quizQuestions.map((qq: any, i: number) => i === qi ? { ...qq, type: e.target.value } : qq); setQuizQuestions(next); setCfg({ questions: next }) }}>
+                <option value="single">Opción única</option>
+                <option value="multi">Múltiple selección</option>
+              </select>
+              {q.options.map((opt: string, oi: number) => (
+                <div key={oi} style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                  <input style={{ ...s.propInput, flex: 1 }} placeholder={`Opción ${oi + 1}`} defaultValue={opt} onChange={(e) => { const next = quizQuestions.map((qq: any, i: number) => i === qi ? { ...qq, options: qq.options.map((o: string, j: number) => j === oi ? e.target.value : o) } : qq); setQuizQuestions(next); setCfg({ questions: next }) }} />
+                  <button onClick={() => { const next = quizQuestions.map((qq: any, i: number) => i === qi ? { ...qq, options: qq.options.filter((_: string, j: number) => j !== oi) } : qq); setQuizQuestions(next); setCfg({ questions: next }) }} style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>✕</button>
+                </div>
+              ))}
+              <button onClick={() => { const next = quizQuestions.map((qq: any, i: number) => i === qi ? { ...qq, options: [...qq.options, `Opción ${qq.options.length + 1}`] } : qq); setQuizQuestions(next); setCfg({ questions: next }) }} style={{ ...cp.primaryBtn, fontSize: 11, padding: '5px', marginTop: 4, background: '#f3f4f6', color: '#374151' }}>+ Agregar opción</button>
+            </div>
+          ))}
+          <button onClick={() => { const next = [...quizQuestions, { text: `Pregunta ${quizQuestions.length + 1}`, options: ['Opción A', 'Opción B'], type: 'single' }]; setQuizQuestions(next); setCfg({ questions: next }) }} style={{ ...cp.primaryBtn, background: '#4F46E5', marginBottom: 4 }}>+ Agregar pregunta</button>
+        </>
+      )}
+
+      {type === 'popup_banner' && (
+        <>
+          <Field label="Plantilla rápida">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              {POPUP_TEMPLATES.map((t) => (
+                <button key={t.key} onClick={() => setCfg({ ...cfg, template: t.key, ...t.defaults })} style={{ padding: '6px 4px', border: `2px solid ${cfg.template === t.key ? '#4F46E5' : '#e5e7eb'}`, borderRadius: 6, background: cfg.template === t.key ? '#eef2ff' : '#fff', cursor: 'pointer', fontSize: 10, color: '#374151', textAlign: 'center' as const }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Posición en pantalla">
+            <select style={s.propInput} defaultValue={cfg.position ?? 'bottom'} onChange={(e) => setCfg({ position: e.target.value })}>
+              <option value="bottom">Cintillo inferior</option>
+              <option value="top">Cintillo superior</option>
+              <option value="center">Centro (modal)</option>
+            </select>
+          </Field>
+          <Field label="Cuándo aparecer">
+            <select style={s.propInput} defaultValue={cfg.trigger ?? 'delay'} onChange={(e) => setCfg({ trigger: e.target.value })}>
+              <option value="delay">Después de X segundos</option>
+              <option value="immediate">Al abrir el flipbook</option>
+              <option value="exit">Al intentar salir</option>
+            </select>
+          </Field>
+          {(cfg.trigger === 'delay' || !cfg.trigger) && (
+            <Field label="Demora (segundos)">
+              <input style={s.propInput} type="number" min={0} max={120} defaultValue={cfg.delay ?? 5} onChange={(e) => setCfg({ delay: +e.target.value })} />
+            </Field>
+          )}
+          <Field label="Título del pop-up">
+            <input style={s.propInput} defaultValue={cfg.title ?? ''} onChange={(e) => setCfg({ title: e.target.value })} />
+          </Field>
+          <Field label="Texto del pop-up">
+            <textarea style={{ ...s.propInput, height: 64, resize: 'vertical' } as any} defaultValue={cfg.text ?? ''} onChange={(e) => setCfg({ text: e.target.value })} />
+          </Field>
+          <Field label="Texto del botón">
+            <input style={s.propInput} defaultValue={cfg.buttonText ?? ''} onChange={(e) => setCfg({ buttonText: e.target.value })} />
+          </Field>
+          <Field label="URL del botón">
+            <input style={s.propInput} placeholder="https://..." defaultValue={cfg.buttonUrl ?? ''} onChange={(e) => setCfg({ buttonUrl: e.target.value })} />
+          </Field>
+          <Field label="Imagen (URL, opcional)">
+            <input style={s.propInput} placeholder="https://..." defaultValue={cfg.image ?? ''} onChange={(e) => setCfg({ image: e.target.value })} />
+          </Field>
+          <Field label="Colores">
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={s.miniLabel}>Fondo</div>
+                <input type="color" defaultValue={cfg.bgColor ?? '#1e1b4b'} onChange={(e) => setCfg({ bgColor: e.target.value })} style={s.colorInput} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={s.miniLabel}>Texto</div>
+                <input type="color" defaultValue={cfg.textColor ?? '#ffffff'} onChange={(e) => setCfg({ textColor: e.target.value })} style={s.colorInput} />
+              </div>
+            </div>
+          </Field>
+          <Field label="Opciones">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Check k="showOnce" label="Mostrar una sola vez por visitante" />
+            </div>
+          </Field>
+        </>
       )}
 
       <p style={cp.hint}>El widget se muestra completo en la vista previa y en la publicación final.</p>
@@ -1433,6 +1715,34 @@ function ActionEditor({ data, pages, setData }: { data: any; pages: any[]; setDa
         </PropGroup>
       )}
 
+      {action.type === 'whatsapp' && (
+        <>
+          <PropGroup label="Número (código de país sin +)">
+            <input style={s.propInput} placeholder="18095551234" defaultValue={action.phone ?? ''} onChange={(e) => setAction({ phone: e.target.value })} />
+          </PropGroup>
+          <PropGroup label="Mensaje prellenado (opcional)">
+            <input style={s.propInput} defaultValue={action.message ?? ''} onChange={(e) => setAction({ message: e.target.value })} />
+          </PropGroup>
+        </>
+      )}
+
+      {action.type === 'popup_video' && (
+        <PropGroup label="URL del video (YouTube, Vimeo o .mp4)">
+          <input style={s.propInput} placeholder="https://youtube.com/watch?v=..." defaultValue={action.url ?? ''} onChange={(e) => setAction({ url: e.target.value })} />
+        </PropGroup>
+      )}
+
+      {action.type === 'download' && (
+        <>
+          <PropGroup label="URL del archivo a descargar">
+            <input style={s.propInput} placeholder="https://..." defaultValue={action.url ?? ''} onChange={(e) => setAction({ url: e.target.value })} />
+          </PropGroup>
+          <PropGroup label="Nombre del archivo (opcional)">
+            <input style={s.propInput} placeholder="catalogo.pdf" defaultValue={action.filename ?? ''} onChange={(e) => setAction({ filename: e.target.value })} />
+          </PropGroup>
+        </>
+      )}
+
       {action.type === 'show_hide' && (
         <PropGroup label="ID del elemento a mostrar/ocultar">
           <input style={s.propInput} placeholder="ej: oferta1" defaultValue={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })} />
@@ -1497,6 +1807,9 @@ const s: Record<string, React.CSSProperties> = {
   zoomBtn:   { background: 'none', border: '1px solid transparent', borderRadius: 12, padding: '3px 9px', fontSize: 11, cursor: 'pointer', color: '#6b7280', fontWeight: 500 },
   zoomActive:{ background: '#f3f4f6', borderColor: '#e5e7eb', color: '#111827', fontWeight: 600 },
   canvasWrap:  { flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 32, alignItems: 'flex-start' },
+  pageNav:   { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 16px', background: '#fff', borderTop: '1px solid #e5e7eb', flexShrink: 0 },
+  pageNavBtn: { background: 'none', border: '1px solid #e5e7eb', borderRadius: 8, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 14, color: '#374151', transition: 'background .15s', fontFamily: 'inherit' } as React.CSSProperties,
+  pageNavInfo:{ fontSize: 13, color: '#374151', fontWeight: 600, minWidth: 90, textAlign: 'center' as const },
   canvasEmpty: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', cursor: 'pointer', borderRadius: 12, transition: 'background 0.2s' },
 
   right:      { width: 288, minWidth: 288, background: '#fff', borderLeft: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden' },

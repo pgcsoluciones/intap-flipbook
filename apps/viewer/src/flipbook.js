@@ -151,8 +151,33 @@ async function init() {
         showPopup(im)
         break
       }
+      case 'whatsapp': {
+        const phone = String(a.phone || '').replace(/\D/g, '')
+        if (phone) window.open(`https://wa.me/${phone}?text=${encodeURIComponent(a.message || '')}`, '_blank')
+        break
+      }
+      case 'popup_video': {
+        if (!a.url) break
+        const yt = (a.url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/) || [])[1]
+        const vm = (a.url.match(/vimeo\.com\/(\d+)/) || [])[1]
+        let src = a.url
+        if (yt) src = `https://www.youtube.com/embed/${yt}?autoplay=1`
+        else if (vm) src = `https://player.vimeo.com/video/${vm}?autoplay=1`
+        const iframe = document.createElement('iframe')
+        iframe.src = src
+        iframe.style.cssText = 'width:80vw;max-width:720px;aspect-ratio:16/9;border:0;border-radius:8px;display:block;'
+        iframe.allow = 'autoplay; fullscreen'
+        showPopup(iframe)
+        break
+      }
+      case 'download': {
+        if (!a.url) break
+        const link = document.createElement('a')
+        link.href = a.url; link.download = a.filename || ''; link.target = '_blank'
+        document.body.appendChild(link); link.click(); document.body.removeChild(link)
+        break
+      }
       case 'show_hide':
-        // Mostrar/Ocultar requiere elementos nombrados; se ampliará en una fase futura.
         break
     }
   }
@@ -171,6 +196,24 @@ async function init() {
     box.appendChild(node)
     back.appendChild(box)
     document.body.appendChild(back)
+  }
+
+  // ── Animaciones CSS ─────────────────────────────────────────────────────
+  if (!document.getElementById('flipbook-anim-styles')) {
+    const st = document.createElement('style')
+    st.id = 'flipbook-anim-styles'
+    st.textContent = `
+      @keyframes hs-pulse  { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.4);opacity:.6} }
+      @keyframes hs-blink  { 0%,100%{opacity:1} 50%{opacity:0} }
+      @keyframes hs-ripple { 0%{transform:scale(1);opacity:.8} 100%{transform:scale(2.2);opacity:0} }
+      @keyframes pb-in-b   { from{transform:translateY(100%)} to{transform:translateY(0)} }
+      @keyframes pb-in-t   { from{transform:translateY(-100%)} to{transform:translateY(0)} }
+      @keyframes pb-in-c   { from{opacity:0;transform:scale(.92)} to{opacity:1;transform:scale(1)} }
+      .hs-pulse { animation: hs-pulse  1.4s ease-in-out infinite }
+      .hs-blink { animation: hs-blink  1s step-start infinite }
+      .hs-ring  { animation: hs-ripple 1.4s ease-out infinite }
+    `
+    document.head.appendChild(st)
   }
 
   // ── Widgets interactivos ───────────────────────────────────────────────
@@ -208,16 +251,22 @@ async function init() {
     const title = document.createElement('div')
     title.textContent = cfg.title || 'Contáctanos'
     title.style.cssText = 'font-weight:700;font-size:13px;color:#111827;'
-    const name = makeInput('Nombre'); const email = makeInput('Email', 'email')
-    const msg = document.createElement('textarea'); msg.placeholder = 'Mensaje'; msg.required = true
+    const name = makeInput('Nombre *', 'text'); name.required = true
+    const email = makeInput('Email *', 'email'); email.required = true
+    const phone = makeInput('Teléfono', 'tel'); phone.required = !!cfg.requirePhone
+    const msg = document.createElement('textarea')
+    msg.placeholder = (cfg.commentLabel || 'Mensaje') + (cfg.requireComment !== false ? ' *' : '')
+    msg.required = cfg.requireComment !== false
     msg.style.cssText = INP_CSS + 'resize:none;flex:1;min-height:34px;'
     const btn = document.createElement('button'); btn.type = 'submit'; btn.textContent = cfg.button || 'Enviar'
     btn.style.cssText = 'background:#4F46E5;color:#fff;border:none;border-radius:6px;padding:8px;font-weight:600;cursor:pointer;font-size:12px;'
-    f.append(title, name, email, msg, btn)
+    f.append(title, name, email)
+    if (cfg.showPhone !== false) f.appendChild(phone)
+    f.append(msg, btn)
     f.addEventListener('submit', (e) => {
       e.preventDefault()
-      const body = `Nombre: ${name.value}\nEmail: ${email.value}\n\n${msg.value}`
-      window.location.href = `mailto:${cfg.toEmail || ''}?subject=${encodeURIComponent('Contacto desde catálogo')}&body=${encodeURIComponent(body)}`
+      const body = `Nombre: ${name.value}\nEmail: ${email.value}\nTeléfono: ${phone.value}\n\n${msg.value}`
+      window.location.href = `mailto:${cfg.toEmail || ''}?subject=${encodeURIComponent(cfg.subject || 'Contacto desde catálogo')}&body=${encodeURIComponent(body)}`
     })
     return f
   }
@@ -255,21 +304,45 @@ async function init() {
   function buildWidget(widget, w, h, key) {
     const cfg = widget.config || {}
     switch (widget.type) {
-      case 'map':
-        return cfg.address
-          ? widgetFrame(`https://www.google.com/maps?q=${encodeURIComponent(cfg.address)}&z=${cfg.zoom || 14}&output=embed`)
-          : placeholderBox('Mapa (sin dirección)')
+      case 'map': {
+        const query = cfg.mapsUrl || (cfg.address ? `https://www.google.com/maps?q=${encodeURIComponent(cfg.address)}&z=${cfg.zoom || 14}&output=embed` : null)
+        if (!query) return placeholderBox('Mapa (sin dirección)')
+        // si es URL completa de Maps, usarla directo; si es dirección, embed
+        const src = query.startsWith('http') ? query : `https://www.google.com/maps?q=${encodeURIComponent(query)}&z=${cfg.zoom || 14}&output=embed`
+        return widgetFrame(src)
+      }
       case 'video': {
         const yt = ytId(cfg.url), vm = vimeoId(cfg.url)
-        if (yt) return widgetFrame(`https://www.youtube.com/embed/${yt}`)
-        if (vm) return widgetFrame(`https://player.vimeo.com/video/${vm}`)
-        if (cfg.url) { const v = document.createElement('video'); v.src = cfg.url; v.controls = true; v.style.cssText = 'width:100%;height:100%;border-radius:8px;background:#000;'; return v }
+        const params = []
+        if (cfg.autoplay) params.push('autoplay=1')
+        if (!cfg.controls && cfg.controls !== undefined) params.push('controls=0')
+        if (cfg.muted) params.push('mute=1')
+        if (cfg.loop) params.push('loop=1')
+        const qs = params.length ? '?' + params.join('&') : ''
+        if (yt) return widgetFrame(`https://www.youtube.com/embed/${yt}${qs}`)
+        if (vm) return widgetFrame(`https://player.vimeo.com/video/${vm}${qs}`)
+        if (cfg.url) {
+          const v = document.createElement('video')
+          v.src = cfg.url; v.controls = cfg.controls !== false; v.muted = !!cfg.muted
+          v.autoplay = !!cfg.autoplay; v.loop = !!cfg.loop
+          if (cfg.poster) v.poster = cfg.poster
+          v.style.cssText = 'width:100%;height:100%;border-radius:8px;background:#000;'
+          return v
+        }
         return placeholderBox('Video (sin URL)')
       }
       case 'audio': {
         if (!cfg.url) return placeholderBox('Audio (sin URL)')
-        const box = centerBox(); const a = document.createElement('audio'); a.src = cfg.url; a.controls = true; a.style.cssText = 'width:90%;'
-        box.appendChild(a); return box
+        const box = centerBox()
+        const color = cfg.playerColor || '#4F46E5'
+        box.style.cssText += `background:${color}18;border-radius:12px;`
+        const a = document.createElement('audio')
+        a.src = cfg.url; a.controls = true
+        if (cfg.autoplay) a.autoplay = true
+        if (cfg.loop) a.loop = true
+        a.style.cssText = 'width:90%;accent-color:' + color
+        box.appendChild(a)
+        return box
       }
       case 'whatsapp': {
         const phone = String(cfg.phone || '').replace(/\D/g, '')
@@ -294,7 +367,112 @@ async function init() {
       case 'contact': return buildContactForm(cfg)
       case 'table': return buildTable(cfg.csv || '')
       case 'like': return buildLike(cfg, key)
+      case 'embed': {
+        if (!cfg.html) return placeholderBox('Incrustar (sin código)')
+        const wrap = document.createElement('div')
+        wrap.style.cssText = 'width:100%;height:100%;overflow:auto;border-radius:8px;'
+        wrap.innerHTML = cfg.html
+        return wrap
+      }
+      case 'quiz': {
+        const questions = cfg.questions || []
+        if (!questions.length) return placeholderBox('Cuestionario (sin preguntas)')
+        const wrap = document.createElement('div')
+        wrap.style.cssText = 'width:100%;height:100%;overflow:auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px;box-sizing:border-box;font-family:Inter,sans-serif;display:flex;flex-direction:column;gap:10px;'
+        const ttl = document.createElement('div')
+        ttl.textContent = cfg.title || 'Cuestionario'
+        ttl.style.cssText = 'font-weight:700;font-size:13px;color:#111827;'
+        wrap.appendChild(ttl)
+        const answers = {}
+        questions.forEach((q, qi) => {
+          const qWrap = document.createElement('div')
+          qWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;'
+          const qLabel = document.createElement('div')
+          qLabel.textContent = `${qi + 1}. ${q.question}`
+          qLabel.style.cssText = 'font-size:12px;font-weight:600;color:#374151;'
+          qWrap.appendChild(qLabel)
+          ;(q.options || []).forEach((opt, oi) => {
+            const row = document.createElement('label')
+            row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:#374151;cursor:pointer;'
+            const inp = document.createElement('input')
+            inp.type = q.multiple ? 'checkbox' : 'radio'
+            inp.name = `q${qi}`; inp.value = String(oi)
+            inp.addEventListener('change', () => { answers[qi] = oi })
+            row.appendChild(inp)
+            row.appendChild(document.createTextNode(opt))
+            qWrap.appendChild(row)
+          })
+          wrap.appendChild(qWrap)
+        })
+        const btn = document.createElement('button')
+        btn.textContent = 'Enviar'
+        btn.style.cssText = 'background:#4F46E5;color:#fff;border:none;border-radius:6px;padding:8px;font-weight:600;cursor:pointer;font-size:12px;margin-top:auto;'
+        btn.addEventListener('click', () => {
+          localStorage.setItem(`quiz_${key}`, JSON.stringify(answers))
+          btn.textContent = '✓ Respuestas guardadas'
+          btn.disabled = true
+        })
+        wrap.appendChild(btn)
+        return wrap
+      }
+      case 'popup_banner': {
+        // El banner global se registra y se muestra después del delay
+        scheduleBanner(cfg, key)
+        return null
+      }
       default: return placeholderBox(widget.type)
+    }
+  }
+
+  // ── Banner popup emergente (cintillo) ──────────────────────────────────────
+  const shownBanners = new Set()
+  function scheduleBanner(cfg, key) {
+    if (shownBanners.has(key)) return
+    shownBanners.add(key)
+    const delay = cfg.trigger === 'immediate' ? 0 : (parseInt(cfg.delay || '3', 10) * 1000)
+    setTimeout(() => showBanner(cfg), delay)
+  }
+  function showBanner(cfg) {
+    if (document.getElementById('flipbook-banner')) return
+    const pos = cfg.position || 'bottom'
+    const animMap = { bottom: 'pb-in-b', top: 'pb-in-t', center: 'pb-in-c' }
+    const posMap = {
+      bottom: 'position:fixed;bottom:0;left:0;right:0;',
+      top:    'position:fixed;top:0;left:0;right:0;',
+      center: 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.4);',
+    }
+    const outer = document.createElement('div')
+    outer.id = 'flipbook-banner'
+    outer.style.cssText = `z-index:2000;${posMap[pos] || posMap.bottom}`
+    const inner = document.createElement('div')
+    inner.style.cssText = `background:${cfg.bgColor || '#1a1827'};color:${cfg.textColor || '#fff'};padding:16px 20px;display:flex;align-items:center;gap:16px;font-family:Inter,sans-serif;animation:${animMap[pos] || animMap.bottom} 0.35s ease-out;${pos === 'center' ? 'border-radius:12px;max-width:480px;width:90%;flex-direction:column;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);' : 'justify-content:space-between;'}`
+    if (cfg.image) {
+      const img = document.createElement('img')
+      img.src = cfg.image; img.style.cssText = 'width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;'
+      inner.appendChild(img)
+    }
+    const textWrap = document.createElement('div')
+    textWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;flex:1;'
+    if (cfg.title) { const t = document.createElement('div'); t.textContent = cfg.title; t.style.cssText = 'font-weight:700;font-size:15px;'; textWrap.appendChild(t) }
+    if (cfg.text) { const t = document.createElement('div'); t.textContent = cfg.text; t.style.cssText = 'font-size:13px;opacity:.85;'; textWrap.appendChild(t) }
+    inner.appendChild(textWrap)
+    if (cfg.buttonText) {
+      const btn = document.createElement('button')
+      btn.textContent = cfg.buttonText
+      btn.style.cssText = `background:${cfg.buttonColor || '#4F46E5'};color:#fff;border:none;border-radius:8px;padding:9px 18px;font-weight:700;cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0;`
+      if (cfg.buttonUrl) btn.addEventListener('click', () => window.open(cfg.buttonUrl, '_blank'))
+      inner.appendChild(btn)
+    }
+    const close = document.createElement('button')
+    close.textContent = '✕'
+    close.style.cssText = 'background:none;border:none;color:inherit;opacity:.6;cursor:pointer;font-size:16px;padding:0 4px;flex-shrink:0;'
+    close.addEventListener('click', () => outer.remove())
+    inner.appendChild(close)
+    outer.appendChild(inner)
+    document.body.appendChild(outer)
+    // Auto-dismiss
+    if (cfg.autoDismiss && parseInt(cfg.autoDismiss, 10) > 0) {
+      setTimeout(() => outer.remove(), parseInt(cfg.autoDismiss, 10) * 1000)
     }
   }
 
@@ -320,6 +498,19 @@ async function init() {
       fcanvas.getObjects().slice().forEach((obj) => {
         const d = obj.data || {}
         const r = obj.getBoundingRect(true)
+
+        // Hotspot animado: reemplazar con div CSS
+        if (d.kind === 'hotspot') {
+          const animClass = d.animStyle === 'blink' ? 'hs-blink' : d.animStyle === 'ripple' ? 'hs-ring' : 'hs-pulse'
+          const color = d.color || '#ef4444'
+          const hs = document.createElement('div')
+          hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;`
+          hs.innerHTML = `<div class="${animClass}" style="width:36px;height:36px;border-radius:50%;background:${color}44;border:2.5px solid ${color};display:flex;align-items:center;justify-content:center;"><div style="width:14px;height:14px;border-radius:50%;background:${color};"></div></div>`
+          if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action) })
+          wrap.appendChild(hs)
+          fcanvas.remove(obj)
+          return
+        }
 
         // Widget: renderiza el componente real y oculta el placeholder del editor
         if (d.widget) {
