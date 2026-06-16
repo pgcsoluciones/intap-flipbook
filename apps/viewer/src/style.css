@@ -31,6 +31,8 @@ body {
   border-radius: 50px;
   backdrop-filter: blur(10px);
   width: fit-content;
+  position: relative;
+  z-index: 20;
 }
 
 #controls button {
@@ -45,6 +47,8 @@ body {
 }
 
 #controls button:hover { background: rgba(255,255,255,.2); }
+#controls button:disabled { opacity: 0.3; cursor: default; }
+#controls button:disabled:hover { background: none; }
 
 #page-info {
   font-size: 0.9rem;
@@ -52,6 +56,67 @@ body {
   text-align: center;
 }
 
+/* Panel de miniaturas */
+#thumbnail-panel {
+  display: none;
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10,10,30,.92);
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 12px;
+  padding: 10px;
+  z-index: 30;
+  max-width: 90vw;
+  backdrop-filter: blur(12px);
+}
+
+#thumbnail-panel.open { display: block; }
+
+#thumbnail-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  max-width: 80vw;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,.3) transparent;
+}
+
+.thumb-item {
+  flex: 0 0 auto;
+  cursor: pointer;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  transition: border-color .15s, transform .15s;
+  position: relative;
+}
+
+.thumb-item:hover { transform: scale(1.05); }
+.thumb-item.active { border-color: #6c63ff; }
+
+.thumb-item img {
+  display: block;
+  width: 60px;
+  height: 85px;
+  object-fit: cover;
+}
+
+.thumb-item span {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,.6);
+  color: #fff;
+  font-size: 0.55rem;
+  text-align: center;
+  padding: 2px 0;
+}
+
 @media (max-width: 700px) {
   #flipbook-container { padding: 12px 12px 0; }
+  #thumbnail-panel { bottom: 72px; }
 }

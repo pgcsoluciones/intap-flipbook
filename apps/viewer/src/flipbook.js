@@ -18,7 +18,6 @@ function waitForImages(container) {
   )
 }
 
-// Página invisible (color fondo) para acompañar portada/contraportada
 function makeBlank(w, h) {
   const d = document.createElement('div')
   d.className = 'page'
@@ -35,7 +34,9 @@ async function init() {
 
   const { data } = await res.json()
   document.title = data.title
-  soundEnabled = data.sound_enabled
+
+  // Sonido habilitado por defecto — el campo sound_enabled de la API puede restringirlo en el futuro
+  soundEnabled = data.sound_enabled !== false
   updateSoundBtn()
 
   const portrait = window.innerWidth < 700
@@ -75,7 +76,6 @@ async function init() {
 
   await waitForImages(container)
 
-  // showCover: false → TODAS las páginas tienen el efecto de hoja flexible
   const pageFlip = new St.PageFlip(container, {
     width: pageWidth,
     height: pageHeight,
@@ -91,13 +91,7 @@ async function init() {
 
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
 
-  // Centrado dinámico:
-  // El libro siempre ocupa 2×pageWidth. Cuando el spread tiene una página invisible,
-  // desplazamos el libro para centrar la página visible.
-  //
-  // Primer spread [blank(izq) | portada(der)]: desplazar -pageWidth/2 (book va a la izquierda, portada queda centrada)
-  // Último spread [contraportada(izq) | blank(der)]: desplazar +pageWidth/2 (book va a la derecha, contraportada queda centrada)
-  // Spreads interiores: sin desplazamiento
+  // Centrado dinámico: cubre/contraportada centradas, spreads interiores sin desplazamiento
   function applyCenter() {
     if (portrait) return
     const idx = pageFlip.getCurrentPageIndex()
@@ -110,30 +104,108 @@ async function init() {
 
   function updatePageInfo() {
     const idx = pageFlip.getCurrentPageIndex()
-    // idx 0 = blank inicial, idx 1..realCount = páginas reales, idx realCount+1 = blank final
     const current = Math.max(1, Math.min(idx, realCount))
     document.getElementById('page-info').textContent = `${current} / ${realCount}`
   }
 
-  pageFlip.on('flip', () => {
+  // Actualiza estado habilitado/deshabilitado de los botones de navegación
+  function updateNavButtons() {
+    const idx = pageFlip.getCurrentPageIndex()
+    document.getElementById('btn-prev').disabled = idx <= 1
+    document.getElementById('btn-next').disabled = idx >= realCount
+  }
+
+  // Actualiza miniatura activa
+  function updateActiveThumbnail() {
+    const idx = pageFlip.getCurrentPageIndex()
+    const current = Math.max(1, Math.min(idx, realCount))
+    document.querySelectorAll('.thumb-item').forEach((el, i) => {
+      el.classList.toggle('active', i + 1 === current)
+    })
+  }
+
+  function onFlipChange() {
     if (soundEnabled) { flipSound.currentTime = 0; flipSound.play().catch(() => {}) }
     updatePageInfo()
     applyCenter()
-  })
+    updateNavButtons()
+    updateActiveThumbnail()
+  }
 
+  pageFlip.on('flip', onFlipChange)
   pageFlip.on('changeState', () => {
     updatePageInfo()
     applyCenter()
+    updateNavButtons()
+    updateActiveThumbnail()
   })
 
   applyCenter()
   updatePageInfo()
+  updateNavButtons()
 
-  document.getElementById('btn-prev').addEventListener('click', () => pageFlip.flipPrev())
-  document.getElementById('btn-next').addEventListener('click', () => pageFlip.flipNext())
+  // Construir panel de miniaturas
+  const thumbList = document.getElementById('thumbnail-list')
+  data.pages.forEach((page, i) => {
+    const item = document.createElement('div')
+    item.className = 'thumb-item' + (i === 0 ? ' active' : '')
+    const img = document.createElement('img')
+    img.src = page.image_url
+    img.alt = `Pág ${i + 1}`
+    img.loading = 'lazy'
+    const label = document.createElement('span')
+    label.textContent = i + 1
+    item.appendChild(img)
+    item.appendChild(label)
+    item.addEventListener('click', () => {
+      pageFlip.flip(i + 1)
+      document.getElementById('thumbnail-panel').classList.remove('open')
+    })
+    thumbList.appendChild(item)
+  })
+
+  // Controles
+  document.getElementById('btn-prev').addEventListener('click', () => {
+    const idx = pageFlip.getCurrentPageIndex()
+    if (idx > 1) pageFlip.flipPrev()
+  })
+
+  document.getElementById('btn-next').addEventListener('click', () => {
+    const idx = pageFlip.getCurrentPageIndex()
+    if (idx < realCount) pageFlip.flipNext()
+  })
+
   document.getElementById('btn-sound').addEventListener('click', () => {
     soundEnabled = !soundEnabled
     updateSoundBtn()
+  })
+
+  document.getElementById('btn-thumbnails').addEventListener('click', () => {
+    document.getElementById('thumbnail-panel').classList.toggle('open')
+  })
+
+  document.getElementById('btn-print').addEventListener('click', () => window.print())
+
+  document.getElementById('btn-fullscreen').addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {})
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  })
+
+  document.addEventListener('fullscreenchange', () => {
+    document.getElementById('btn-fullscreen').textContent = document.fullscreenElement ? '⛶' : '⛶'
+    document.getElementById('btn-fullscreen').title = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'
+  })
+
+  // Cerrar panel de miniaturas al hacer clic fuera
+  document.addEventListener('click', (e) => {
+    const panel = document.getElementById('thumbnail-panel')
+    const btn = document.getElementById('btn-thumbnails')
+    if (panel.classList.contains('open') && !panel.contains(e.target) && e.target !== btn) {
+      panel.classList.remove('open')
+    }
   })
 }
 
