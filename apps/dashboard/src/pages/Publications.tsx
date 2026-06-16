@@ -313,7 +313,7 @@ function PubCard({ pub, onDelete, onPublish }: { pub: any; onDelete: () => void;
             </Link>
           </div>
         )}
-        <div style={{ ...s.statusBadge, background: isPublished ? '#d1fae5', color: '#065f46' }}>
+        <div style={{ ...s.statusBadge, background: isPublished ? '#d1fae5' : '#f3f4f6', color: isPublished ? '#065f46' : '#6b7280' }}>
           {isPublished ? 'Publicado' : 'Borrador'}
         </div>
       </div>
