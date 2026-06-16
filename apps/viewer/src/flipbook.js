@@ -7,8 +7,27 @@ if (!slug) {
 }
 
 let soundEnabled = true
-const flipSound = new Audio('https://cdn.freesound.org/previews/242/242501_4284968-lq.mp3')
-flipSound.volume = 0.4
+
+// Genera el sonido de pasar página con Web Audio API (sin depender de URLs externas)
+function playFlipSound() {
+  if (!soundEnabled) return
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)()
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.12, ctx.sampleRate)
+    const data = buf.getChannelData(0)
+    for (let i = 0; i < data.length; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 2)
+    }
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0.35, ctx.currentTime)
+    src.connect(gain)
+    gain.connect(ctx.destination)
+    src.start()
+    src.onended = () => ctx.close()
+  } catch (e) {}
+}
 
 function waitForImages(container) {
   return Promise.all(
@@ -134,7 +153,7 @@ async function init() {
     // Si el swipe/drag llegó a una página en blanco, volver a la real más cercana
     if (idx <= 0) { pageFlip.flip(1); return }
     if (idx > realCount) { pageFlip.flip(realCount); return }
-    if (soundEnabled) { flipSound.currentTime = 0; flipSound.play().catch(() => {}) }
+    playFlipSound()
     updatePageInfo()
     applyCenter()
     updateNavButtons()
