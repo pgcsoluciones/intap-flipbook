@@ -1,6 +1,9 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import authRoutes from './routes/auth'
+import publicationRoutes from './routes/publications'
+import pageRoutes from './routes/pages'
+import uploadRoutes from './routes/upload'
 
 export type Env = {
   DB: D1Database
@@ -26,6 +29,47 @@ app.use('*', async (c, next) => {
 
 app.get('/', (c) => c.json({ service: 'intap-flipbook-api', status: 'ok' }))
 
+// Auth (public)
 app.route('/auth', authRoutes)
+
+// Protected API
+app.route('/api/publications', publicationRoutes)
+app.route('/api', pageRoutes)
+app.route('/api/upload', uploadRoutes)
+
+// Public viewer endpoint — no auth required
+app.get('/view/:slug', async (c) => {
+  const slug = c.req.param('slug')
+  const pub = await c.env.DB.prepare(
+    `SELECT id, title, description, cover_image_url, sound_enabled
+     FROM publications WHERE public_slug = ? AND status = 'published'`,
+  )
+    .bind(slug)
+    .first<{
+      id: string
+      title: string
+      description: string | null
+      cover_image_url: string | null
+      sound_enabled: number
+    }>()
+
+  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+
+  const { results: pages } = await c.env.DB.prepare(
+    `SELECT id, page_number, image_url, title, description, price
+     FROM pages WHERE publication_id = ? ORDER BY page_number ASC`,
+  )
+    .bind(pub.id)
+    .all()
+
+  return c.json({
+    success: true,
+    data: {
+      ...pub,
+      sound_enabled: pub.sound_enabled === 1,
+      pages,
+    },
+  })
+})
 
 export default app
