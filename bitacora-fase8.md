@@ -1,5 +1,21 @@
 # Bitácora — Intap Flipbook (desde fix R2 en adelante)
 
+## 📍 Rutas locales (Mac de Juan)
+
+| Proyecto | Ruta |
+|----------|------|
+| Repo completo | `/Users/juanluis/intap-flipbook` |
+| Viewer | `/Users/juanluis/intap-flipbook/apps/viewer` |
+| Dashboard | `/Users/juanluis/intap-flipbook/apps/dashboard` |
+| API | `/Users/juanluis/intap-flipbook/apps/api` |
+
+**Comando de deploy del viewer:**
+```bash
+cd /Users/juanluis/intap-flipbook && git pull origin claude/kind-shannon-udb4qo && cd apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer
+```
+
+> Si wrangler pide autenticación, agregá `CLOUDFLARE_API_TOKEN=<tu-token>` al inicio del comando.
+
 ---
 
 ## ✅ Fix R2 Public URL
