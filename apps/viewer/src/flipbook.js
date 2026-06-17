@@ -528,16 +528,20 @@ async function init() {
       return btn
     }
 
-    // Imagen
+    // Imagen — encuadre ajustable (zoom + reposición) definido en el editor.
+    const imZoom = cfg.imageZoom || 1
+    const imPX = cfg.imagePosX ?? 50
+    const imPY = cfg.imagePosY ?? 50
+    const frame = `object-fit:cover;object-position:${imPX}% ${imPY}%;transform:scale(${imZoom});transform-origin:center;`
     let imgEl = null
     if (hasImg) {
       imgEl = document.createElement('img')
       imgEl.src = cfg.image
       imgEl.style.cssText = horizontal
-        ? 'width:45%;object-fit:cover;flex-shrink:0;align-self:stretch;display:block;'
+        ? `width:45%;flex-shrink:0;align-self:stretch;display:block;${frame}`
         : isCenter
-          ? 'width:100%;max-height:170px;object-fit:cover;display:block;'
-          : 'width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;'
+          ? `width:100%;height:170px;display:block;${frame}`
+          : `width:52px;height:52px;border-radius:8px;flex-shrink:0;${frame}`
     }
 
     // Columna de texto

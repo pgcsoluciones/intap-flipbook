@@ -237,6 +237,9 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
     textColor: '#ffffff',
     image: '',
     imagePosition: 'left',
+    imageZoom: 1,
+    imagePosX: 50,
+    imagePosY: 50,
     showOnce: true,
   },
 }
@@ -1871,6 +1874,17 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
               </select>
             </Field>
           )}
+          {cfg.image && (
+            <Field label="Ajustar imagen">
+              <ImageAdjuster
+                url={cfg.image}
+                zoom={cfg.imageZoom ?? 1}
+                posX={cfg.imagePosX ?? 50}
+                posY={cfg.imagePosY ?? 50}
+                onChange={(p) => setCfg(p)}
+              />
+            </Field>
+          )}
           <Field label="Colores">
             <div style={{ display: 'flex', gap: 12 }}>
               <div style={{ flex: 1 }}>
@@ -1893,6 +1907,56 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
 
       <p style={cp.hint}>El widget se muestra completo en la vista previa y en la publicación final.</p>
     </>
+  )
+}
+
+// Ajustador de imagen: arrastrar para reposicionar + zoom. Guarda el encuadre
+// como imageZoom (escala) + imagePosX/imagePosY (object-position 0–100 %), que
+// el viewer aplica con object-fit:cover + object-position + transform:scale.
+function ImageAdjuster({
+  url, zoom, posX, posY, onChange,
+}: {
+  url: string; zoom: number; posX: number; posY: number
+  onChange: (p: { imageZoom?: number; imagePosX?: number; imagePosY?: number }) => void
+}) {
+  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
+
+  function down(e: React.PointerEvent) {
+    (e.target as HTMLElement).setPointerCapture(e.pointerId)
+    drag.current = { x: e.clientX, y: e.clientY, px: posX, py: posY }
+  }
+  function move(e: React.PointerEvent) {
+    if (!drag.current) return
+    const d = drag.current
+    // Arrastrar hacia un lado revela el lado opuesto → object-position se mueve al revés
+    const nx = Math.min(100, Math.max(0, d.px - (e.clientX - d.x) * 0.4))
+    const ny = Math.min(100, Math.max(0, d.py - (e.clientY - d.y) * 0.4))
+    onChange({ imagePosX: Math.round(nx), imagePosY: Math.round(ny) })
+  }
+  function up() { drag.current = null }
+
+  const zb: React.CSSProperties = { width: 26, height: 26, borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: 15, lineHeight: 1, color: '#374151' }
+
+  return (
+    <div>
+      <div
+        style={{ position: 'relative', width: '100%', height: 150, borderRadius: 8, overflow: 'hidden', border: '1px solid #e5e7eb', background: '#f3f4f6', cursor: 'move', touchAction: 'none' }}
+        onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up}
+      >
+        <img
+          src={url}
+          draggable={false}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: `${posX}% ${posY}%`, transform: `scale(${zoom})`, transformOrigin: 'center', userSelect: 'none', pointerEvents: 'none' }}
+        />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+        <span style={{ fontSize: 11, color: '#6b7280' }}>Zoom</span>
+        <button type="button" style={zb} onClick={() => onChange({ imageZoom: Math.max(1, +(zoom - 0.1).toFixed(2)) })}>−</button>
+        <input type="range" min={1} max={3} step={0.05} value={zoom} onChange={(e) => onChange({ imageZoom: +e.target.value })} style={{ flex: 1 }} />
+        <button type="button" style={zb} onClick={() => onChange({ imageZoom: Math.min(3, +(zoom + 0.1).toFixed(2)) })}>+</button>
+      </div>
+      <p style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>Arrastrá la imagen para reposicionarla y usá el zoom para ajustarla a tu gusto.</p>
+    </div>
   )
 }
 
