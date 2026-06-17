@@ -86,6 +86,39 @@ app.get('/view/:slug', async (c) => {
   })
 })
 
+// Tenant: solicitar cambio de plan
+app.post('/api/plan-requests', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const body = await c.req.json<{ requested_plan: string; notes?: string }>().catch(() => ({}))
+  if (!body.requested_plan) return c.json({ success: false, error: 'requested_plan es requerido' }, 400)
+
+  const plan = await c.env.DB.prepare('SELECT id FROM plans WHERE id = ? AND status = ?')
+    .bind(body.requested_plan, 'active').first()
+  if (!plan) return c.json({ success: false, error: 'Plan no encontrado' }, 404)
+
+  // Cancelar solicitudes pendientes anteriores del mismo usuario
+  await c.env.DB.prepare(
+    `UPDATE plan_requests SET status = 'cancelled' WHERE user_id = ? AND status = 'pending'`
+  ).bind(userId).run()
+
+  const { meta } = await c.env.DB.prepare(
+    `INSERT INTO plan_requests (user_id, requested_plan, status, notes) VALUES (?, ?, 'pending', ?)`
+  ).bind(userId, body.requested_plan, body.notes ?? null).run()
+
+  return c.json({ success: true, data: { id: meta.last_row_id } }, 201)
+})
+
+// Tenant: ver sus solicitudes de plan
+app.get('/api/plan-requests', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { results } = await c.env.DB.prepare(
+    `SELECT pr.*, p.name as plan_name FROM plan_requests pr
+     LEFT JOIN plans p ON p.id = pr.requested_plan
+     WHERE pr.user_id = ? ORDER BY pr.created_at DESC LIMIT 10`
+  ).bind(userId).all()
+  return c.json({ success: true, data: results })
+})
+
 // Recibe respuestas de formularios / cuestionarios desde el viewer — público (sin auth)
 app.post('/view/:slug/response', async (c) => {
   const slug = c.req.param('slug')
@@ -115,4 +148,20 @@ app.post('/view/:slug/response', async (c) => {
   return c.json({ success: true }, 201)
 })
 
-export default app
+// Cron: degradar planes expirados a free (corre 1x/día vía [triggers].crons en wrangler.toml)
+async function degradeExpiredTenants(db: D1Database) {
+  await db.prepare(
+    `UPDATE users
+     SET plan_id = 'free', plan_expires_at = NULL
+     WHERE plan_id != 'free'
+       AND plan_expires_at IS NOT NULL
+       AND plan_expires_at < datetime('now')`
+  ).run()
+}
+
+export default {
+  fetch: app.fetch,
+  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
+    await degradeExpiredTenants(env.DB)
+  },
+}

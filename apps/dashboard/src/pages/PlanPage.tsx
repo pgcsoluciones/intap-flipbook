@@ -1,6 +1,71 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 
+function RequestPlanModal({ plan, onClose }: { plan: { id: string; name: string; price: string; color: string }; onClose: () => void }) {
+  const [notes, setNotes] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [sent, setSent] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSend() {
+    setLoading(true)
+    setError('')
+    try {
+      await api.planRequests.create(plan.id, notes)
+      setSent(true)
+    } catch (e: any) {
+      setError(e.message ?? 'Error al enviar la solicitud')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 500 }} onClick={onClose}>
+      <div style={{ background: '#fff', borderRadius: 16, padding: '2rem', width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,.2)' }} onClick={(e) => e.stopPropagation()}>
+        {sent ? (
+          <>
+            <div style={{ fontSize: '2.5rem', textAlign: 'center', marginBottom: '0.75rem' }}>✅</div>
+            <h2 style={{ textAlign: 'center', fontWeight: 700, color: '#111827', marginBottom: '0.5rem' }}>¡Solicitud enviada!</h2>
+            <p style={{ textAlign: 'center', color: '#6b7280', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+              El equipo revisará tu solicitud para el plan <strong>{plan.name}</strong> y te contactará pronto.
+            </p>
+            <button style={{ ...mStyles.btn, background: plan.color, width: '100%' }} onClick={onClose}>Cerrar</button>
+          </>
+        ) : (
+          <>
+            <h2 style={{ fontWeight: 700, color: '#111827', margin: '0 0 0.25rem' }}>Solicitar plan {plan.name}</h2>
+            <p style={{ color: '#6b7280', fontSize: '0.875rem', margin: '0 0 1.25rem' }}>
+              {plan.price}/mes — El equipo procesará el pago manualmente y activará tu plan.
+            </p>
+            <label style={mStyles.label}>Mensaje opcional (método de pago preferido, consulta, etc.)</label>
+            <textarea
+              style={mStyles.textarea}
+              rows={3}
+              placeholder="Ej: Prefiero pagar por transferencia bancaria..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+            {error && <p style={{ color: '#dc2626', fontSize: '0.8rem', margin: '0.5rem 0' }}>{error}</p>}
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+              <button style={{ ...mStyles.btn, background: '#f3f4f6', color: '#374151', flex: 1 }} onClick={onClose}>Cancelar</button>
+              <button style={{ ...mStyles.btn, background: plan.color, flex: 1 }} disabled={loading} onClick={handleSend}>
+                {loading ? 'Enviando...' : 'Enviar solicitud'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const mStyles: Record<string, React.CSSProperties> = {
+  btn: { color: '#fff', border: 'none', borderRadius: 8, padding: '0.65rem 1rem', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem' },
+  label: { display: 'block', fontSize: '0.8rem', color: '#374151', fontWeight: 600, marginBottom: '0.35rem' },
+  textarea: { width: '100%', borderRadius: 8, border: '1px solid #d1d5db', padding: '0.6rem 0.75rem', fontSize: '0.875rem', resize: 'vertical', boxSizing: 'border-box' as const },
+}
+
 const PLANS = [
   {
     id: 'free',
@@ -59,6 +124,7 @@ function UsageBar({ label, used, max, unlimited }: { label: string; used: number
 
 export default function PlanPage() {
   const [usage, setUsage] = useState<any>(null)
+  const [requestingPlan, setRequestingPlan] = useState<typeof PLANS[number] | null>(null)
 
   useEffect(() => {
     api.plan.usage().then((r) => setUsage(r.data))
@@ -131,7 +197,7 @@ export default function PlanPage() {
               {plan.cta && !isCurrent && (
                 <button
                   style={{ ...styles.ctaBtn, background: plan.color }}
-                  onClick={() => alert('Pagos con Stripe — próximamente 🚀')}
+                  onClick={() => setRequestingPlan(plan)}
                 >
                   {plan.cta}
                 </button>
@@ -145,8 +211,12 @@ export default function PlanPage() {
       </div>
 
       <p style={styles.note}>
-        Para cambiar de plan o cancelar tu suscripción, contactá a soporte en <strong>soporte@intapflipbook.com</strong>
+        Para cancelar tu suscripción, contactá a soporte en <strong>soporte@intapflipbook.com</strong>
       </p>
+
+      {requestingPlan && (
+        <RequestPlanModal plan={requestingPlan} onClose={() => setRequestingPlan(null)} />
+      )}
     </div>
   )
 }

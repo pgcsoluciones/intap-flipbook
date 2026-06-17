@@ -157,8 +157,17 @@ admin.put('/plan-requests/:id', async (c) => {
   if (body.action === 'approve') {
     const current = await c.env.DB.prepare('SELECT plan_id FROM users WHERE id = ?')
       .bind(req.user_id).first<{ plan_id: string }>()
-    await c.env.DB.prepare('UPDATE users SET plan_id = ? WHERE id = ?')
-      .bind(req.requested_plan, req.user_id).run()
+    const planRow = await c.env.DB.prepare('SELECT period_days FROM plans WHERE id = ?')
+      .bind(req.requested_plan).first<{ period_days: number | null }>()
+    const periodDays = planRow?.period_days ?? 30
+    await c.env.DB.prepare(
+      `UPDATE users SET plan_id = ?,
+        plan_expires_at = datetime(COALESCE(
+          CASE WHEN plan_expires_at > datetime('now') THEN plan_expires_at ELSE NULL END,
+          datetime('now')
+        ), '+' || ? || ' days')
+       WHERE id = ?`
+    ).bind(req.requested_plan, periodDays, req.user_id).run()
     await c.env.DB.prepare(
       'INSERT INTO plan_history (user_id, from_plan, to_plan, changed_by, reason) VALUES (?,?,?,?,?)'
     ).bind(req.user_id, current?.plan_id ?? null, req.requested_plan, adminId, 'plan_request_approved').run()
@@ -245,8 +254,15 @@ admin.post('/payments', async (c) => {
   if (body.status === 'paid') {
     const current = await c.env.DB.prepare('SELECT plan_id FROM users WHERE id = ?')
       .bind(body.user_id).first<{ plan_id: string }>()
-    await c.env.DB.prepare('UPDATE users SET plan_id = ? WHERE id = ?')
-      .bind(body.plan_paid, body.user_id).run()
+    const periodDays = Number(body.period_days ?? 30)
+    await c.env.DB.prepare(
+      `UPDATE users SET plan_id = ?,
+        plan_expires_at = datetime(COALESCE(
+          CASE WHEN plan_expires_at > datetime('now') THEN plan_expires_at ELSE NULL END,
+          datetime('now')
+        ), '+' || ? || ' days')
+       WHERE id = ?`
+    ).bind(body.plan_paid, periodDays, body.user_id).run()
     await c.env.DB.prepare(
       'INSERT INTO plan_history (user_id, from_plan, to_plan, changed_by, reason) VALUES (?,?,?,?,?)'
     ).bind(body.user_id, current?.plan_id ?? null, body.plan_paid, adminId, 'manual_payment').run()

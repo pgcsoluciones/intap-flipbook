@@ -100,6 +100,15 @@ export const api = {
     list: () => request<{ success: true; data: any[] }>('/api/resources'),
   },
 
+  planRequests: {
+    create: (requested_plan: string, notes?: string) =>
+      request<{ success: true; data: { id: number } }>('/api/plan-requests', {
+        method: 'POST',
+        body: JSON.stringify({ requested_plan, notes }),
+      }),
+    list: () => request<{ success: true; data: any[] }>('/api/plan-requests'),
+  },
+
   responses: {
     list: () => request<{ success: true; data: any[] }>('/api/responses'),
     unreadCount: () => request<{ success: true; data: { count: number } }>('/api/responses/unread-count'),

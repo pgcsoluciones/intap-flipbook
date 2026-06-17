@@ -6,3 +6,7 @@
 
 ALTER TABLE users ADD COLUMN slug TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slug ON users(slug);
+
+-- Columnas que faltan en plans para el ciclo de negocio
+ALTER TABLE plans ADD COLUMN status TEXT DEFAULT 'active';
+ALTER TABLE plans ADD COLUMN period_days INTEGER DEFAULT 30;
