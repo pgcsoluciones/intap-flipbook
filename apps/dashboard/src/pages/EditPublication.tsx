@@ -34,6 +34,8 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
     case 'triangle':  return <svg {...p}><path d="M12 4 21 20H3z"/></svg>
     case 'line':      return <svg {...p}><path d="M4 18 20 6"/></svg>
     case 'star':      return <svg {...p}><path d="M12 3l2.7 5.5 6 .9-4.3 4.2 1 6L12 17.8 6.6 19.6l1-6L3.3 9.4l6-.9z"/></svg>
+    case 'undo':      return <svg {...p}><path d="M3 10h10a6 6 0 0 1 0 12H8"/><path d="M3 6l-3 4 3 4"/></svg>
+    case 'redo':      return <svg {...p}><path d="M21 10H11A6 6 0 0 0 11 22h5"/><path d="M21 6l3 4-3 4"/></svg>
     case 'arrow':     return <svg {...p}><path d="M4 12h14M13 6l6 6-6 6"/></svg>
     case 'badge':     return <svg {...p}><circle cx="12" cy="9" r="6"/><path d="m8 14-1 7 5-3 5 3-1-7"/></svg>
     case 'map':       return <svg {...p}><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg>
@@ -287,6 +289,42 @@ export default function EditPublication() {
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
 
+  // ── Historial de deshacer/rehacer (undo/redo) ──
+  // Guardamos hasta 20 snapshots (JSON del canvas) por página.
+  // historyRef[historyIndexRef] = estado actual.
+  const historyRef      = useRef<string[]>([])
+  const historyIndexRef = useRef<number>(-1)
+  const isUndoRedoRef   = useRef<boolean>(false)   // true mientras cargamos un estado pasado
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
+
+  const updateUndoRedoState = useCallback(() => {
+    setCanUndo(historyIndexRef.current > 0)
+    setCanRedo(historyIndexRef.current < historyRef.current.length - 1)
+  }, [])
+
+  const pushHistory = useCallback((json: string) => {
+    // Descarta cualquier redo pendiente y agrega el nuevo estado
+    historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1)
+    historyRef.current.push(json)
+    if (historyRef.current.length > 20) historyRef.current.shift()
+    historyIndexRef.current = historyRef.current.length - 1
+    updateUndoRedoState()
+  }, [updateUndoRedoState])
+
+  const scheduleAutosaveRef = useRef<() => void>(() => {})
+
+  const applyHistory = useCallback((json: string) => {
+    const c = fabricRef.current
+    if (!c) return
+    isUndoRedoRef.current = true
+    c.loadFromJSON(json, () => {
+      c.renderAll()
+      isUndoRedoRef.current = false
+      scheduleAutosaveRef.current()
+    })
+  }, [])
+
   useEffect(() => {
     if (!id) return
     api.publications.get(id).then((res) => {
@@ -344,6 +382,9 @@ export default function EditPublication() {
     }, 1200)
   }, [persistCanvas])
 
+  // Mantiene la ref actualizada para que applyHistory pueda llamarla
+  scheduleAutosaveRef.current = scheduleAutosave
+
   // ── Inicialización del canvas Fabric.js por página ──
   useEffect(() => {
     if (!activePage || !canvasRef.current) return
@@ -356,6 +397,12 @@ export default function EditPublication() {
     pageIdRef.current = activePage.id
     if (fabricRef.current) { fabricRef.current.dispose(); fabricRef.current = null }
     setSelected(null)
+
+    // Reinicia el historial al cambiar de página
+    historyRef.current = []
+    historyIndexRef.current = -1
+    setCanUndo(false)
+    setCanRedo(false)
 
     const W = 580
     const H = Math.round(W * 1.414)
@@ -370,20 +417,26 @@ export default function EditPublication() {
     })
 
     if (activePage.canvas_json) {
-      canvas.loadFromJSON(activePage.canvas_json, () => canvas.renderAll())
+      canvas.loadFromJSON(activePage.canvas_json, () => {
+        canvas.renderAll()
+        // Estado inicial en el historial
+        pushHistory(JSON.stringify(canvas.toJSON(['data'])))
+      })
+    } else {
+      // Página vacía: estado inicial
+      pushHistory(JSON.stringify(canvas.toJSON(['data'])))
     }
 
     const onSel = (e: any) => { setSelected(e.selected?.[0] ?? canvas.getActiveObject() ?? null); setSelectVersion((v) => v + 1) }
     canvas.on('selection:created', onSel)
     canvas.on('selection:updated', onSel)
     canvas.on('selection:cleared', (e: any) => {
-      // No desmonta el panel de propiedades si el clic fue dentro de él
-      // (evita que el selector de colores nativo se cierre al hacer clic en el gradiente)
       if (rightPanelRef.current && e?.e?.target && rightPanelRef.current.contains(e.e.target as Node)) return
       setSelected(null)
     })
 
     // Tecla Supr / Delete para eliminar el objeto seleccionado
+    // Ctrl+Z = deshacer, Ctrl+Y / Ctrl+Shift+Z = rehacer
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
@@ -391,11 +444,30 @@ export default function EditPublication() {
         const o = canvas.getActiveObject()
         if (o) { canvas.remove(o); setSelected(null); scheduleAutosave() }
       }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+        e.preventDefault()
+        if (historyIndexRef.current > 0) {
+          historyIndexRef.current--
+          updateUndoRedoState()
+          applyHistory(historyRef.current[historyIndexRef.current])
+        }
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
+        e.preventDefault()
+        if (historyIndexRef.current < historyRef.current.length - 1) {
+          historyIndexRef.current++
+          updateUndoRedoState()
+          applyHistory(historyRef.current[historyIndexRef.current])
+        }
+      }
     }
     window.addEventListener('keydown', onKeyDown)
 
-    // Autoguardado en cada cambio del lienzo
-    const onChange = () => scheduleAutosave()
+    // Autoguardado + historial en cada cambio del lienzo
+    const onChange = () => {
+      if (!isUndoRedoRef.current) pushHistory(JSON.stringify(canvas.toJSON(['data'])))
+      scheduleAutosave()
+    }
     canvas.on('object:modified', onChange)
     canvas.on('object:added', onChange)
     canvas.on('object:removed', onChange)
@@ -657,6 +729,20 @@ export default function EditPublication() {
     } finally { setPublishing(false) }
   }
 
+  function undo() {
+    if (historyIndexRef.current <= 0) return
+    historyIndexRef.current--
+    updateUndoRedoState()
+    applyHistory(historyRef.current[historyIndexRef.current])
+  }
+
+  function redo() {
+    if (historyIndexRef.current >= historyRef.current.length - 1) return
+    historyIndexRef.current++
+    updateUndoRedoState()
+    applyHistory(historyRef.current[historyIndexRef.current])
+  }
+
   function deleteSelected() {
     const c = fabricRef.current
     const o = c?.getActiveObject()
@@ -773,6 +859,9 @@ export default function EditPublication() {
         {/* ── Canvas central ── */}
         <main style={s.center}>
           <div style={s.toolbar}>
+            <ToolbarBtn icon="undo"      title="Deshacer (Ctrl+Z)" onClick={undo}             disabled={!canUndo} />
+            <ToolbarBtn icon="redo"      title="Rehacer (Ctrl+Y)"  onClick={redo}             disabled={!canRedo} />
+            <div style={s.toolSep} />
             <ToolbarBtn icon="trash"     title="Eliminar"          onClick={deleteSelected}   disabled={!selected} />
             <ToolbarBtn icon="duplicate" title="Duplicar"          onClick={duplicateSelected} disabled={!selected} />
             <div style={s.toolSep} />
