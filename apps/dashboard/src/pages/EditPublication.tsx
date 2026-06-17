@@ -225,7 +225,7 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   quiz:     { title: 'Cuestionario', questions: [{ text: '¿Tu pregunta?', options: ['Opción A', 'Opción B'], type: 'single' }] },
   popup_banner: {
     template: 'offer',
-    position: 'center',
+    position: 'bottom',
     trigger: 'delay',
     delay: 5,
     animation: 'slide',
@@ -1831,11 +1831,10 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
               ))}
             </div>
           </Field>
-          <Field label="Posición en pantalla">
+          <Field label="Posición (fuera de la lectura)">
             <select style={s.propInput} defaultValue={cfg.position ?? 'bottom'} onChange={(e) => setCfg({ position: e.target.value })}>
-              <option value="bottom">Cintillo inferior</option>
-              <option value="top">Cintillo superior</option>
-              <option value="center">Centro (modal)</option>
+              <option value="bottom">Debajo del catálogo</option>
+              <option value="top">Arriba del catálogo</option>
             </select>
           </Field>
           <Field label="Cuándo aparecer">
@@ -1877,7 +1876,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
           <Field label="Imagen (opcional)">
             <FileField value={cfg.image ?? ''} onChange={(url) => setCfg({ image: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP" />
           </Field>
-          {cfg.image && (cfg.position ?? 'center') === 'center' && (
+          {cfg.image && (
             <Field label="Lado de la imagen">
               <select style={s.propInput} defaultValue={cfg.imagePosition ?? 'left'} onChange={(e) => setCfg({ imagePosition: e.target.value })}>
                 <option value="left">Imagen a la izquierda</option>

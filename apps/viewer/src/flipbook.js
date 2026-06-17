@@ -479,51 +479,45 @@ async function init() {
   }
   function showBanner(cfg) {
     if (document.getElementById('flipbook-banner')) return
-    const pos = cfg.position || 'center'
-    const posMap = {
-      bottom: 'position:fixed;bottom:0;left:0;right:0;',
-      top:    'position:fixed;top:0;left:0;right:0;',
-      center: 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.4);',
-    }
-    // Animación de entrada: para center se aplica la animación elegida; para
-    // cintillos superior/inferior se usa el deslizamiento por defecto.
-    const animClass =
-      pos === 'center'
-        ? { bounce: 'pb-anim-bounce', heartbeat: 'pb-anim-heartbeat', zoom: 'pb-anim-zoom', slide: '', none: '' }[cfg.animation || 'slide'] || ''
-        : ''
-    const slideAnim = pos === 'top' ? 'pb-in-t' : pos === 'bottom' ? 'pb-in-b' : (cfg.animation === 'none' ? '' : 'pb-in-c')
+    // El pop-up NUNCA cae encima de la lectura: se ancla FUERA del flipbook,
+    // debajo (por defecto) o arriba de su borde, centrado horizontalmente.
+    const place = cfg.position === 'top' ? 'top' : 'bottom'
+    const slideAnim = place === 'top' ? 'pb-in-t' : 'pb-in-b'
+    const animClass = { bounce: 'pb-anim-bounce', heartbeat: 'pb-anim-heartbeat', zoom: 'pb-anim-zoom', slide: '', none: '' }[cfg.animation || 'slide'] || ''
 
-    // Layout centrado (modal): si hay imagen → rectángulo horizontal (imagen a un
-    // lado, texto+botón al otro, estilo banner promocional); si no → columna.
-    // Ancho compacto ≤ 40 % del flipbook (nunca de extremo a extremo).
-    const isCenter = pos === 'center'
     const hasImg = !!cfg.image
-    const horizontal = isCenter && hasImg
+    const horizontal = hasImg
     const imgRight = cfg.imagePosition === 'right'
-    const flipW = portrait ? pageWidth : pageWidth * 2
-    const centerW = Math.max(horizontal ? 360 : 280, Math.round(flipW * 0.4))
     const bg = cfg.bgColor || '#1a1827'
     const tc = cfg.textColor || '#fff'
 
+    // Geometría del flipbook para anclar el banner fuera de su recuadro
+    const flipEl = document.getElementById('flipbook')
+    const r = flipEl
+      ? flipEl.getBoundingClientRect()
+      : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight, width: window.innerWidth }
+    const flipW = r.width || (portrait ? pageWidth : pageWidth * 2)
+    const cardW = Math.min(Math.max(hasImg ? 360 : 280, Math.round(flipW * 0.55)), 460)
+    const cx = Math.round(r.left + flipW / 2)
+    const gap = 10
+
     const outer = document.createElement('div')
     outer.id = 'flipbook-banner'
-    outer.style.cssText = `z-index:2000;${posMap[pos] || posMap.bottom}`
+    // Anclado al borde del flipbook: debajo (top = borde inferior) o arriba
+    // (translateY -100% para que el borde inferior del banner toque el superior).
+    outer.style.cssText = place === 'top'
+      ? `position:fixed;z-index:2000;left:${cx}px;top:${Math.round(r.top - gap)}px;transform:translate(-50%,-100%);`
+      : `position:fixed;z-index:2000;left:${cx}px;top:${Math.round(r.bottom + gap)}px;transform:translateX(-50%);`
 
     const inner = document.createElement('div')
     if (animClass) inner.className = animClass
     const animCss = animClass ? '' : (slideAnim ? `animation:${slideAnim} 0.35s ease-out;` : '')
-    if (isCenter) {
-      inner.style.cssText = `position:relative;background:${bg};color:${tc};font-family:Inter,sans-serif;border-radius:14px;overflow:hidden;width:${centerW}px;max-width:92vw;box-shadow:0 20px 60px rgba(0,0,0,.5);display:flex;${horizontal ? 'flex-direction:row;align-items:stretch;min-height:190px;' : 'flex-direction:column;'}${animCss}`
-    } else {
-      inner.style.cssText = `background:${bg};color:${tc};padding:18px 22px;display:flex;gap:14px;font-family:Inter,sans-serif;align-items:center;justify-content:space-between;${animCss}`
-    }
+    inner.style.cssText = `position:relative;background:${bg};color:${tc};font-family:Inter,sans-serif;border-radius:14px;overflow:hidden;width:${cardW}px;max-width:92vw;box-shadow:0 16px 44px rgba(0,0,0,.4);display:flex;${horizontal ? 'flex-direction:row;align-items:stretch;min-height:150px;' : 'flex-direction:column;'}${animCss}`
 
-    // Botón reutilizable (en centrado vive dentro de la columna de texto; en
-    // cintillo es hermano de la columna).
     function makeBannerBtn() {
       const btn = document.createElement('button')
       btn.textContent = cfg.buttonText
-      btn.style.cssText = `background:${cfg.buttonColor || '#4F46E5'};color:#fff;border:none;border-radius:8px;padding:10px 22px;font-weight:700;cursor:pointer;font-size:14px;white-space:nowrap;flex-shrink:0;`
+      btn.style.cssText = `background:${cfg.buttonColor || '#4F46E5'};color:#fff;border:none;border-radius:8px;padding:10px 22px;font-weight:700;cursor:pointer;font-size:14px;white-space:nowrap;align-self:flex-start;`
       if (cfg.buttonUrl) btn.addEventListener('click', () => window.open(cfg.buttonUrl, '_blank'))
       return btn
     }
@@ -537,21 +531,15 @@ async function init() {
     if (hasImg) {
       imgEl = document.createElement('img')
       imgEl.src = cfg.image
-      imgEl.style.cssText = horizontal
-        ? `width:45%;flex-shrink:0;align-self:stretch;display:block;${frame}`
-        : isCenter
-          ? `width:100%;height:170px;display:block;${frame}`
-          : `width:52px;height:52px;border-radius:8px;flex-shrink:0;${frame}`
+      imgEl.style.cssText = `width:45%;flex-shrink:0;align-self:stretch;display:block;${frame}`
     }
 
     // Columna de texto
     const textWrap = document.createElement('div')
-    textWrap.style.cssText = isCenter
-      ? `display:flex;flex-direction:column;gap:10px;flex:1;justify-content:center;padding:${horizontal ? '26px 24px' : '22px 24px 24px'};${horizontal ? 'text-align:left;align-items:flex-start;' : 'text-align:center;align-items:center;'}`
-      : 'display:flex;flex-direction:column;gap:4px;flex:1;'
-    if (cfg.title) { const t = document.createElement('div'); t.textContent = cfg.title; t.style.cssText = `font-weight:800;font-size:${isCenter ? '20px' : '16px'};line-height:1.2;`; textWrap.appendChild(t) }
+    textWrap.style.cssText = `display:flex;flex-direction:column;gap:10px;flex:1;justify-content:center;padding:22px 24px;${horizontal ? 'text-align:left;align-items:flex-start;' : 'text-align:center;align-items:center;'}`
+    if (cfg.title) { const t = document.createElement('div'); t.textContent = cfg.title; t.style.cssText = 'font-weight:800;font-size:19px;line-height:1.2;'; textWrap.appendChild(t) }
     if (cfg.text) { const t = document.createElement('div'); t.textContent = cfg.text; t.style.cssText = 'font-size:13px;opacity:.88;line-height:1.5;'; textWrap.appendChild(t) }
-    if (cfg.buttonText && isCenter) textWrap.appendChild(makeBannerBtn())
+    if (cfg.buttonText) { const b = makeBannerBtn(); if (!horizontal) b.style.alignSelf = 'center'; textWrap.appendChild(b) }
 
     // Orden imagen ↔ texto según el lado elegido
     if (horizontal && imgRight) {
@@ -561,13 +549,10 @@ async function init() {
       if (imgEl) inner.appendChild(imgEl)
       inner.appendChild(textWrap)
     }
-    if (cfg.buttonText && !isCenter) inner.appendChild(makeBannerBtn())
 
     const close = document.createElement('button')
     close.textContent = '✕'
-    close.style.cssText = isCenter
-      ? 'position:absolute;top:10px;right:12px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;border:none;color:inherit;opacity:.9;cursor:pointer;font-size:14px;z-index:2;'
-      : 'background:none;border:none;color:inherit;opacity:.6;cursor:pointer;font-size:16px;padding:0 4px;flex-shrink:0;'
+    close.style.cssText = 'position:absolute;top:10px;right:12px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;border:none;color:inherit;opacity:.9;cursor:pointer;font-size:14px;z-index:2;'
     close.addEventListener('click', () => outer.remove())
     inner.appendChild(close)
     outer.appendChild(inner)
