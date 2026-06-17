@@ -483,7 +483,10 @@ async function init() {
     if (!parsed || !parsed.objects || !parsed.objects.length) return
 
     const wrap = document.createElement('div')
-    wrap.style.cssText = `position:absolute;top:0;left:0;width:${DESIGN_W}px;height:${DESIGN_H}px;transform:scale(${overlayScale});transform-origin:top left;`
+    // pointer-events:none en el contenedor — StPageFlip necesita recibir los gestos
+    // de arrastre en toda la página. Los elementos interactivos hijos sobreescriben
+    // con pointer-events:auto individualmente.
+    wrap.style.cssText = `position:absolute;top:0;left:0;width:${DESIGN_W}px;height:${DESIGN_H}px;transform:scale(${overlayScale});transform-origin:top left;pointer-events:none;`
     const cv = document.createElement('canvas')
     cv.style.cssText = 'pointer-events:none;'
     wrap.appendChild(cv)
@@ -504,7 +507,7 @@ async function init() {
           const animClass = d.animStyle === 'blink' ? 'hs-blink' : d.animStyle === 'ripple' ? 'hs-ring' : 'hs-pulse'
           const color = d.color || '#ef4444'
           const hs = document.createElement('div')
-          hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;`
+          hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;pointer-events:auto;`
           hs.innerHTML = `<div class="${animClass}" style="width:36px;height:36px;border-radius:50%;background:${color}44;border:2.5px solid ${color};display:flex;align-items:center;justify-content:center;"><div style="width:14px;height:14px;border-radius:50%;background:${color};"></div></div>`
           if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action) })
           wrap.appendChild(hs)
@@ -517,7 +520,7 @@ async function init() {
           const node = buildWidget(d.widget, r.width, r.height, `${slug}_${widgetIdx++}`)
           if (node) {
             const holder = document.createElement('div')
-            holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;`
+            holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;pointer-events:auto;`
             holder.appendChild(node)
             wrap.appendChild(holder)
           }
@@ -531,7 +534,7 @@ async function init() {
         const hot = document.createElement('a')
         hot.href = 'javascript:void(0)'
         hot.title = ''
-        hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;`
+        hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;pointer-events:auto;`
         hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action) })
         wrap.appendChild(hot)
       })

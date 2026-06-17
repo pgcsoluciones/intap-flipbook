@@ -409,6 +409,11 @@ export default function EditPublication() {
     const canvas = new fabric.Canvas(canvasRef.current, { width: W, height: H, backgroundColor: bgColor, preserveObjectStacking: true })
     fabricRef.current = canvas
 
+    // Guarda bloquea el autoguardado mientras se deserializa el JSON de la página.
+    // Sin esto, `object:added` dispara por cada objeto durante `loadFromJSON` y
+    // el timer de 1.2s expira con el canvas a medio cargar, sobreescribiendo datos.
+    let isLoading = true
+
     fabric.Image.fromURL(activePage.image_url, (img: any) => {
       img.scaleToWidth(W)
       img.scaleToHeight(H)
@@ -418,11 +423,13 @@ export default function EditPublication() {
 
     if (activePage.canvas_json) {
       canvas.loadFromJSON(activePage.canvas_json, () => {
+        isLoading = false
         canvas.renderAll()
         // Estado inicial en el historial
         pushHistory(JSON.stringify(canvas.toJSON(['data'])))
       })
     } else {
+      isLoading = false
       // Página vacía: estado inicial
       pushHistory(JSON.stringify(canvas.toJSON(['data'])))
     }
@@ -465,6 +472,7 @@ export default function EditPublication() {
 
     // Autoguardado + historial en cada cambio del lienzo
     const onChange = () => {
+      if (isLoading) return  // no guardar durante la carga inicial del JSON
       if (!isUndoRedoRef.current) pushHistory(JSON.stringify(canvas.toJSON(['data'])))
       scheduleAutosave()
     }
@@ -954,7 +962,7 @@ export default function EditPublication() {
               obj={selected}
               canvas={fabricRef.current}
               pages={pages}
-              onChange={() => { scheduleAutosave(); refreshSelected() }}
+              onChange={() => { scheduleAutosave() }}
             />
           ) : (
             <PageConfig bgColor={bgColor} applyBgColor={applyBgColor} />
