@@ -1349,13 +1349,34 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
       <div style={s.rightHeader}>{titleMap[kind] ?? 'Elemento'}</div>
       <div style={s.props}>
 
-        {/* Posición y tamaño — común a todos */}
-        <PropGroup label="Posición">
+        {/* Posición — común a todos */}
+        <PropGroup label="Posición (X / Y)">
           <div style={{ display: 'grid', gridTemplateColumns: '16px 1fr 16px 1fr', gap: 6, alignItems: 'center' }}>
             <span style={s.axisLabel}>X</span>
             <input style={s.propInput} type="number" defaultValue={Math.round(obj.left ?? 0)} onChange={(e) => set({ left: +e.target.value })} />
             <span style={s.axisLabel}>Y</span>
             <input style={s.propInput} type="number" defaultValue={Math.round(obj.top ?? 0)} onChange={(e) => set({ top: +e.target.value })} />
+          </div>
+        </PropGroup>
+
+        {/* Tamaño — ancho/alto en pantalla (vía escala del objeto) */}
+        <PropGroup label="Tamaño (Ancho / Alto)">
+          <div style={{ display: 'grid', gridTemplateColumns: '16px 1fr 16px 1fr', gap: 6, alignItems: 'center' }}>
+            <span style={s.axisLabel}>A</span>
+            <input style={s.propInput} type="number" min={4} defaultValue={Math.round(obj.getScaledWidth?.() ?? obj.width ?? 0)} onChange={(e) => {
+              const w = +e.target.value; if (w > 0 && obj.width) { obj.set('scaleX', w / obj.width); canvas?.requestRenderAll(); onChange() }
+            }} />
+            <span style={s.axisLabel}>H</span>
+            <input style={s.propInput} type="number" min={4} defaultValue={Math.round(obj.getScaledHeight?.() ?? obj.height ?? 0)} onChange={(e) => {
+              const h = +e.target.value; if (h > 0 && obj.height) { obj.set('scaleY', h / obj.height); canvas?.requestRenderAll(); onChange() }
+            }} />
+          </div>
+        </PropGroup>
+
+        <PropGroup label="Rotación (grados)">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="range" min={0} max={360} step={1} defaultValue={Math.round(obj.angle ?? 0)} onChange={(e) => set({ angle: +e.target.value })} style={{ flex: 1 }} />
+            <input style={{ ...s.propInput, width: 56 }} type="number" min={0} max={360} defaultValue={Math.round(obj.angle ?? 0)} onChange={(e) => set({ angle: +e.target.value })} />
           </div>
         </PropGroup>
 
@@ -1411,6 +1432,11 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
                 <input style={s.propInput} type="number" min={0} max={20} defaultValue={obj.strokeWidth ?? 0} onChange={(e) => set({ strokeWidth: +e.target.value })} placeholder="Grosor" />
               </div>
             </PropGroup>
+            {(obj.type === 'rect') && (
+              <PropGroup label="Redondeo de esquinas">
+                <input type="range" min={0} max={80} step={1} defaultValue={obj.rx ?? 0} onChange={(e) => { const v = +e.target.value; set({ rx: v, ry: v }) }} style={{ width: '100%' }} />
+              </PropGroup>
+            )}
           </>
         )}
 
@@ -1534,6 +1560,69 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
   )
 }
 
+// Mapa con buscador de ubicación + vista previa embebida en vivo (estilo FlipHTML5).
+// Usa estado local para que el iframe de previsualización se actualice al escribir.
+function MapWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) {
+  const [address, setAddress] = React.useState<string>(cfg.address ?? '')
+  const [mapsUrl, setMapsUrl] = React.useState<string>(cfg.mapsUrl ?? '')
+  const [zoom, setZoom] = React.useState<number>(cfg.zoom ?? 14)
+
+  const previewSrc = mapsUrl.trim()
+    ? mapsUrl.trim()
+    : (address.trim() ? `https://www.google.com/maps?q=${encodeURIComponent(address.trim())}&z=${zoom}&output=embed` : '')
+
+  return (
+    <>
+      <PropGroup label="Ingresa la ubicación">
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input style={{ ...s.propInput, flex: 1 }} placeholder="Av. Lincoln 100, Santo Domingo" value={address}
+            onChange={(e) => { setAddress(e.target.value); setCfg({ address: e.target.value }) }} />
+        </div>
+      </PropGroup>
+
+      {previewSrc && (
+        <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid #e5e7eb', marginBottom: 4 }}>
+          <iframe title="map-preview" src={previewSrc} style={{ width: '100%', height: 150, border: 0, display: 'block' }} loading="lazy" />
+        </div>
+      )}
+
+      <PropGroup label="…o pega un link embebido de Google Maps">
+        <input style={s.propInput} placeholder="https://www.google.com/maps/embed?pb=..." value={mapsUrl}
+          onChange={(e) => { setMapsUrl(e.target.value); setCfg({ mapsUrl: e.target.value }) }} />
+      </PropGroup>
+      <PropGroup label="Zoom (1–20)">
+        <input style={s.propInput} type="number" min={1} max={20} value={zoom}
+          onChange={(e) => { setZoom(+e.target.value); setCfg({ zoom: +e.target.value }) }} />
+      </PropGroup>
+      <p style={cp.hint}>Para el link embebido: Maps → Compartir → Insertar mapa → copiá el src del iframe. El mapa de arriba es una vista previa en vivo.</p>
+    </>
+  )
+}
+
+// QR con vista previa en vivo dentro del panel.
+function QrWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) {
+  const [data, setData] = React.useState<string>(cfg.data ?? '')
+  const [caption, setCaption] = React.useState<string>(cfg.caption ?? '')
+  const qrContent = data.trim() || 'https://intaprd.com'
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(qrContent)}`
+
+  return (
+    <>
+      <PropGroup label="Contenido (URL o texto — vacío = link del flipbook)">
+        <input style={s.propInput} placeholder="https://..." value={data}
+          onChange={(e) => { setData(e.target.value); setCfg({ data: e.target.value }) }} />
+      </PropGroup>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0' }}>
+        <img src={qrSrc} alt="QR preview" width={130} height={130} style={{ border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', padding: 4 }} />
+      </div>
+      <PropGroup label="Leyenda">
+        <input style={s.propInput} placeholder="Escanéame" value={caption}
+          onChange={(e) => { setCaption(e.target.value); setCfg({ caption: e.target.value }) }} />
+      </PropGroup>
+    </>
+  )
+}
+
 // Propiedades de un widget: campos de configuración según su tipo
 function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) {
   const widget = (obj as any).data?.widget ?? { type: 'map', config: {} }
@@ -1562,20 +1651,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
     <>
       <div style={s.actionDivider}>Configuración · {labels[type]}</div>
 
-      {type === 'map' && (
-        <>
-          <Field label="Dirección o nombre del lugar">
-            <input style={s.propInput} placeholder="Av. Lincoln 100, Santo Domingo" defaultValue={cfg.address ?? ''} onChange={(e) => setCfg({ address: e.target.value })} />
-          </Field>
-          <Field label="Pegar link de Google Maps (prioridad sobre dirección)">
-            <input style={s.propInput} placeholder="https://www.google.com/maps/embed?pb=..." defaultValue={cfg.mapsUrl ?? ''} onChange={(e) => setCfg({ mapsUrl: e.target.value })} />
-          </Field>
-          <Field label="Zoom (1–20)">
-            <input style={s.propInput} type="number" min={1} max={20} defaultValue={cfg.zoom ?? 14} onChange={(e) => setCfg({ zoom: +e.target.value })} />
-          </Field>
-          <p style={cp.hint}>Para el link de Google Maps: abrí Maps → Compartir → Insertar mapa → copiá el src del iframe.</p>
-        </>
-      )}
+      {type === 'map' && <MapWidgetProps cfg={cfg} setCfg={setCfg} />}
 
       {type === 'whatsapp' && (
         <>
@@ -1656,16 +1732,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
         </>
       )}
 
-      {type === 'qr' && (
-        <>
-          <Field label="Contenido (URL o texto — vacío = link del flipbook)">
-            <input style={s.propInput} placeholder="https://..." defaultValue={cfg.data ?? ''} onChange={(e) => setCfg({ data: e.target.value })} />
-          </Field>
-          <Field label="Leyenda">
-            <input style={s.propInput} placeholder="Escanéame" defaultValue={cfg.caption ?? ''} onChange={(e) => setCfg({ caption: e.target.value })} />
-          </Field>
-        </>
-      )}
+      {type === 'qr' && <QrWidgetProps cfg={cfg} setCfg={setCfg} />}
 
       {type === 'table' && (
         <Field label="Datos (fila por línea, columnas separadas por coma)">
