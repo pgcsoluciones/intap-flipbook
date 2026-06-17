@@ -12,7 +12,8 @@ type Template = {
   name: string
   category: string
   cover_url: string
-  min_plan: 'free' | 'basic' | 'pro'
+  plan_required: string
+  locked?: boolean
   active: boolean
 }
 
@@ -24,9 +25,9 @@ const CATEGORIES = ['Todos', 'Catálogo', 'Menú', 'Portafolio', 'Revista', 'Fol
 
 // TODO: reemplazar con datos reales cuando GET /api/templates esté implementado
 const MOCK_TEMPLATES: Template[] = [
-  { id: 1, name: 'Catálogo Primavera', category: 'Catálogo', cover_url: '', min_plan: 'free', active: true },
-  { id: 2, name: 'Menú Restaurante', category: 'Menú', cover_url: '', min_plan: 'basic', active: true },
-  { id: 3, name: 'Portafolio Creativo', category: 'Portafolio', cover_url: '', min_plan: 'pro', active: true },
+  { id: 1, name: 'Catálogo Primavera', category: 'Catálogo', cover_url: '', plan_required: 'all', active: true },
+  { id: 2, name: 'Menú Restaurante', category: 'Menú', cover_url: '', plan_required: 'basic,pro', active: true },
+  { id: 3, name: 'Portafolio Creativo', category: 'Portafolio', cover_url: '', plan_required: 'basic,pro', active: true },
 ]
 
 export default function TenantTemplates() {
@@ -71,7 +72,12 @@ export default function TenantTemplates() {
     : templates.filter((t) => t.category.toLowerCase() === category.toLowerCase())
 
   function isLocked(tpl: Template) {
-    return PLAN_ORDER[tpl.min_plan] > PLAN_ORDER[userPlan]
+    // Si la API ya devuelve locked, usarlo; si no, calcular por plan_required
+    if (tpl.locked !== undefined) return tpl.locked
+    const minPlan = tpl.plan_required === 'all' || tpl.plan_required?.includes('free')
+      ? 'free'
+      : tpl.plan_required?.includes('basic') ? 'basic' : 'pro'
+    return PLAN_ORDER[minPlan] > PLAN_ORDER[userPlan]
   }
 
   function handleUse(tpl: Template) {
@@ -121,7 +127,7 @@ export default function TenantTemplates() {
                     {locked && (
                       <div style={s.lockOverlay}>
                         <div style={s.lockBadge}>
-                          🔒 Disponible en plan {PLAN_LABEL[tpl.min_plan]}
+                          🔒 Requiere plan superior
                         </div>
                       </div>
                     )}
@@ -129,8 +135,8 @@ export default function TenantTemplates() {
                   <div style={s.cardBody}>
                     <div style={s.cardTop}>
                       <span style={s.cardName}>{tpl.name}</span>
-                      <span style={{ ...s.planBadge, background: PLAN_COLOR[tpl.min_plan] }}>
-                        {PLAN_LABEL[tpl.min_plan]}
+                      <span style={{ ...s.planBadge, background: PLAN_COLOR[tpl.plan_required === 'all' || tpl.plan_required?.includes('free') ? 'free' : tpl.plan_required?.includes('basic') ? 'basic' : 'pro'] }}>
+                        {tpl.plan_required === 'all' ? 'Todos' : tpl.plan_required?.includes('free') ? 'Free' : tpl.plan_required?.includes('basic') ? 'Basic' : 'Pro'}
                       </span>
                     </div>
                     <span style={s.catBadge}>{tpl.category}</span>
@@ -139,7 +145,7 @@ export default function TenantTemplates() {
                       disabled={locked}
                       style={{ ...s.useBtn, ...(locked ? s.useBtnLocked : {}) }}
                     >
-                      {locked ? `Requiere plan ${PLAN_LABEL[tpl.min_plan]}` : 'Ver plantilla'}
+                      {locked ? 'Requiere plan superior' : 'Ver plantilla'}
                     </button>
                   </div>
                 </div>

@@ -80,7 +80,7 @@ export default function AdminModules() {
     try {
       await adminFetch(`/modules/${m.key}/global`, {
         method: 'PUT',
-        body:   JSON.stringify({ active: newActive }),
+        body:   JSON.stringify({ active: newActive, name: m.name, description: m.description }),
       })
       setModules((prev) => prev.map((mod) => mod.key === m.key ? { ...mod, active: newActive } : mod))
       flash(`Módulo "${m.name}" ${newActive ? 'activado' : 'desactivado'} globalmente.`)
@@ -99,7 +99,7 @@ export default function AdminModules() {
     try {
       await adminFetch(`/modules/${m.key}/plans`, {
         method: 'PUT',
-        body:   JSON.stringify({ plans: newPlans }),
+        body:   JSON.stringify({ plans: newPlans, name: m.name, description: m.description }),
       })
       setModules((prev) => prev.map((mod) => mod.key === m.key ? { ...mod, plans: newPlans } : mod))
     } catch (e: any) {

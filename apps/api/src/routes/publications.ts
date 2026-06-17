@@ -190,18 +190,18 @@ publications.post('/:id/publish', async (c) => {
 // GET /api/templates — lista de templates activas (para tenant) con campo `locked`
 publications.get('/templates', async (c) => {
   const userId = c.get('user').sub
-  const { planId } = await getUserPlan(c.env.DB, userId)
 
   const { results: allTemplates } = await c.env.DB.prepare(
     `SELECT * FROM templates WHERE active = 1 ORDER BY sort_order`,
   ).all()
 
-  // Verificar acceso por módulos. Si las tablas no existen aún, mostrar todo desbloqueado.
+  // Verificar acceso por módulos. Si falla (tablas inexistentes o plan inválido), todo desbloqueado.
   let modulesAvailable = false
   let planModuleKeys = new Set<string>()
   let globallyDisabled = new Set<string>()
 
   try {
+    const { planId } = await getUserPlan(c.env.DB, userId)
     const [pmRes, gmRes] = await Promise.all([
       c.env.DB.prepare(`SELECT module_key FROM plan_modules WHERE plan_id = ?`).bind(planId).all<{ module_key: string }>(),
       c.env.DB.prepare(`SELECT key FROM modules WHERE active_globally = 0`).all<{ key: string }>(),
@@ -210,11 +210,11 @@ publications.get('/templates', async (c) => {
     planModuleKeys = new Set(pmRes.results.map((r) => r.module_key))
     globallyDisabled = new Set(gmRes.results.map((r) => r.key))
   } catch {
-    // Tablas modules/plan_modules aún no creadas — sin restricciones
+    // getUserPlan falló o tablas modules/plan_modules no existen — sin restricciones
   }
 
   const data = allTemplates.map((t: any) => {
-    // plan_required: 'all' o 'free,basic,pro' → plantilla básica; 'basic,pro' → premium
+    // plan_required: 'all' o incluye 'free' → plantilla básica; 'basic,pro' → premium
     const planReq = (t.plan_required ?? 'free') as string
     const moduleKey = planReq === 'all' || planReq.includes('free') ? 'templates_basic' : 'templates_pro'
     const locked = modulesAvailable && (globallyDisabled.has(moduleKey) || !planModuleKeys.has(moduleKey))

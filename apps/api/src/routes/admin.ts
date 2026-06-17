@@ -336,20 +336,26 @@ admin.get('/modules', async (c) => {
   return c.json({ success: true, data })
 })
 
-// PUT /admin/modules/:key/global — toggle active_globally
+// PUT /admin/modules/:key/global — toggle active_globally (UPSERT: crea la fila si no existe)
 admin.put('/modules/:key/global', async (c) => {
   const key = c.req.param('key')
-  const body = await c.req.json<{ active?: boolean; active_globally?: boolean }>()
+  const body = await c.req.json<{ active?: boolean; active_globally?: boolean; name?: string; description?: string }>()
   const isActive = body.active ?? body.active_globally ?? false
-  await c.env.DB.prepare('UPDATE modules SET active_globally = ? WHERE key = ?')
-    .bind(isActive ? 1 : 0, key).run()
+  // INSERT OR REPLACE garantiza que la fila exista aunque la tabla esté vacía
+  await c.env.DB.prepare(`
+    INSERT INTO modules (key, name, description, active_globally) VALUES (?, ?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET active_globally = excluded.active_globally
+  `).bind(key, body.name ?? key, body.description ?? '', isActive ? 1 : 0).run()
   return c.json({ success: true })
 })
 
-// PUT /admin/modules/:key/plans — update which plans include this module
+// PUT /admin/modules/:key/plans — update which plans include this module (UPSERT primero la fila)
 admin.put('/modules/:key/plans', async (c) => {
   const key = c.req.param('key')
-  const body = await c.req.json<{ plans: string[] }>()
+  const body = await c.req.json<{ plans: string[]; name?: string; description?: string }>()
+  // Garantizar que la fila del módulo exista antes de insertar en plan_modules
+  await c.env.DB.prepare(`INSERT OR IGNORE INTO modules (key, name, description, active_globally) VALUES (?, ?, ?, 1)`)
+    .bind(key, body.name ?? key, body.description ?? '').run()
   await c.env.DB.prepare('DELETE FROM plan_modules WHERE module_key = ?').bind(key).run()
   for (const planId of body.plans) {
     await c.env.DB.prepare('INSERT OR IGNORE INTO plan_modules (plan_id, module_key) VALUES (?,?)')
