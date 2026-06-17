@@ -139,6 +139,16 @@ const testimonials = [
 ];
 
 const registerUrl = "https://studio.flip.intaprd.com/register";
+const logoBlue = "/asset%20web/logo-intap-flip-azul.png";
+const logoWhite = "/asset%20web/logo-intap-flip blanco-02.png";
+const heroCompositionAssets = {
+  central: "/asset%20web/pantalla-central.png",
+  templates: "/asset%20web/plantillas ref..png",
+  widgets: "/asset%20web/Widgets interactivos.png",
+  dashboard: "/asset%20web/dasboard.png",
+  preview: "/asset%20web/flip previews.png",
+  steps: "/asset%20web/paso a paso crar.png",
+};
 
 function App() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -172,11 +182,12 @@ function App() {
     <div className="min-h-screen bg-surface text-slate-900">
       <header className="sticky top-0 z-50 border-b border-slate-200/70 bg-white/85 backdrop-blur">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <a href="#top" className="flex items-center gap-3">
-            <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-sm font-extrabold text-white shadow-glow">
-              IF
-            </span>
-            <span className="text-lg font-extrabold tracking-tight text-dark">Intap Flip</span>
+          <a href="#top" className="flex items-center">
+            <img
+              src={logoBlue}
+              alt="Intap Flip"
+              className="h-11 w-auto sm:h-12"
+            />
           </a>
 
           <button
@@ -221,20 +232,22 @@ function App() {
       </header>
 
       <main id="top">
-        <section className="bg-hero-grid">
-          <div className="mx-auto grid w-full max-w-7xl gap-14 px-4 py-16 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-8 lg:py-24">
-            <div className="flex flex-col justify-center" data-reveal>
+        <section className="hero-stage overflow-hidden bg-hero-grid">
+          <div className="mx-auto w-full max-w-[1500px] px-4 pb-12 pt-10 sm:px-6 lg:px-8 lg:pb-20 lg:pt-16">
+            <div className="mx-auto flex max-w-5xl flex-col items-center text-center" data-reveal>
               <span className="mb-5 inline-flex w-fit rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-primary">
                 Flipbooks para negocios en República Dominicana y Latinoamérica
               </span>
-              <h1 className="max-w-3xl text-5xl font-extrabold tracking-tight text-dark sm:text-6xl lg:text-7xl">
-                Crea catálogos digitales que enamoran
+              <h1 className="max-w-5xl text-5xl font-extrabold tracking-tight text-dark sm:text-6xl lg:text-7xl">
+                Crea flipbooks interactivos
+                <span className="block bg-gradient-to-r from-primary via-violet-500 to-indigo-400 bg-clip-text text-transparent">
+                  que conectan y convierten
+                </span>
               </h1>
-              <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600 sm:text-xl">
-                Convierte tus imágenes en flipbooks interactivos con efecto de página real.
-                Sin código, en minutos.
+              <p className="mt-5 max-w-4xl text-lg leading-8 text-slate-600 sm:text-xl">
+                Diseña experiencias inmersivas con plantillas profesionales, widgets dinámicos
+                y publícalos para compartir en segundos.
               </p>
-
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <a
                   href={registerUrl}
@@ -249,55 +262,93 @@ function App() {
                   Ver demo
                 </a>
               </div>
-
-              <div className="mt-8 flex flex-wrap gap-3 text-sm font-medium text-slate-600">
-                <Badge text="Sin código" tone="indigo" />
-                <Badge text="Compatible móvil" tone="cyan" />
-                <Badge text="Listo para compartir" tone="emerald" />
-              </div>
             </div>
 
-            <div className="relative" data-reveal id="demo">
-              <div className="absolute -left-6 top-12 hidden h-28 w-28 rounded-full bg-cyan-200/60 blur-3xl lg:block"></div>
-              <div className="absolute -right-4 bottom-10 hidden h-32 w-32 rounded-full bg-indigo-300/60 blur-3xl lg:block"></div>
-              <div className="hero-orbit orbit-one hidden lg:block"></div>
-              <div className="hero-orbit orbit-two hidden lg:block"></div>
-              <div className="animate-float rounded-[2rem] border border-slate-200 bg-white p-4 shadow-lift">
-                <div className="rounded-[1.6rem] bg-dark p-4 text-white">
-                  <div className="mb-4 flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.24em] text-cyan-300">Demo flipbook</p>
-                      <p className="mt-1 text-lg font-bold">Colección Primavera 2026</p>
-                    </div>
-                    <span className="rounded-full bg-success/20 px-3 py-1 text-xs font-semibold text-emerald-300">
-                      Publicado
-                    </span>
-                  </div>
+            <div className="hero-composition relative mx-auto mt-10 max-w-[1420px]" data-reveal id="demo">
+              <div className="hero-glow hero-glow-left"></div>
+              <div className="hero-glow hero-glow-right"></div>
+              <div className="hero-lines"></div>
 
-                  <div className="mb-4 flex flex-wrap gap-2">
-                    <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1 text-xs font-semibold text-slate-200">
-                      Link público
-                    </span>
-                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-200">
-                      Compatible móvil
-                    </span>
-                    <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-200">
-                      Sin código
-                    </span>
-                  </div>
-
-                  <HeroFlipbookMockup />
-                </div>
+              <div className="hero-float hero-panel hero-templates">
+                <img
+                  src={heroCompositionAssets.templates}
+                  alt="Plantillas profesionales"
+                  className="w-full rounded-[1.75rem]"
+                />
               </div>
 
-              <div className="absolute -bottom-5 left-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-lift">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Tiempo de creación</p>
-                <p className="text-lg font-bold text-dark">Menos de 10 minutos</p>
+              <div className="hero-float hero-panel hero-widgets">
+                <img
+                  src={heroCompositionAssets.widgets}
+                  alt="Widgets interactivos"
+                  className="w-full rounded-[1.75rem]"
+                />
               </div>
-              <div className="absolute right-3 top-3 hidden rounded-2xl border border-indigo-100 bg-white/95 px-4 py-3 shadow-lift sm:block lg:-right-2 lg:top-8">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Ideal para</p>
-                <p className="text-sm font-bold text-dark">Catálogos, menús y portafolios</p>
+
+              <div className="hero-float hero-panel hero-dashboard">
+                <img
+                  src={heroCompositionAssets.dashboard}
+                  alt="Panel de inicio y uso del plan"
+                  className="w-full rounded-[1.75rem]"
+                />
               </div>
+
+              <div className="hero-float hero-panel hero-preview">
+                <img
+                  src={heroCompositionAssets.preview}
+                  alt="Visor de flipbook"
+                  className="w-full rounded-[1.75rem]"
+                />
+              </div>
+
+              <div className="hero-central-panel hero-panel">
+                <img
+                  src={heroCompositionAssets.central}
+                  alt="Editor principal de Intap Flipbook"
+                  className="w-full rounded-[2rem]"
+                />
+              </div>
+
+              <div className="hero-float hero-steps">
+                <img
+                  src={heroCompositionAssets.steps}
+                  alt="Paso a paso para crear y publicar un flipbook"
+                  className="w-full rounded-[1.75rem]"
+                />
+              </div>
+
+              <svg
+                className="hero-arrow hero-arrow-left"
+                viewBox="0 0 160 120"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <path d="M16 18C48 20 82 38 110 84" stroke="#6D5EF7" strokeWidth="3.5" strokeLinecap="round" />
+                <path d="M92 78L110 84L102 66" stroke="#6D5EF7" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+
+              <svg
+                className="hero-arrow hero-arrow-right-top"
+                viewBox="0 0 170 120"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <path d="M16 98C44 92 96 70 142 28" stroke="#6D5EF7" strokeWidth="3.5" strokeLinecap="round" />
+                <path d="M124 30L142 28L135 46" stroke="#6D5EF7" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+
+              <svg
+                className="hero-arrow hero-arrow-right-bottom"
+                viewBox="0 0 180 90"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <path d="M18 20C60 40 102 56 158 48" stroke="#6D5EF7" strokeWidth="3.5" strokeLinecap="round" />
+                <path d="M140 38L158 48L142 58" stroke="#6D5EF7" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </div>
           </div>
         </section>
@@ -526,6 +577,11 @@ function App() {
             data-reveal
           >
             <div className="max-w-3xl">
+              <img
+                src={logoWhite}
+                alt="Intap Flip"
+                className="h-10 w-auto"
+              />
               <p className="text-sm font-bold uppercase tracking-[0.24em] text-cyan-200">CTA final</p>
               <h2 className="mt-4 text-4xl font-extrabold tracking-tight sm:text-5xl">
                 ¿Listo para crear tu primer flipbook?
@@ -547,12 +603,11 @@ function App() {
       <footer className="border-t border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-10 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
           <div>
-            <div className="flex items-center gap-3">
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-primary text-sm font-extrabold text-white">
-                IF
-              </span>
-              <span className="text-lg font-extrabold tracking-tight text-dark">Intap Flip</span>
-            </div>
+            <img
+              src={logoBlue}
+              alt="Intap Flip"
+              className="h-10 w-auto"
+            />
             <p className="mt-3 text-sm text-slate-500">
               © 2026 Intap Flip · PGC Soluciones · Santo Domingo, RD
             </p>
