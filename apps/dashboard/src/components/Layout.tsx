@@ -3,18 +3,35 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useIsMobile } from '../hooks/useIsMobile'
 
+function NavIcon({ name }: { name: string }) {
+  const props = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  if (name === 'home') return <svg {...props}><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>
+  if (name === 'book') return <svg {...props}><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+  if (name === 'mail') return <svg {...props}><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 7 10-7"/></svg>
+  if (name === 'grid') return <svg {...props}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+  if (name === 'image') return <svg {...props}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+  if (name === 'play') return <svg {...props}><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4V8z" fill="currentColor" stroke="none"/></svg>
+  if (name === 'bar-chart') return <svg {...props}><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+  if (name === 'gift') return <svg {...props}><path d="M20 12v10H4V12"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"/></svg>
+  if (name === 'users') return <svg {...props}><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+  if (name === 'diamond') return <svg {...props}><path d="M2.7 10.3l9.3 10 9.3-10L17.7 4H6.3L2.7 10.3z"/><path d="M2.7 10.3h18.6"/><path d="M8 4l4 6.3L16 4"/></svg>
+  if (name === 'user') return <svg {...props}><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+  if (name === 'shield') return <svg {...props}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+  return null
+}
+
 const NAV_ITEMS = [
-  { to: '/dashboard',    icon: '🏠', label: 'Inicio' },
-  { to: '/publications', icon: '📚', label: 'Mis Flipbooks' },
-  { to: '/responses',    icon: '📨', label: 'Respuestas' },
-  { to: '/templates',    icon: '🎨', label: 'Plantillas' },
-  { to: '/resources',    icon: '🖼️',  label: 'Recursos' },
-  { to: '/tutorials',    icon: '🎓', label: 'Tutoriales' },
-  { to: '/stats',        icon: '📊', label: 'Estadísticas' },
-  { to: '/promotions',   icon: '🎁', label: 'Promociones' },
-  { to: '/referrals',    icon: '🤝', label: 'Referidos' },
-  { to: '/plan',         icon: '💎', label: 'Mi Plan' },
-  { to: '/profile',      icon: '👤', label: 'Perfil' },
+  { to: '/dashboard',    icon: 'home',      label: 'Inicio' },
+  { to: '/publications', icon: 'book',      label: 'Mis Flipbooks' },
+  { to: '/responses',    icon: 'mail',      label: 'Respuestas' },
+  { to: '/templates',    icon: 'grid',      label: 'Plantillas' },
+  { to: '/resources',    icon: 'image',     label: 'Recursos' },
+  { to: '/tutorials',    icon: 'play',      label: 'Tutoriales' },
+  { to: '/stats',        icon: 'bar-chart', label: 'Estadísticas' },
+  { to: '/promotions',   icon: 'gift',      label: 'Promociones' },
+  { to: '/referrals',    icon: 'users',     label: 'Referidos' },
+  { to: '/plan',         icon: 'diamond',   label: 'Mi Plan' },
+  { to: '/profile',      icon: 'user',      label: 'Perfil' },
 ]
 
 const PLAN_LABELS: Record<string, string> = {
@@ -84,7 +101,7 @@ export default function Layout({ children }: Props) {
                 fontWeight: isActive ? 600 : 400,
               })}
             >
-              <span style={s.navIcon}>{item.icon}</span>
+              <span style={s.navIcon}><NavIcon name={item.icon} /></span>
               <span>{item.label}</span>
             </NavLink>
           ))}
@@ -99,7 +116,7 @@ export default function Layout({ children }: Props) {
                 marginTop: 8,
               })}
             >
-              <span style={s.navIcon}>🛡️</span>
+              <span style={s.navIcon}><NavIcon name="shield" /></span>
               <span>Admin</span>
             </NavLink>
           ) : null}
@@ -174,7 +191,7 @@ const s: Record<string, React.CSSProperties> = {
     transition: 'background .15s, color .15s',
     textDecoration: 'none',
   },
-  navIcon: { fontSize: 16, width: 20, textAlign: 'center' as const },
+  navIcon: { width: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   sidebarFooter: {
     display: 'flex',
     alignItems: 'center',
