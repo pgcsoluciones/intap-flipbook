@@ -73,6 +73,11 @@ export const api = {
 
   templates: {
     list: () => request<{ success: true; data: any[] }>('/api/templates'),
+    apply: (templateId: number | string, body: { publication_id?: string; title?: string }) =>
+      request<{ success: true; data: { publication_id: string; pages_added: number } }>(
+        `/api/templates/${templateId}/apply`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
   },
 
   resources: {

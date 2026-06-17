@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
-import { getUserPlan, checkPageLimit } from '../lib/plans'
+import { getUserPlan, checkPageLimit, checkPublicationLimit } from '../lib/plans'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
@@ -252,6 +252,85 @@ pages.get('/promotions', async (c) => {
   })
 
   return c.json({ success: true, data: filtered })
+})
+
+// POST /api/templates/:id/apply — aplica una plantilla a una publicación
+// body: { publication_id?: string, title?: string }
+//   - si viene publication_id → agrega las páginas de la plantilla a esa publicación
+//   - si no → crea una publicación nueva con `title` y le copia las páginas
+pages.post('/templates/:id/apply', async (c) => {
+  const userId = c.get('user').sub
+  const templateId = c.req.param('id')
+  const body = await c.req.json<{ publication_id?: string; title?: string }>().catch(() => ({}))
+
+  const tpl = await c.env.DB.prepare('SELECT * FROM templates WHERE id = ? AND active = 1')
+    .bind(templateId)
+    .first<{ id: number; name: string; cover_url: string | null; plan_required: string | null }>()
+  if (!tpl) return c.json({ success: false, error: 'Plantilla no encontrada' }, 404)
+
+  // Verificar acceso por módulos (si las tablas existen). Bloqueada → 403.
+  try {
+    const { planId } = await getUserPlan(c.env.DB, userId)
+    const planReq = tpl.plan_required ?? 'free'
+    const moduleKey = planReq === 'all' || planReq.includes('free') ? 'templates_basic' : 'templates_pro'
+    const [pm, gm] = await Promise.all([
+      c.env.DB.prepare('SELECT 1 FROM plan_modules WHERE plan_id = ? AND module_key = ?').bind(planId, moduleKey).first(),
+      c.env.DB.prepare('SELECT 1 FROM modules WHERE key = ? AND active_globally = 0').bind(moduleKey).first(),
+    ])
+    if (gm || !pm) {
+      return c.json({ success: false, error: 'Esta plantilla requiere un plan superior.' }, 403)
+    }
+  } catch {
+    // tablas de módulos no disponibles → sin restricción
+  }
+
+  // Resolver publicación destino
+  let pubId = body.publication_id
+  if (pubId) {
+    const owned = await c.env.DB.prepare('SELECT id FROM publications WHERE id = ? AND user_id = ?')
+      .bind(pubId, userId).first()
+    if (!owned) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+  } else {
+    const { plan } = await getUserPlan(c.env.DB, userId)
+    const limitErr = await checkPublicationLimit(c.env.DB, userId, plan)
+    if (limitErr) return c.json({ success: false, error: limitErr }, 403)
+    pubId = crypto.randomUUID()
+    const slug = crypto.randomUUID().replace(/-/g, '').slice(0, 10)
+    await c.env.DB.prepare(
+      `INSERT INTO publications (id, user_id, title, description, public_slug, sound_enabled)
+       VALUES (?, ?, ?, ?, ?, 0)`,
+    ).bind(pubId, userId, body.title?.trim() || tpl.name, null, slug).run()
+  }
+
+  // Páginas de la plantilla (si no hay, usar la portada como única página)
+  const { results: tplPages } = await c.env.DB.prepare(
+    'SELECT image_url, canvas_json, page_number FROM template_pages WHERE template_id = ? ORDER BY page_number ASC',
+  ).bind(templateId).all<{ image_url: string; canvas_json: string | null; page_number: number }>()
+
+  const source = tplPages.length > 0
+    ? tplPages
+    : (tpl.cover_url ? [{ image_url: tpl.cover_url, canvas_json: null, page_number: 1 }] : [])
+
+  if (source.length === 0) {
+    return c.json({ success: false, error: 'La plantilla no tiene páginas.' }, 400)
+  }
+
+  // Número de página inicial = páginas existentes + 1
+  const { count } = await c.env.DB.prepare('SELECT COUNT(*) as count FROM pages WHERE publication_id = ?')
+    .bind(pubId).first<{ count: number }>() ?? { count: 0 }
+
+  const stmts = source.map((p, i) =>
+    c.env.DB.prepare(
+      `INSERT INTO pages (id, publication_id, page_number, image_url, canvas_json)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), pubId, count + i + 1, p.image_url, p.canvas_json),
+  )
+  await c.env.DB.batch(stmts)
+
+  await c.env.DB.prepare(`UPDATE publications SET updated_at = datetime('now') WHERE id = ?`)
+    .bind(pubId).run()
+
+  return c.json({ success: true, data: { publication_id: pubId, pages_added: source.length } }, 201)
 })
 
 export default pages

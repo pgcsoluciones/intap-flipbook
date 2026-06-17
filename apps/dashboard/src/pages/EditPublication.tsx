@@ -687,6 +687,20 @@ export default function EditPublication() {
     })
   }
 
+  // Agrega las páginas de una plantilla a la publicación actual y recarga
+  async function useTemplate(tpl: any) {
+    if (!confirm(`¿Agregar las páginas de «${tpl.name}» a esta publicación?`)) return
+    try {
+      const r = await api.templates.apply(tpl.id, { publication_id: id! })
+      const res = await api.publications.get(id!)
+      const ps = res.data.pages ?? []
+      setPages(ps)
+      if (ps.length > 0) setActivePage(ps[ps.length - (r.data.pages_added || 1)] ?? ps[0])
+    } catch (e: any) {
+      alert(e.message ?? 'No se pudo aplicar la plantilla')
+    }
+  }
+
   // ── Drag & drop ──
   const dragRef = useRef<number | null>(null)
   function onDragStart(i: number) { dragRef.current = i }
@@ -837,6 +851,7 @@ export default function EditPublication() {
               onFileDragLeave={onFileDragLeave}
               onFileDrop={onFileDrop}
               templates={filteredTpls}
+              useTemplate={useTemplate}
               tplQuery={tplQuery}
               setTplQuery={setTplQuery}
               addText={addText}
@@ -1028,8 +1043,10 @@ function ContextPanel(p: any) {
                 <div
                   key={t.id}
                   style={{ ...cp.tplCard, ...(t.locked ? cp.tplCardLocked : {}) }}
-                  title={t.locked ? `${t.name} — Requiere plan superior` : t.name}
-                  onClick={t.locked ? () => alert('Esta plantilla requiere un plan superior. Actualiza tu plan para acceder.') : undefined}
+                  title={t.locked ? `${t.name} — Requiere plan superior` : `Agregar páginas de ${t.name}`}
+                  onClick={t.locked
+                    ? () => alert('Esta plantilla requiere un plan superior. Actualiza tu plan para acceder.')
+                    : () => p.useTemplate(t)}
                 >
                   {t.cover_url
                     ? <img src={t.cover_url} alt={t.name} style={{ ...cp.tplImg, ...(t.locked ? { filter: 'grayscale(60%) opacity(0.7)' } : {}) }} />
