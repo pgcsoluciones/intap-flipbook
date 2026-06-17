@@ -163,6 +163,7 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 - `fabric` externalizado en Vite → build sin `npm install` previo
 - Tabla `publication_views` creada en D1 ✅
 - Script `import_templates.py`: flag `--remote` eliminado de `wrangler r2 object put` (solo es necesario en `d1 execute`) ✅
+- **8 plantillas importadas a R2 + D1** (catalogo-ferreteria, herramientas-y-herrajes, perfil-comercial-nfc, regalos-personalizados, campamento-creativo-verano, servicios-para-eventos, velas-y-accesorios, seguridad-electronica) — 48 imágenes en R2, 82 queries en D1 ✅
 
 ### 🔄 Script import_templates.py — cómo usarlo
 ```bash
@@ -235,7 +236,7 @@ npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase8b.sql --r
 | Tarea | Estado |
 |-------|--------|
 | Deploy Worker para `/view` con canvas_json | **Pendiente (Juan)** |
-| Importar plantillas ZIP a R2 + D1 (re-correr script) | **Pendiente (Juan)** — hacer `git pull` y volver a ejecutar |
+| Importar plantillas ZIP a R2 + D1 (re-correr script) | ✅ **Hecho** — 8 plantillas (48 imgs en R2, 82 queries en D1) |
 | Acción `show_hide` en viewer (elementos nombrados) | Pendiente |
 | Alinear claves de módulos (frontend ↔ DB) | Pendiente |
 | Migración D1 tablas nuevas (modules, publication_views) | `publication_views` ✅, `modules`/`plan_modules` pendiente verificar |
