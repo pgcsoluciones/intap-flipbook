@@ -332,7 +332,12 @@ admin.get('/modules', async (c) => {
     if (!planMap[r.module_key]) planMap[r.module_key] = []
     planMap[r.module_key].push(r.plan_id)
   }
-  const data = mods.map((m: any) => ({ ...m, plans: planMap[m.key] ?? [] }))
+  // El frontend lee `active`; la DB guarda `active_globally`. Exponer ambos.
+  const data = mods.map((m: any) => ({
+    ...m,
+    active: m.active_globally === 1,
+    plans: planMap[m.key] ?? [],
+  }))
   return c.json({ success: true, data })
 })
 
