@@ -51,6 +51,68 @@ app.get('/api/me/usage', jwtMiddleware, async (c) => {
   return c.json({ success: true, data: usage })
 })
 
+// Módulos activos para este tenant
+app.get('/api/me/modules', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { results } = await c.env.DB.prepare(
+    `SELECT m.key, m.name, m.description,
+            COALESCE(tm.enabled, m.active_globally) as enabled
+     FROM modules m
+     LEFT JOIN tenant_modules tm ON tm.module_key = m.key AND tm.user_id = ?
+     WHERE m.active_globally = 1 OR tm.enabled = 1
+     ORDER BY m.key ASC`
+  ).bind(userId).all()
+  return c.json({ success: true, data: results })
+})
+
+// ── Carpetas ──────────────────────────────────────────────────────────────────
+app.get('/api/folders', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { results } = await c.env.DB.prepare(
+    `SELECT f.id, f.name, f.created_at, COUNT(p.id) as pub_count
+     FROM folders f
+     LEFT JOIN publications p ON p.folder_id = f.id
+     WHERE f.user_id = ?
+     GROUP BY f.id ORDER BY f.name ASC`
+  ).bind(userId).all()
+  return c.json({ success: true, data: results })
+})
+
+app.post('/api/folders', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const body = await c.req.json<{ name: string }>()
+  if (!body.name?.trim()) return c.json({ success: false, error: 'El nombre es requerido' }, 400)
+  const id = crypto.randomUUID()
+  await c.env.DB.prepare('INSERT INTO folders (id, user_id, name) VALUES (?,?,?)').bind(id, userId, body.name.trim()).run()
+  return c.json({ success: true, data: { id, name: body.name.trim(), pub_count: 0 } }, 201)
+})
+
+app.put('/api/folders/:id', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const fid = c.req.param('id')
+  const body = await c.req.json<{ name: string }>()
+  if (!body.name?.trim()) return c.json({ success: false, error: 'El nombre es requerido' }, 400)
+  await c.env.DB.prepare('UPDATE folders SET name = ? WHERE id = ? AND user_id = ?').bind(body.name.trim(), fid, userId).run()
+  return c.json({ success: true })
+})
+
+app.delete('/api/folders/:id', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const fid = c.req.param('id')
+  await c.env.DB.prepare('UPDATE publications SET folder_id = NULL WHERE folder_id = ? AND user_id = ?').bind(fid, userId).run()
+  await c.env.DB.prepare('DELETE FROM folders WHERE id = ? AND user_id = ?').bind(fid, userId).run()
+  return c.json({ success: true })
+})
+
+app.patch('/api/publications/:id/folder', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const pubId = c.req.param('id')
+  const body = await c.req.json<{ folder_id: string | null }>()
+  await c.env.DB.prepare('UPDATE publications SET folder_id = ? WHERE id = ? AND user_id = ?')
+    .bind(body.folder_id ?? null, pubId, userId).run()
+  return c.json({ success: true })
+})
+
 // Public viewer endpoint — no auth required
 app.get('/view/:slug', async (c) => {
   const slug = c.req.param('slug')

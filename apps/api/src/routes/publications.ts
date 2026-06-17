@@ -41,9 +41,9 @@ publications.post('/', async (c) => {
     return c.json({ success: false, error: 'El título es requerido' }, 400)
   }
 
-  const { plan } = await getUserPlan(c.env.DB, userId)
+  const { plan, customLimits } = await getUserPlan(c.env.DB, userId)
 
-  const pubLimitError = await checkPublicationLimit(c.env.DB, userId, plan)
+  const pubLimitError = await checkPublicationLimit(c.env.DB, userId, plan, customLimits)
   if (pubLimitError) return c.json({ success: false, error: pubLimitError }, 403)
 
   // If user explicitly requests sound and plan doesn't support it, silently disable

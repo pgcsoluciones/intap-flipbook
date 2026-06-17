@@ -39,6 +39,12 @@ export default function Publications() {
   const [tab, setTab]         = useState<Tab>('active')
   const [search, setSearch]   = useState('')
 
+  // Carpetas
+  const [folders, setFolders]                 = useState<any[]>([])
+  const [selectedFolder, setSelectedFolder]   = useState<string | null | 'none'>('none')
+  const [showFolderInput, setShowFolderInput] = useState(false)
+  const [newFolderName, setNewFolderName]     = useState('')
+
   // Modal de creación
   const [showModal, setShowModal]     = useState(false)
   const [modalFiles, setModalFiles]   = useState<File[]>([])
@@ -56,6 +62,7 @@ export default function Publications() {
       .then((res) => setAll(res.data ?? []))
       .catch(() => { localStorage.removeItem('token'); navigate('/login') })
       .finally(() => setLoading(false))
+    api.folders.list().then((r) => setFolders(r.data ?? [])).catch(() => {})
   }, [])
 
   // ── Archivos ──────────────────────────────────────────────
@@ -127,9 +134,32 @@ export default function Publications() {
     setAll((prev) => prev.map((p) => (p.id === id ? res.data : p)))
   }
 
-  const filtered = all.filter((p) =>
-    !search || p.title.toLowerCase().includes(search.toLowerCase())
-  )
+  async function createFolder() {
+    if (!newFolderName.trim()) return
+    const r = await api.folders.create(newFolderName.trim())
+    setFolders((f) => [...f, r.data])
+    setNewFolderName('')
+    setShowFolderInput(false)
+  }
+
+  async function moveToFolder(pubId: string, folderId: string | null) {
+    await api.folders.move(pubId, folderId)
+    setAll((prev) => prev.map((p) => p.id === pubId ? { ...p, folder_id: folderId } : p))
+    setFolders((prev) => prev.map((f) => ({
+      ...f,
+      pub_count: f.pub_count + (
+        all.find((p) => p.id === pubId)?.folder_id === f.id ? -1 :
+        f.id === folderId ? 1 : 0
+      ),
+    })))
+  }
+
+  const filtered = all.filter((p) => {
+    if (search && !p.title.toLowerCase().includes(search.toLowerCase())) return false
+    if (selectedFolder === 'none') return true
+    if (selectedFolder === null) return !p.folder_id
+    return p.folder_id === selectedFolder
+  })
 
   if (loading) return <div style={s.loading}>Cargando...</div>
 
@@ -241,6 +271,37 @@ export default function Publications() {
         </button>
       </div>
 
+      {/* ── Panel de carpetas ── */}
+      {tab === 'active' && (
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', padding: '0 0 0.75rem' }}>
+          {(['none', null] as const).concat(folders.map((f: any) => f.id)).map((v, i) => {
+            const label = v === 'none' ? 'Todas' : v === null ? 'Sin carpeta' : `📁 ${folders.find((f: any) => f.id === v)?.name} (${folders.find((f: any) => f.id === v)?.pub_count ?? 0})`
+            const active = selectedFolder === v
+            return (
+              <button key={i} onClick={() => setSelectedFolder(v as any)} style={{ padding: '4px 12px', borderRadius: 20, border: '1px solid #d1d5db', background: active ? '#4f46e5' : '#fff', color: active ? '#fff' : '#374151', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500, transition: 'all .15s' }}>
+                {label}
+              </button>
+            )
+          })}
+          {showFolderInput ? (
+            <span style={{ display: 'flex', gap: 4 }}>
+              <input
+                autoFocus
+                style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: '0.8rem' }}
+                placeholder="Nombre de carpeta"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); if (e.key === 'Escape') setShowFolderInput(false) }}
+              />
+              <button onClick={createFolder} style={{ padding: '3px 8px', borderRadius: 6, background: '#4f46e5', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>OK</button>
+              <button onClick={() => setShowFolderInput(false)} style={{ padding: '3px 8px', borderRadius: 6, background: '#f3f4f6', color: '#374151', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>✕</button>
+            </span>
+          ) : (
+            <button onClick={() => setShowFolderInput(true)} style={{ padding: '4px 12px', borderRadius: 20, border: '1px dashed #9ca3af', background: 'transparent', color: '#9ca3af', cursor: 'pointer', fontSize: '0.8rem' }}>+ Nueva carpeta</button>
+          )}
+        </div>
+      )}
+
       {/* ── Contenido ── */}
       {tab === 'active' && (
         <>
@@ -264,6 +325,8 @@ export default function Publications() {
                   isMobile={isMobile}
                   onDelete={() => handleDelete(pub.id)}
                   onPublish={() => handlePublish(pub.id)}
+                  onMoveFolder={(fid) => moveToFolder(pub.id, fid)}
+                  folders={folders}
                 />
               ))}
             </div>
@@ -291,7 +354,7 @@ export default function Publications() {
   )
 }
 
-function PubCard({ pub, isMobile, onDelete, onPublish }: { pub: any; isMobile?: boolean; onDelete: () => void; onPublish: () => void }) {
+function PubCard({ pub, isMobile, onDelete, onPublish, onMoveFolder, folders }: { pub: any; isMobile?: boolean; onDelete: () => void; onPublish: () => void; onMoveFolder: (folderId: string | null) => void; folders: any[] }) {
   const [hover, setHover] = useState(false)
   const isPublished = pub.status === 'published'
 
@@ -342,6 +405,16 @@ function PubCard({ pub, isMobile, onDelete, onPublish }: { pub: any; isMobile?: 
           {!isPublished && (
             <button style={{ ...s.actionBtn, color: '#059669', fontWeight: 600 }} onClick={onPublish}>Publicar</button>
           )}
+          <select
+            title="Mover a carpeta"
+            value={pub.folder_id ?? ''}
+            onChange={(e) => onMoveFolder(e.target.value || null)}
+            onClick={(e) => e.stopPropagation()}
+            style={{ fontSize: '0.7rem', border: '1px solid #e5e7eb', borderRadius: 6, padding: '2px 4px', background: '#f9fafb', color: '#374151', cursor: 'pointer' }}
+          >
+            <option value="">— Sin carpeta</option>
+            {folders.map((f: any) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
           <button style={{ ...s.actionBtn, color: '#ef4444', marginLeft: 'auto' }} onClick={onDelete}>🗑️</button>
         </div>
       </div>

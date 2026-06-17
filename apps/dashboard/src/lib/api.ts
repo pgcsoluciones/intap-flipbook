@@ -49,6 +49,8 @@ export const api = {
       request<{ success: true; data: { id: string; email: string; name: string; slug: string | null; plan_id: string; is_admin?: number } }>('/auth/me'),
     updateProfile: (body: { name?: string; slug?: string }) =>
       request<{ success: true; data: any }>('/auth/me', { method: 'PUT', body: JSON.stringify(body) }),
+    impersonate: (userId: string) =>
+      request<{ success: true; data: { token: string; user: any } }>(`/admin/users/${userId}/impersonate`, { method: 'POST' }),
   },
 
   publications: {
@@ -98,6 +100,22 @@ export const api = {
 
   resources: {
     list: () => request<{ success: true; data: any[] }>('/api/resources'),
+  },
+
+  folders: {
+    list: () => request<{ success: true; data: any[] }>('/api/folders'),
+    create: (name: string) => request<{ success: true; data: any }>('/api/folders', { method: 'POST', body: JSON.stringify({ name }) }),
+    rename: (id: string, name: string) => request<{ success: true }>(`/api/folders/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
+    remove: (id: string) => request<{ success: true }>(`/api/folders/${id}`, { method: 'DELETE' }),
+    move: (pubId: string, folder_id: string | null) =>
+      request<{ success: true }>(`/api/publications/${pubId}/folder`, { method: 'PATCH', body: JSON.stringify({ folder_id }) }),
+  },
+
+  modules: {
+    myModules: () => request<{ success: true; data: any[] }>('/api/me/modules'),
+    tenantModules: (userId: string) => request<{ success: true; data: any[] }>(`/admin/users/${userId}/modules`),
+    toggleTenantModule: (userId: string, key: string, enabled: boolean) =>
+      request<{ success: true }>(`/admin/users/${userId}/modules/${key}`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
   },
 
   planRequests: {

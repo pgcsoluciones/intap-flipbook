@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
+import { signJwt } from '../lib/jwt'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
@@ -90,16 +91,22 @@ admin.put('/users/:id/status', async (c) => {
   return c.json({ success: true })
 })
 
-// PUT /admin/users/:id/limits — custom limits override (stored in plan or future column)
+// PUT /admin/users/:id/limits — custom limits override per-tenant
 admin.put('/users/:id/limits', async (c) => {
-  // Currently stored as a plan change note; full custom limits require additional columns
   const id = c.req.param('id')
   const body = await c.req.json<{ max_publications?: number | null; max_pages?: number | null; max_storage_mb?: number | null }>()
-  // For now we store as a note in plan_history
-  const adminId = c.get('user').sub
   await c.env.DB.prepare(
-    'INSERT INTO plan_history (user_id, from_plan, to_plan, changed_by, reason) VALUES (?,?,?,?,?)'
-  ).bind(id, null, 'custom', adminId, JSON.stringify(body)).run()
+    `UPDATE users SET
+      custom_max_publications = ?,
+      custom_max_pages = ?,
+      custom_max_storage_mb = ?
+     WHERE id = ?`
+  ).bind(
+    body.max_publications ?? null,
+    body.max_pages ?? null,
+    body.max_storage_mb ?? null,
+    id
+  ).run()
   return c.json({ success: true })
 })
 
@@ -108,6 +115,45 @@ admin.put('/users/:id/admin', async (c) => {
   const id = c.req.param('id')
   const body = await c.req.json<{ is_admin: boolean }>()
   await c.env.DB.prepare('UPDATE users SET is_admin = ? WHERE id = ?').bind(body.is_admin ? 1 : 0, id).run()
+  return c.json({ success: true })
+})
+
+// POST /admin/users/:id/impersonate — emite JWT de corta duración para ese tenant
+admin.post('/users/:id/impersonate', async (c) => {
+  const id = c.req.param('id')
+  const user = await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?')
+    .bind(id).first<{ id: string; email: string }>()
+  if (!user) return c.json({ success: false, error: 'Usuario no encontrado' }, 404)
+  const token = await signJwt(
+    { sub: user.id, email: user.email, impersonated: true },
+    c.env.JWT_SECRET,
+    1,
+  )
+  return c.json({ success: true, data: { token, user } })
+})
+
+// GET /admin/users/:id/modules — módulos del tenant con estado enabled
+admin.get('/users/:id/modules', async (c) => {
+  const id = c.req.param('id')
+  const { results } = await c.env.DB.prepare(
+    `SELECT m.key, m.name, m.description, m.active_globally,
+            COALESCE(tm.enabled, m.active_globally) as enabled
+     FROM modules m
+     LEFT JOIN tenant_modules tm ON tm.module_key = m.key AND tm.user_id = ?
+     ORDER BY m.key ASC`
+  ).bind(id).all()
+  return c.json({ success: true, data: results })
+})
+
+// PUT /admin/users/:id/modules/:key — toggle módulo para un tenant específico
+admin.put('/users/:id/modules/:key', async (c) => {
+  const id = c.req.param('id')
+  const key = c.req.param('key')
+  const body = await c.req.json<{ enabled: boolean }>()
+  await c.env.DB.prepare(
+    `INSERT INTO tenant_modules (user_id, module_key, enabled) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, module_key) DO UPDATE SET enabled = excluded.enabled`
+  ).bind(id, key, body.enabled ? 1 : 0).run()
   return c.json({ success: true })
 })
 

@@ -100,6 +100,16 @@ export default function Layout({ children }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [notifications, setNotifications] = useState<any[]>([])
   const [notifOpen, setNotifOpen] = useState(false)
+  const [isImpersonating] = useState(!!localStorage.getItem('admin_token'))
+
+  function exitImpersonation() {
+    const adminToken = localStorage.getItem('admin_token')
+    if (adminToken) {
+      localStorage.setItem('token', adminToken)
+      localStorage.removeItem('admin_token')
+      navigate('/admin/tenants')
+    }
+  }
 
   useEffect(() => {
     if (!localStorage.getItem('token')) { navigate('/login'); return }
@@ -130,7 +140,13 @@ export default function Layout({ children }: Props) {
     : s.sidebar
 
   return (
-    <div style={s.root}>
+    <div style={{ ...s.root, paddingTop: isImpersonating ? 36 : 0 }}>
+      {isImpersonating && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, background: '#7c3aed', color: '#fff', padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', height: 36 }}>
+          <span>🕵️ Modo impersonación — estás viendo como otro tenant</span>
+          <button onClick={exitImpersonation} style={{ background: 'rgba(255,255,255,.25)', border: 'none', borderRadius: 6, color: '#fff', padding: '3px 10px', cursor: 'pointer', fontWeight: 600 }}>Salir</button>
+        </div>
+      )}
       {/* Barra superior solo en móvil con botón hamburguesa */}
       {isMobile && (
         <header style={s.mobileBar}>

@@ -264,6 +264,22 @@ export default function AdminTenantProfile() {
             </span>
           </div>
           <button onClick={() => setShowPlanModal(true)} style={s.btnPrimary}>Cambiar plan</button>
+          <button
+            onClick={async () => {
+              try {
+                const adminToken = localStorage.getItem('token') ?? ''
+                const r = await adminFetch<{ data: { token: string } }>(`/users/${id}/impersonate`, { method: 'POST' })
+                localStorage.setItem('admin_token', adminToken)
+                localStorage.setItem('token', r.data.token)
+                navigate('/dashboard')
+              } catch (e: any) {
+                setMsg(e.message ?? 'Error al impersonar'); setMsgType('err')
+              }
+            }}
+            style={{ ...s.btnSecondary, marginTop: 8 }}
+          >
+            🕵️ Ver como tenant
+          </button>
         </div>
 
         {/* ── Card: Estado ── */}
