@@ -7,7 +7,7 @@ import type { AuthVariables } from '../middleware/jwt'
 const auth = new Hono<{ Bindings: Env; Variables: AuthVariables }>()
 
 auth.post('/register', async (c) => {
-  const body = await c.req.json<{ email: string; password: string; name?: string }>()
+  const body = await c.req.json<{ email: string; password: string; name?: string; slug?: string }>()
 
   if (!body.email || !body.password) {
     return c.json({ success: false, error: 'email and password are required' }, 400)
@@ -26,10 +26,14 @@ auth.post('/register', async (c) => {
   const passwordHash = await hashPassword(body.password)
   const id = crypto.randomUUID()
 
+  // Slug del tenant: el que el usuario eligió, o derivado del nombre/email.
+  const base = slugify(body.slug || body.name || body.email.split('@')[0])
+  const slug = await uniqueSlug(c.env.DB, 'users', base)
+
   await c.env.DB.prepare(
-    'INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, ?)',
+    'INSERT INTO users (id, email, password_hash, name, slug) VALUES (?, ?, ?, ?, ?)',
   )
-    .bind(id, body.email.toLowerCase(), passwordHash, body.name ?? null)
+    .bind(id, body.email.toLowerCase(), passwordHash, body.name ?? null, slug)
     .run()
 
   const token = await signJwt(
@@ -71,24 +75,37 @@ auth.get('/me', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
 
   const user = await c.env.DB.prepare(
-    'SELECT id, email, name, plan_id, is_admin, created_at FROM users WHERE id = ?',
+    'SELECT id, email, name, slug, plan_id, is_admin, created_at FROM users WHERE id = ?',
   )
     .bind(sub)
-    .first<{ id: string; email: string; name: string | null; plan_id: string; is_admin: number; created_at: string }>()
+    .first<{ id: string; email: string; name: string | null; slug: string | null; plan_id: string; is_admin: number; created_at: string }>()
 
   if (!user) return c.json({ success: false, error: 'User not found' }, 404)
 
   return c.json({ success: true, data: user })
 })
 
-// PUT /auth/me — update profile name
+// PUT /auth/me — actualizar nombre y/o slug del tenant
 auth.put('/me', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
-  const body = await c.req.json<{ name?: string }>()
-  await c.env.DB.prepare('UPDATE users SET name = COALESCE(?, name) WHERE id = ?')
-    .bind(body.name ?? null, sub)
+  const body = await c.req.json<{ name?: string; slug?: string }>()
+
+  // Si pide cambiar el slug, lo normalizamos y verificamos que sea único.
+  let newSlug: string | undefined
+  if (body.slug !== undefined) {
+    const base = slugify(body.slug)
+    if (!base) return c.json({ success: false, error: 'El slug no puede quedar vacío' }, 400)
+    const taken = await c.env.DB.prepare('SELECT id FROM users WHERE slug = ? AND id != ?')
+      .bind(base, sub)
+      .first()
+    if (taken) return c.json({ success: false, error: 'Ese slug ya está en uso, elige otro' }, 409)
+    newSlug = base
+  }
+
+  await c.env.DB.prepare('UPDATE users SET name = COALESCE(?, name), slug = COALESCE(?, slug) WHERE id = ?')
+    .bind(body.name ?? null, newSlug ?? null, sub)
     .run()
-  const user = await c.env.DB.prepare('SELECT id, email, name, plan_id FROM users WHERE id = ?')
+  const user = await c.env.DB.prepare('SELECT id, email, name, slug, plan_id FROM users WHERE id = ?')
     .bind(sub)
     .first()
   return c.json({ success: true, data: user })
@@ -171,6 +188,41 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
 
   return c.json({ success: true, data: { publications, total_views: totalViews, recent_views: recentViews } })
 })
+
+// Convierte un texto en slug URL-safe: minúsculas, sin acentos, guiones.
+export function slugify(text: string): string {
+  return (text || '')
+    .toString()
+    .replace(/ñ/gi, 'n')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // quita los acentos (marcas diacríticas)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')     // todo lo no alfanumérico → guion
+    .replace(/^-+|-+$/g, '')          // recorta guiones de los extremos
+    .slice(0, 60)
+}
+
+// Devuelve un slug único en la columna dada, agregando sufijos -2, -3… si ya existe.
+export async function uniqueSlug(
+  db: D1Database,
+  table: 'users' | 'publications',
+  base: string,
+): Promise<string> {
+  const col = table === 'publications' ? 'public_slug' : 'slug'
+  const safe = base || (table === 'users' ? 'tenant' : 'flipbook')
+  let slug = safe
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const existing = await db
+      .prepare(`SELECT 1 FROM ${table} WHERE ${col} = ?`)
+      .bind(slug)
+      .first()
+    if (!existing) return slug
+    const m = slug.match(/-(\d+)$/)
+    slug = m ? slug.replace(/-\d+$/, `-${Number(m[1]) + 1}`) : `${safe}-2`
+  }
+}
 
 // PBKDF2 password hashing via Web Crypto API
 async function hashPassword(password: string): Promise<string> {

@@ -35,10 +35,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   auth: {
-    register: (email: string, password: string, name?: string) =>
+    register: (email: string, password: string, name?: string, slug?: string) =>
       request<{ success: true; data: { token: string } }>('/auth/register', {
         method: 'POST',
-        body: JSON.stringify({ email, password, name }),
+        body: JSON.stringify({ email, password, name, slug }),
       }),
     login: (email: string, password: string) =>
       request<{ success: true; data: { token: string } }>('/auth/login', {
@@ -46,7 +46,9 @@ export const api = {
         body: JSON.stringify({ email, password }),
       }),
     me: () =>
-      request<{ success: true; data: { id: string; email: string; name: string; plan_id: string } }>('/auth/me'),
+      request<{ success: true; data: { id: string; email: string; name: string; slug: string | null; plan_id: string; is_admin?: number } }>('/auth/me'),
+    updateProfile: (body: { name?: string; slug?: string }) =>
+      request<{ success: true; data: any }>('/auth/me', { method: 'PUT', body: JSON.stringify(body) }),
   },
 
   publications: {

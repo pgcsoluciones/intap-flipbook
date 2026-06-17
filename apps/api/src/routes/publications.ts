@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
 import { getUserPlan, checkPublicationLimit, checkSoundAllowed } from '../lib/plans'
+import { slugify, uniqueSlug } from './auth'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
@@ -51,7 +52,8 @@ publications.post('/', async (c) => {
   const soundValue = wantsSound && soundAllowed ? 1 : 0
 
   const id = crypto.randomUUID()
-  const slug = generateSlug()
+  // Slug legible derivado del título (único; agrega -2, -3… si colisiona).
+  const slug = await uniqueSlug(c.env.DB, 'publications', slugify(body.title.trim()))
 
   await c.env.DB.prepare(
     `INSERT INTO publications (id, user_id, title, description, category, public_slug, sound_enabled)
@@ -186,9 +188,5 @@ publications.post('/:id/publish', async (c) => {
     .first()
   return c.json({ success: true, data: updated })
 })
-
-function generateSlug(): string {
-  return crypto.randomUUID().replace(/-/g, '').slice(0, 10)
-}
 
 export default publications

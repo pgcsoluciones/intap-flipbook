@@ -31,15 +31,21 @@ export default function Preview() {
   const [toggling, setToggling] = useState(false)
   const [msg, setMsg]         = useState('')
 
-  const VIEWER_BASE = import.meta.env.VITE_VIEWER_BASE_URL ?? 'https://intap-flipbook-viewer.pages.dev'
+  const VIEWER_BASE = import.meta.env.VITE_VIEWER_BASE_URL ?? 'https://flip.intaprd.com'
+  const [tenantSlug, setTenantSlug] = useState<string | null>(null)
 
   useEffect(() => {
     if (id) api.publications.get(id).then((r) => setPub(r.data))
+    api.auth.me().then((r) => setTenantSlug(r.data.slug ?? null)).catch(() => {})
   }, [id])
 
   if (!pub) return <div style={{ textAlign: 'center', padding: '4rem', color: '#666' }}>Cargando...</div>
 
-  const viewerUrl  = pub.public_slug ? `${VIEWER_BASE}/view/${pub.public_slug}` : null
+  // URL pública: flip.intaprd.com/{slug-tenant}/{slug-flipbook}.
+  // Si el usuario aún no tiene slug de tenant, usamos solo el del flipbook.
+  const viewerUrl = pub.public_slug
+    ? `${VIEWER_BASE}/${tenantSlug ? tenantSlug + '/' : ''}${pub.public_slug}`
+    : null
   const isPublished = pub.status === 'published'
   const dev = DEVICES.find((d) => d.key === device)!
 
