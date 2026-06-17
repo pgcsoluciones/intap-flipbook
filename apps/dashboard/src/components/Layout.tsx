@@ -6,6 +6,7 @@ import { useIsMobile } from '../hooks/useIsMobile'
 const NAV_ITEMS = [
   { to: '/dashboard',    icon: '🏠', label: 'Inicio' },
   { to: '/publications', icon: '📚', label: 'Mis Flipbooks' },
+  { to: '/responses',    icon: '📨', label: 'Respuestas' },
   { to: '/templates',    icon: '🎨', label: 'Plantillas' },
   { to: '/resources',    icon: '🖼️',  label: 'Recursos' },
   { to: '/tutorials',    icon: '🎓', label: 'Tutoriales' },

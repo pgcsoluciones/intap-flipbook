@@ -86,4 +86,33 @@ app.get('/view/:slug', async (c) => {
   })
 })
 
+// Recibe respuestas de formularios / cuestionarios desde el viewer — público (sin auth)
+app.post('/view/:slug/response', async (c) => {
+  const slug = c.req.param('slug')
+  const pub = await c.env.DB.prepare(
+    `SELECT id, user_id FROM publications WHERE public_slug = ? AND status = 'published'`,
+  )
+    .bind(slug)
+    .first<{ id: string; user_id: string }>()
+  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+
+  const body = await c.req.json<{ kind?: string; widget_key?: string; payload?: any }>().catch(() => ({}))
+  const kind = body.kind === 'quiz' ? 'quiz' : 'contact'
+  const payload = typeof body.payload === 'string' ? body.payload : JSON.stringify(body.payload ?? {})
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO form_responses (publication_id, owner_id, kind, widget_key, payload)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+      .bind(pub.id, pub.user_id, kind, body.widget_key ?? null, payload)
+      .run()
+  } catch (e) {
+    // Si la tabla aún no existe, no romper el viewer
+    return c.json({ success: false, error: 'No se pudo guardar la respuesta' }, 500)
+  }
+
+  return c.json({ success: true }, 201)
+})
+
 export default app

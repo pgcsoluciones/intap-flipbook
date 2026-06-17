@@ -98,6 +98,13 @@ export const api = {
     list: () => request<{ success: true; data: any[] }>('/api/resources'),
   },
 
+  responses: {
+    list: () => request<{ success: true; data: any[] }>('/api/responses'),
+    unreadCount: () => request<{ success: true; data: { count: number } }>('/api/responses/unread-count'),
+    markRead: (id: number | string) => request<{ success: true }>(`/api/responses/${id}/read`, { method: 'PATCH' }),
+    remove: (id: number | string) => request<{ success: true }>(`/api/responses/${id}`, { method: 'DELETE' }),
+  },
+
   upload: (file: File) => {
     const token = getToken()
     const form = new FormData()

@@ -333,4 +333,54 @@ pages.post('/templates/:id/apply', async (c) => {
   return c.json({ success: true, data: { publication_id: pubId, pages_added: source.length } }, 201)
 })
 
+// GET /api/responses — respuestas de formularios/cuestionarios del usuario
+pages.get('/responses', async (c) => {
+  const userId = c.get('user').sub
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT r.id, r.publication_id, r.kind, r.widget_key, r.payload, r.is_read, r.created_at,
+              p.title AS publication_title
+       FROM form_responses r
+       LEFT JOIN publications p ON p.id = r.publication_id
+       WHERE r.owner_id = ?
+       ORDER BY r.created_at DESC
+       LIMIT 500`,
+    ).bind(userId).all()
+    return c.json({ success: true, data: results })
+  } catch {
+    return c.json({ success: true, data: [] })
+  }
+})
+
+// GET /api/responses/unread-count — cantidad de respuestas sin leer
+pages.get('/responses/unread-count', async (c) => {
+  const userId = c.get('user').sub
+  try {
+    const row = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM form_responses WHERE owner_id = ? AND is_read = 0`,
+    ).bind(userId).first<{ count: number }>()
+    return c.json({ success: true, data: { count: row?.count ?? 0 } })
+  } catch {
+    return c.json({ success: true, data: { count: 0 } })
+  }
+})
+
+// PATCH /api/responses/:id/read — marca una respuesta como leída
+pages.patch('/responses/:id/read', async (c) => {
+  const userId = c.get('user').sub
+  await c.env.DB.prepare(
+    `UPDATE form_responses SET is_read = 1 WHERE id = ? AND owner_id = ?`,
+  ).bind(c.req.param('id'), userId).run()
+  return c.json({ success: true })
+})
+
+// DELETE /api/responses/:id — elimina una respuesta
+pages.delete('/responses/:id', async (c) => {
+  const userId = c.get('user').sub
+  await c.env.DB.prepare(
+    `DELETE FROM form_responses WHERE id = ? AND owner_id = ?`,
+  ).bind(c.req.param('id'), userId).run()
+  return c.json({ success: true })
+})
+
 export default pages

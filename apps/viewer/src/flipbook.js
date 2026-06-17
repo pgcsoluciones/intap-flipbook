@@ -44,6 +44,17 @@ function makeBlank(w, h) {
   return d
 }
 
+// Envía una respuesta (formulario o cuestionario) al repositorio del tenant.
+function saveResponse(kind, payload, widgetKey) {
+  try {
+    fetch(`${API_BASE}/view/${slug}/response`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, widget_key: widgetKey || null, payload }),
+    }).catch(() => {})
+  } catch (e) {}
+}
+
 async function init() {
   const res = await fetch(`${API_BASE}/view/${slug}`)
   if (!res.ok) {
@@ -273,8 +284,15 @@ async function init() {
     f.append(btn)
     f.addEventListener('submit', (e) => {
       e.preventDefault()
-      const body = `Nombre: ${name.value}\nEmail: ${email.value}\nTeléfono: ${phone.value}\n\n${msg.value}`
-      window.location.href = `mailto:${cfg.toEmail || ''}?subject=${encodeURIComponent(cfg.subject || 'Contacto desde catálogo')}&body=${encodeURIComponent(body)}`
+      const payload = { nombre: name.value, email: email.value, telefono: phone.value, comentario: msg.value }
+      // Guarda la respuesta en el repositorio del tenant
+      saveResponse('contact', payload)
+      // Y abre el correo si el dueño configuró un email destino
+      if (cfg.toEmail) {
+        const body = `Nombre: ${name.value}\nEmail: ${email.value}\nTeléfono: ${phone.value}\n\n${msg.value}`
+        window.location.href = `mailto:${cfg.toEmail}?subject=${encodeURIComponent(cfg.subject || 'Contacto desde catálogo')}&body=${encodeURIComponent(body)}`
+      }
+      f.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#16a34a;font-weight:700;font-family:Inter,sans-serif;font-size:14px;text-align:center;padding:12px;">✓ ¡Gracias! Tu mensaje fue enviado.</div>'
     })
     return f
   }
@@ -429,6 +447,13 @@ async function init() {
         btn.style.cssText = 'background:#4F46E5;color:#fff;border:none;border-radius:6px;padding:8px;font-weight:600;cursor:pointer;font-size:12px;margin-top:auto;'
         btn.addEventListener('click', () => {
           localStorage.setItem(`quiz_${key}`, JSON.stringify(answers))
+          // Construye un resumen legible: pregunta → opción elegida
+          const summary = questions.map((q, qi) => {
+            const oi = answers[qi]
+            const chosen = oi !== undefined ? (q.options || [])[oi] : '(sin responder)'
+            return { pregunta: q.text ?? q.question ?? `Pregunta ${qi + 1}`, respuesta: chosen }
+          })
+          saveResponse('quiz', { titulo: cfg.title || 'Cuestionario', respuestas: summary }, key)
           btn.textContent = '✓ Respuestas guardadas'
           btn.disabled = true
         })
