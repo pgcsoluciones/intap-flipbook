@@ -1,9 +1,20 @@
 import { useEffect, useState } from 'react'
 import { api, API_BASE } from '../lib/api'
 
+function toSlug(text: string) {
+  return text
+    .replace(/ñ/gi, 'n')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+}
+
 export default function ProfilePage() {
   const [user, setUser]         = useState<any>(null)
   const [name, setName]         = useState('')
+  const [slug, setSlug]         = useState('')
   const [email, setEmail]       = useState('')
   const [currentPw, setCurrent] = useState('')
   const [newPw, setNewPw]       = useState('')
@@ -17,6 +28,7 @@ export default function ProfilePage() {
     api.auth.me().then((r) => {
       setUser(r.data)
       setName(r.data.name ?? '')
+      setSlug(r.data.slug ?? '')
       setEmail(r.data.email ?? '')
     })
   }, [])
@@ -29,7 +41,7 @@ export default function ProfilePage() {
       const res = await fetch(`${API_BASE}/auth/me`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, slug: slug.trim() || undefined }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Error al guardar')
@@ -110,6 +122,19 @@ export default function ProfilePage() {
               placeholder="Tu nombre o empresa"
               maxLength={100}
             />
+          </label>
+          <label style={styles.label}>
+            URL pública (slug)
+            <input
+              style={styles.input}
+              value={slug}
+              onChange={(e) => setSlug(toSlug(e.target.value))}
+              placeholder="mi-empresa"
+              maxLength={60}
+            />
+            <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+              flip.intaprd.com/<strong>{slug || '(sin slug)'}</strong>
+            </span>
           </label>
           <label style={styles.label}>
             Correo electrónico

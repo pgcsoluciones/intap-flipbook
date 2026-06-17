@@ -172,7 +172,9 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
 
   const { results: publications } = await c.env.DB.prepare(
-    `SELECT p.id, p.title, p.status, p.views_count, COUNT(pg.id) as page_count
+    `SELECT p.id, p.title, p.status,
+            p.views_count as views,
+            COUNT(pg.id) as page_count
      FROM publications p
      LEFT JOIN pages pg ON pg.publication_id = p.id
      WHERE p.user_id = ?
@@ -182,13 +184,13 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
     .bind(sub)
     .all()
 
-  const totalViews = (publications as Array<{ views_count: number }>).reduce(
-    (sum, pub) => sum + (pub.views_count ?? 0),
-    0,
-  )
+  const pubs = publications as Array<{ id: string; title: string; status: string; views: number; page_count: number }>
+  const totalViews = pubs.reduce((sum, pub) => sum + (pub.views ?? 0), 0)
+  const publishedCount = pubs.filter((p) => p.status === 'published').length
+  const totalPages = pubs.reduce((sum, pub) => sum + (pub.page_count ?? 0), 0)
 
   const { results: recentViews } = await c.env.DB.prepare(
-    `SELECT pv.viewed_at, pv.device, pub.title
+    `SELECT pv.id, pv.viewed_at, pv.device, pub.title as flipbook_title
      FROM publication_views pv
      JOIN publications pub ON pub.id = pv.publication_id
      WHERE pub.user_id = ?
@@ -198,7 +200,13 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
     .bind(sub)
     .all()
 
-  return c.json({ success: true, data: { publications, total_views: totalViews, recent_views: recentViews } })
+  return c.json({ success: true, data: {
+    publications: pubs,
+    total_views: totalViews,
+    published_count: publishedCount,
+    total_pages: totalPages,
+    recent_views: recentViews,
+  } })
 })
 
 // Convierte un texto en slug URL-safe: minúsculas, sin acentos, guiones.

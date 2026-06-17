@@ -12,6 +12,7 @@ type FlipbookStat = {
   title: string
   views: number
   status: string
+  page_count: number
 }
 
 type RecentView = {
@@ -25,29 +26,8 @@ type Stats = {
   total_views: number
   published_count: number
   total_pages: number
-  flipbooks: FlipbookStat[]
+  publications: FlipbookStat[]
   recent_views: RecentView[]
-}
-
-// TODO: reemplazar con datos reales cuando GET /api/stats/my esté implementado
-const MOCK_STATS: Stats = {
-  total_views: 142,
-  published_count: 3,
-  total_pages: 24,
-  flipbooks: [
-    { id: '1', title: 'Catálogo de verano', views: 89, status: 'published' },
-    { id: '2', title: 'Menú especial',       views: 35, status: 'published' },
-    { id: '3', title: 'Portafolio 2024',     views: 18, status: 'published' },
-  ],
-  recent_views: [
-    { id: 1, flipbook_title: 'Catálogo de verano', viewed_at: new Date(Date.now() - 30 * 60000).toISOString(),  device: 'mobile' },
-    { id: 2, flipbook_title: 'Menú especial',       viewed_at: new Date(Date.now() - 2 * 3600000).toISOString(), device: 'desktop' },
-    { id: 3, flipbook_title: 'Catálogo de verano', viewed_at: new Date(Date.now() - 5 * 3600000).toISOString(), device: 'desktop' },
-    { id: 4, flipbook_title: 'Portafolio 2024',    viewed_at: new Date(Date.now() - 86400000).toISOString(),    device: 'mobile' },
-    { id: 5, flipbook_title: 'Menú especial',       viewed_at: new Date(Date.now() - 2 * 86400000).toISOString(), device: 'tablet' },
-    { id: 6, flipbook_title: 'Catálogo de verano', viewed_at: new Date(Date.now() - 3 * 86400000).toISOString(), device: 'desktop' },
-    { id: 7, flipbook_title: 'Catálogo de verano', viewed_at: new Date(Date.now() - 6 * 86400000).toISOString(), device: 'mobile' },
-  ],
 }
 
 const DEVICE_ICON: Record<string, string> = { mobile: '📱', desktop: '💻', tablet: '📋' }
@@ -62,10 +42,85 @@ function timeAgo(dateStr: string) {
   return `hace ${days} d`
 }
 
+// Donut SVG nativo para breakdown de dispositivos.
+// r=36 → circunferencia = 2 * π * 36 ≈ 226.19
+function DeviceDonut({ views }: { views: RecentView[] }) {
+  const total = views.length
+  if (total === 0) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '1rem' }}>
+        <svg width="96" height="96" viewBox="0 0 96 96">
+          <circle cx="48" cy="48" r="36" fill="none" stroke="#f3f4f6" strokeWidth="14" />
+        </svg>
+        <span style={{ fontSize: 12, color: '#9ca3af' }}>Sin datos</span>
+      </div>
+    )
+  }
+
+  const counts = { mobile: 0, desktop: 0, tablet: 0 }
+  for (const v of views) {
+    const d = v.device as keyof typeof counts
+    if (d in counts) counts[d]++
+    else counts.desktop++
+  }
+
+  const C = 226.19 // circunferencia (2 * π * 36)
+  const segments = [
+    { label: 'Mobile',  key: 'mobile',  color: '#4f46e5', count: counts.mobile },
+    { label: 'Desktop', key: 'desktop', color: '#059669', count: counts.desktop },
+    { label: 'Tablet',  key: 'tablet',  color: '#d97706', count: counts.tablet },
+  ]
+
+  let offset = 0
+  const arcs = segments.map((seg) => {
+    const arc = (seg.count / total) * C
+    const dashoffset = -offset
+    offset += arc
+    return { ...seg, arc, dashoffset }
+  })
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+      <svg width="96" height="96" viewBox="0 0 96 96" style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx="48" cy="48" r="36" fill="none" stroke="#f3f4f6" strokeWidth="14" />
+        {arcs.map((seg) =>
+          seg.arc > 0 ? (
+            <circle
+              key={seg.key}
+              cx="48"
+              cy="48"
+              r="36"
+              fill="none"
+              stroke={seg.color}
+              strokeWidth="14"
+              strokeDasharray={`${seg.arc} ${C - seg.arc}`}
+              strokeDashoffset={seg.dashoffset}
+            />
+          ) : null
+        )}
+      </svg>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: '100%' }}>
+        {arcs.map((seg) => (
+          <div key={seg.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: seg.color, display: 'inline-block' }} />
+              {seg.label}
+            </span>
+            <span style={{ color: '#6b7280' }}>
+              {seg.count} ({total > 0 ? Math.round((seg.count / total) * 100) : 0}%)
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function TenantStats() {
   const navigate = useNavigate()
-  const [stats, setStats]   = useState<Stats | null>(null)
+  const [stats, setStats]     = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState<string | null>(null)
 
   useEffect(() => {
     if (!localStorage.getItem('token')) { navigate('/login'); return }
@@ -74,25 +129,49 @@ export default function TenantStats() {
 
   async function load() {
     setLoading(true)
+    setError(null)
     try {
-      const r = await fetch(`${API_BASE}/api/stats/my`, { headers: authH() })
-      if (r.ok) {
-        const d = await r.json()
-        setStats(d.data)
-      } else {
-        setStats(MOCK_STATS)
-      }
-    } catch {
-      setStats(MOCK_STATS)
+      const r = await fetch(`${API_BASE}/auth/stats/my`, { headers: authH() })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const d = await r.json()
+      if (!d.success) throw new Error(d.error ?? 'Error al cargar estadísticas')
+      setStats(d.data)
+    } catch (e: any) {
+      setError(e.message)
+      setStats(null)
     } finally {
       setLoading(false)
     }
   }
 
   if (loading) return <div style={s.loading}>Cargando estadísticas...</div>
-  if (!stats) return <div style={s.loading}>No hay estadísticas disponibles.</div>
 
-  const maxViews = Math.max(...stats.flipbooks.map((f) => f.views), 1)
+  if (error || !stats) {
+    return (
+      <div style={s.page}>
+        <div style={s.inner}>
+          <div style={s.pageHeader}>
+            <h1 style={s.h1}>Mis estadísticas</h1>
+          </div>
+          <div style={{ ...s.card, textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📊</div>
+            <p style={{ margin: 0 }}>
+              {error
+                ? `No se pudieron cargar las estadísticas: ${error}`
+                : 'Aún no tenés vistas registradas. Publicá tu flipbook y compartilo para ver estadísticas aquí.'}
+            </p>
+            <button onClick={load} style={{ marginTop: 16, padding: '8px 18px', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
+              Reintentar
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const publications = stats.publications ?? []
+  const recentViews  = stats.recent_views ?? []
+  const maxViews     = Math.max(...publications.map((f) => f.views ?? 0), 1)
 
   return (
     <div style={s.page}>
@@ -102,40 +181,52 @@ export default function TenantStats() {
           <p style={s.sub}>Resumen de rendimiento de tus flipbooks</p>
         </div>
 
+        {/* Summary cards */}
         <div style={s.summaryRow}>
-          <SummaryCard label="Vistas totales"    value={stats.total_views}     icon="👁️" color="#4f46e5" />
+          <SummaryCard label="Vistas totales"       value={stats.total_views}     icon="👁️" color="#4f46e5" />
           <SummaryCard label="Flipbooks publicados" value={stats.published_count} icon="📚" color="#059669" />
-          <SummaryCard label="Páginas totales"   value={stats.total_pages}     icon="📄" color="#d97706" />
+          <SummaryCard label="Páginas totales"      value={stats.total_pages}     icon="📄" color="#d97706" />
         </div>
 
-        {stats.flipbooks.length > 0 && (
-          <div style={s.card}>
-            <h2 style={s.cardTitle}>Vistas por flipbook</h2>
-            <div style={s.barList}>
-              {stats.flipbooks
-                .slice()
-                .sort((a, b) => b.views - a.views)
-                .map((fb) => {
-                  const pct = Math.round((fb.views / maxViews) * 100)
-                  return (
-                    <div key={fb.id} style={s.barRow}>
-                      <div style={s.barLabel}>
-                        <span style={s.barTitle}>{fb.title}</span>
-                        <span style={s.barCount}>{fb.views} vistas</span>
+        {/* Gráfico de barras + donut en fila */}
+        {publications.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '1.25rem', alignItems: 'start' }}>
+            {/* Barras SVG */}
+            <div style={s.card}>
+              <h2 style={s.cardTitle}>Vistas por flipbook</h2>
+              <div style={s.barList}>
+                {publications
+                  .slice()
+                  .sort((a, b) => (b.views ?? 0) - (a.views ?? 0))
+                  .map((fb) => {
+                    const pct = Math.round(((fb.views ?? 0) / maxViews) * 100)
+                    return (
+                      <div key={fb.id} style={s.barRow}>
+                        <div style={s.barLabel}>
+                          <span style={s.barTitle}>{fb.title}</span>
+                          <span style={s.barCount}>{fb.views ?? 0} vistas</span>
+                        </div>
+                        <div style={s.barTrack}>
+                          <div style={{ ...s.barFill, width: `${pct}%` }} />
+                        </div>
                       </div>
-                      <div style={s.barTrack}>
-                        <div style={{ ...s.barFill, width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+              </div>
+            </div>
+
+            {/* Donut dispositivos */}
+            <div style={{ ...s.card, minWidth: 180 }}>
+              <h2 style={s.cardTitle}>Dispositivos</h2>
+              <DeviceDonut views={recentViews} />
             </div>
           </div>
         )}
 
-        {stats.recent_views.length > 0 && (
+        {/* Tabla de vistas recientes */}
+        {recentViews.length > 0 && (
           <div style={s.card}>
-            <h2 style={s.cardTitle}>Últimas 7 vistas</h2>
+            <h2 style={s.cardTitle}>Últimas vistas</h2>
             <table style={s.table}>
               <thead>
                 <tr>
@@ -145,8 +236,8 @@ export default function TenantStats() {
                 </tr>
               </thead>
               <tbody>
-                {stats.recent_views.slice(0, 7).map((v) => (
-                  <tr key={v.id} style={s.tr}>
+                {recentViews.slice(0, 10).map((v, i) => (
+                  <tr key={v.id ?? i} style={s.tr}>
                     <td style={s.td}>{v.flipbook_title}</td>
                     <td style={s.td}>
                       <span style={s.deviceCell}>
@@ -178,7 +269,7 @@ function SummaryCard({ label, value, icon, color }: { label: string; value: numb
       <div style={{ ...s.summaryIcon, background: color + '18', color }}>
         {icon}
       </div>
-      <span style={s.summaryValue}>{value.toLocaleString('es-AR')}</span>
+      <span style={s.summaryValue}>{(value ?? 0).toLocaleString('es-AR')}</span>
       <span style={s.summaryLabel}>{label}</span>
     </div>
   )

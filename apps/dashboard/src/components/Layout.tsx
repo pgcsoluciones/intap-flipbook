@@ -42,19 +42,79 @@ interface Props {
   children: React.ReactNode
 }
 
+function NotifDropdown({
+  notifications,
+  onMarkRead,
+  onClose,
+}: {
+  notifications: any[]
+  onMarkRead: (id: number | string) => void
+  onClose: () => void
+}) {
+  const visible = notifications.slice(0, 5)
+  return (
+    <div style={{
+      position: 'absolute',
+      bottom: '110%',
+      right: 0,
+      width: 280,
+      background: '#fff',
+      borderRadius: 10,
+      boxShadow: '0 4px 24px rgba(0,0,0,.18)',
+      zIndex: 200,
+      overflow: 'hidden',
+      border: '1px solid #e5e7eb',
+    }}>
+      <div style={{ padding: '10px 14px', fontWeight: 700, fontSize: 13, borderBottom: '1px solid #f3f4f6', color: '#111827' }}>
+        Notificaciones
+        <button onClick={onClose} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 16, lineHeight: 1 }}>×</button>
+      </div>
+      {visible.length === 0 ? (
+        <div style={{ padding: '1.5rem', textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Sin notificaciones</div>
+      ) : (
+        visible.map((n) => (
+          <div
+            key={n.id}
+            onClick={() => { if (!n.read) onMarkRead(n.id) }}
+            style={{
+              padding: '10px 14px',
+              borderBottom: '1px solid #f9fafb',
+              background: n.read ? '#fff' : '#f0f0ff',
+              cursor: n.read ? 'default' : 'pointer',
+            }}
+          >
+            <div style={{ fontWeight: n.read ? 400 : 600, fontSize: 13, color: '#111827', marginBottom: 2 }}>{n.title}</div>
+            <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.4 }}>{n.message}</div>
+          </div>
+        ))
+      )}
+    </div>
+  )
+}
+
 export default function Layout({ children }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
   const isMobile = useIsMobile()
   const [user, setUser] = useState<any>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [notifications, setNotifications] = useState<any[]>([])
+  const [notifOpen, setNotifOpen] = useState(false)
 
   useEffect(() => {
     if (!localStorage.getItem('token')) { navigate('/login'); return }
     api.auth.me()
       .then((res) => setUser(res.data))
       .catch(() => { localStorage.removeItem('token'); navigate('/login') })
+    api.notifications.list()
+      .then((res) => setNotifications(res.data ?? []))
+      .catch(() => {})
   }, [])
+
+  async function handleMarkRead(id: number | string) {
+    await api.notifications.markRead(id).catch(() => {})
+    setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, read: 1 } : n))
+  }
 
   // Cierra el cajón al navegar a otra página en móvil
   useEffect(() => { setDrawerOpen(false) }, [location.pathname])
@@ -76,6 +136,25 @@ export default function Layout({ children }: Props) {
         <header style={s.mobileBar}>
           <button style={s.hamburger} onClick={() => setDrawerOpen(true)} aria-label="Abrir menú">☰</button>
           <span style={s.mobileLogo}>📖 Intap Flipbook</span>
+          <div style={{ marginLeft: 'auto', position: 'relative' }}>
+            <button
+              style={{ ...s.hamburger, fontSize: 20, position: 'relative' }}
+              onClick={() => setNotifOpen((o) => !o)}
+              aria-label="Notificaciones"
+            >
+              🔔
+              {notifications.some((n) => !n.read) && (
+                <span style={s.notifDot} />
+              )}
+            </button>
+            {notifOpen && (
+              <NotifDropdown
+                notifications={notifications}
+                onMarkRead={handleMarkRead}
+                onClose={() => setNotifOpen(false)}
+              />
+            )}
+          </div>
         </header>
       )}
 
@@ -132,6 +211,25 @@ export default function Layout({ children }: Props) {
                   <span style={s.userName}>{user.name || user.email.split('@')[0]}</span>
                   <span style={s.userPlan}>{PLAN_LABELS[user.plan_id] ?? user.plan_id}</span>
                 </div>
+              </div>
+              <div style={{ position: 'relative', flexShrink: 0 }}>
+                <button
+                  style={{ ...s.logoutBtn, fontSize: 16 }}
+                  onClick={() => setNotifOpen((o) => !o)}
+                  title="Notificaciones"
+                >
+                  🔔
+                  {notifications.some((n) => !n.read) && (
+                    <span style={s.notifDot} />
+                  )}
+                </button>
+                {notifOpen && (
+                  <NotifDropdown
+                    notifications={notifications}
+                    onMarkRead={handleMarkRead}
+                    onClose={() => setNotifOpen(false)}
+                  />
+                )}
               </div>
               <button style={s.logoutBtn} onClick={logout} title="Cerrar sesión">⇠</button>
             </>
@@ -279,5 +377,15 @@ const s: Record<string, React.CSSProperties> = {
     inset: 0,
     background: 'rgba(0,0,0,.45)',
     zIndex: 99,
+  },
+  notifDot: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    background: '#ef4444',
+    border: '1.5px solid #1E1B4B',
   },
 }

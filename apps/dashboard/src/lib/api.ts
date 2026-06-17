@@ -109,6 +109,11 @@ export const api = {
     list: () => request<{ success: true; data: any[] }>('/api/plan-requests'),
   },
 
+  notifications: {
+    list: () => request<{ success: true; data: any[] }>('/api/notifications'),
+    markRead: (id: number | string) => request<{ success: true }>(`/api/notifications/${id}/read`, { method: 'PATCH' }),
+  },
+
   responses: {
     list: () => request<{ success: true; data: any[] }>('/api/responses'),
     unreadCount: () => request<{ success: true; data: { count: number } }>('/api/responses/unread-count'),

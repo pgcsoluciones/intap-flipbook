@@ -107,6 +107,28 @@ app.get('/view/:slug', async (c) => {
   })
 })
 
+// Tenant: listar sus notificaciones (con auth)
+app.get('/api/notifications', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, title, message, read, created_at
+     FROM notifications
+     WHERE user_id = ? OR user_id IS NULL
+     ORDER BY created_at DESC LIMIT 30`
+  ).bind(userId).all()
+  return c.json({ success: true, data: results })
+})
+
+// Tenant: marcar notificación como leída
+app.patch('/api/notifications/:id/read', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const id = c.req.param('id')
+  await c.env.DB.prepare(
+    `UPDATE notifications SET read = 1 WHERE id = ? AND (user_id = ? OR user_id IS NULL)`
+  ).bind(id, userId).run()
+  return c.json({ success: true })
+})
+
 // Tenant: solicitar cambio de plan
 app.post('/api/plan-requests', jwtMiddleware, async (c) => {
   const userId = (c as any).get('user').sub
