@@ -209,6 +209,12 @@ async function init() {
       @keyframes pb-in-b   { from{transform:translateY(100%)} to{transform:translateY(0)} }
       @keyframes pb-in-t   { from{transform:translateY(-100%)} to{transform:translateY(0)} }
       @keyframes pb-in-c   { from{opacity:0;transform:scale(.92)} to{opacity:1;transform:scale(1)} }
+      @keyframes pb-bounce { 0%{opacity:0;transform:translateY(-40px)} 60%{opacity:1;transform:translateY(12px)} 80%{transform:translateY(-6px)} 100%{transform:translateY(0)} }
+      @keyframes pb-heart  { 0%{transform:scale(.9)} 25%{transform:scale(1.06)} 50%{transform:scale(.96)} 75%{transform:scale(1.03)} 100%{transform:scale(1)} }
+      @keyframes pb-zoom   { from{opacity:0;transform:scale(.4)} to{opacity:1;transform:scale(1)} }
+      .pb-anim-bounce    { animation: pb-bounce 0.7s ease-out }
+      .pb-anim-heartbeat { animation: pb-heart 0.9s ease-in-out }
+      .pb-anim-zoom      { animation: pb-zoom 0.4s ease-out }
       .hs-pulse { animation: hs-pulse  1.4s ease-in-out infinite }
       .hs-blink { animation: hs-blink  1s step-start infinite }
       .hs-ring  { animation: hs-ripple 1.4s ease-out infinite }
@@ -251,18 +257,20 @@ async function init() {
     const title = document.createElement('div')
     title.textContent = cfg.title || 'Contáctanos'
     title.style.cssText = 'font-weight:700;font-size:13px;color:#111827;'
-    const name = makeInput('Nombre *', 'text'); name.required = true
-    const email = makeInput('Email *', 'email'); email.required = true
-    const phone = makeInput('Teléfono', 'tel'); phone.required = !!cfg.requirePhone
+    const name = makeInput('Nombre' + (cfg.nameRequired !== false ? ' *' : ''), 'text'); name.required = cfg.nameRequired !== false
+    const email = makeInput('Email' + (cfg.emailRequired !== false ? ' *' : ''), 'email'); email.required = cfg.emailRequired !== false
+    const phone = makeInput('Teléfono' + (cfg.phoneRequired ? ' *' : ''), 'tel'); phone.required = !!cfg.phoneRequired
     const msg = document.createElement('textarea')
-    msg.placeholder = (cfg.commentLabel || 'Mensaje') + (cfg.requireComment !== false ? ' *' : '')
-    msg.required = cfg.requireComment !== false
+    const commentReq = cfg.commentRequired ?? false
+    msg.placeholder = 'Comentario' + (commentReq ? ' *' : '')
+    msg.required = !!commentReq
     msg.style.cssText = INP_CSS + 'resize:none;flex:1;min-height:34px;'
     const btn = document.createElement('button'); btn.type = 'submit'; btn.textContent = cfg.button || 'Enviar'
     btn.style.cssText = 'background:#4F46E5;color:#fff;border:none;border-radius:6px;padding:8px;font-weight:600;cursor:pointer;font-size:12px;'
     f.append(title, name, email)
     if (cfg.showPhone !== false) f.appendChild(phone)
-    f.append(msg, btn)
+    if (cfg.showComment !== false) f.appendChild(msg)
+    f.append(btn)
     f.addEventListener('submit', (e) => {
       e.preventDefault()
       const body = `Nombre: ${name.value}\nEmail: ${email.value}\nTeléfono: ${phone.value}\n\n${msg.value}`
@@ -367,6 +375,18 @@ async function init() {
       case 'contact': return buildContactForm(cfg)
       case 'table': return buildTable(cfg.csv || '')
       case 'like': return buildLike(cfg, key)
+      case 'download': {
+        if (!cfg.url) return placeholderBox('Descarga (sin archivo)')
+        const box = centerBox()
+        box.style.cssText += 'background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px;box-sizing:border-box;'
+        if (cfg.title) { const t = document.createElement('div'); t.textContent = cfg.title; t.style.cssText = 'font-size:13px;font-weight:700;color:#111827;font-family:Inter,sans-serif;text-align:center;'; box.appendChild(t) }
+        const a = document.createElement('a')
+        a.href = cfg.url; a.download = cfg.filename || ''; a.target = '_blank'
+        a.style.cssText = `display:inline-flex;align-items:center;gap:6px;background:${cfg.buttonColor || '#4F46E5'};color:#fff;border-radius:8px;padding:9px 18px;font-weight:700;font-size:13px;text-decoration:none;font-family:Inter,sans-serif;`
+        a.innerHTML = `<span style="font-size:16px">⬇</span> ${cfg.button || 'Descargar'}`
+        box.appendChild(a)
+        return box
+      }
       case 'embed': {
         if (!cfg.html) return placeholderBox('Incrustar (sin código)')
         const wrap = document.createElement('div')
@@ -388,14 +408,14 @@ async function init() {
           const qWrap = document.createElement('div')
           qWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;'
           const qLabel = document.createElement('div')
-          qLabel.textContent = `${qi + 1}. ${q.question}`
+          qLabel.textContent = `${qi + 1}. ${q.text ?? q.question ?? ''}`
           qLabel.style.cssText = 'font-size:12px;font-weight:600;color:#374151;'
           qWrap.appendChild(qLabel)
           ;(q.options || []).forEach((opt, oi) => {
             const row = document.createElement('label')
             row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:#374151;cursor:pointer;'
             const inp = document.createElement('input')
-            inp.type = q.multiple ? 'checkbox' : 'radio'
+            inp.type = (q.type === 'multi' || q.multiple) ? 'checkbox' : 'radio'
             inp.name = `q${qi}`; inp.value = String(oi)
             inp.addEventListener('change', () => { answers[qi] = oi })
             row.appendChild(inp)
@@ -434,45 +454,65 @@ async function init() {
   }
   function showBanner(cfg) {
     if (document.getElementById('flipbook-banner')) return
-    const pos = cfg.position || 'bottom'
-    const animMap = { bottom: 'pb-in-b', top: 'pb-in-t', center: 'pb-in-c' }
+    const pos = cfg.position || 'center'
     const posMap = {
       bottom: 'position:fixed;bottom:0;left:0;right:0;',
       top:    'position:fixed;top:0;left:0;right:0;',
       center: 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.4);',
     }
+    // Animación de entrada: para center se aplica la animación elegida; para
+    // cintillos superior/inferior se usa el deslizamiento por defecto.
+    const animClass =
+      pos === 'center'
+        ? { bounce: 'pb-anim-bounce', heartbeat: 'pb-anim-heartbeat', zoom: 'pb-anim-zoom', slide: '', none: '' }[cfg.animation || 'slide'] || ''
+        : ''
+    const slideAnim = pos === 'top' ? 'pb-in-t' : pos === 'bottom' ? 'pb-in-b' : (cfg.animation === 'none' ? '' : 'pb-in-c')
+
+    // Ancho ~40 % del flipbook cuando está centrado (compacto, no de extremo a extremo)
+    const flipW = portrait ? pageWidth : pageWidth * 2
+    const centerW = Math.max(260, Math.round(flipW * 0.4))
+
     const outer = document.createElement('div')
     outer.id = 'flipbook-banner'
     outer.style.cssText = `z-index:2000;${posMap[pos] || posMap.bottom}`
     const inner = document.createElement('div')
-    inner.style.cssText = `background:${cfg.bgColor || '#1a1827'};color:${cfg.textColor || '#fff'};padding:16px 20px;display:flex;align-items:center;gap:16px;font-family:Inter,sans-serif;animation:${animMap[pos] || animMap.bottom} 0.35s ease-out;${pos === 'center' ? 'border-radius:12px;max-width:480px;width:90%;flex-direction:column;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);' : 'justify-content:space-between;'}`
+    const baseAnim = animClass ? `${animClass};` : (slideAnim ? `animation:${slideAnim} 0.35s ease-out;` : '')
+    inner.style.cssText = `background:${cfg.bgColor || '#1a1827'};color:${cfg.textColor || '#fff'};padding:18px 22px;display:flex;gap:14px;font-family:Inter,sans-serif;${animClass ? '' : baseAnim}${pos === 'center' ? `border-radius:14px;width:${centerW}px;max-width:92vw;flex-direction:column;align-items:center;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);` : 'align-items:center;justify-content:space-between;'}`
+    if (animClass) inner.className = animClass
     if (cfg.image) {
       const img = document.createElement('img')
-      img.src = cfg.image; img.style.cssText = 'width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;'
+      img.src = cfg.image
+      img.style.cssText = pos === 'center'
+        ? 'width:100%;max-height:160px;object-fit:cover;border-radius:10px;'
+        : 'width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;'
       inner.appendChild(img)
     }
     const textWrap = document.createElement('div')
     textWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;flex:1;'
-    if (cfg.title) { const t = document.createElement('div'); t.textContent = cfg.title; t.style.cssText = 'font-weight:700;font-size:15px;'; textWrap.appendChild(t) }
-    if (cfg.text) { const t = document.createElement('div'); t.textContent = cfg.text; t.style.cssText = 'font-size:13px;opacity:.85;'; textWrap.appendChild(t) }
+    if (cfg.title) { const t = document.createElement('div'); t.textContent = cfg.title; t.style.cssText = 'font-weight:700;font-size:16px;'; textWrap.appendChild(t) }
+    if (cfg.text) { const t = document.createElement('div'); t.textContent = cfg.text; t.style.cssText = 'font-size:13px;opacity:.85;line-height:1.5;'; textWrap.appendChild(t) }
     inner.appendChild(textWrap)
     if (cfg.buttonText) {
       const btn = document.createElement('button')
       btn.textContent = cfg.buttonText
-      btn.style.cssText = `background:${cfg.buttonColor || '#4F46E5'};color:#fff;border:none;border-radius:8px;padding:9px 18px;font-weight:700;cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0;`
+      btn.style.cssText = `background:${cfg.buttonColor || '#4F46E5'};color:#fff;border:none;border-radius:8px;padding:10px 22px;font-weight:700;cursor:pointer;font-size:14px;white-space:nowrap;flex-shrink:0;`
       if (cfg.buttonUrl) btn.addEventListener('click', () => window.open(cfg.buttonUrl, '_blank'))
       inner.appendChild(btn)
     }
     const close = document.createElement('button')
     close.textContent = '✕'
-    close.style.cssText = 'background:none;border:none;color:inherit;opacity:.6;cursor:pointer;font-size:16px;padding:0 4px;flex-shrink:0;'
+    close.style.cssText = pos === 'center'
+      ? 'position:absolute;top:8px;right:12px;background:none;border:none;color:inherit;opacity:.7;cursor:pointer;font-size:18px;'
+      : 'background:none;border:none;color:inherit;opacity:.6;cursor:pointer;font-size:16px;padding:0 4px;flex-shrink:0;'
     close.addEventListener('click', () => outer.remove())
     inner.appendChild(close)
+    if (pos === 'center') inner.style.position = 'relative'
     outer.appendChild(inner)
     document.body.appendChild(outer)
-    // Auto-dismiss
-    if (cfg.autoDismiss && parseInt(cfg.autoDismiss, 10) > 0) {
-      setTimeout(() => outer.remove(), parseInt(cfg.autoDismiss, 10) * 1000)
+    // Auto-cierre tras X segundos si no se cierra manualmente
+    const autoClose = parseInt(cfg.autoClose ?? cfg.autoDismiss ?? 0, 10)
+    if (autoClose > 0) {
+      setTimeout(() => outer.remove(), autoClose * 1000)
     }
   }
 
@@ -492,6 +532,16 @@ async function init() {
     wrap.appendChild(cv)
     div.appendChild(wrap)
 
+    // Detiene los eventos que StPageFlip usa para iniciar el volteo de página
+    // (mousedown/touchstart/pointerdown). Así un clic dentro de un widget o
+    // elemento interactivo NO pasa la página: solo los clics FUERA de estos
+    // elementos (sobre la imagen) activan el flip.
+    function blockFlipDrag(el) {
+      ;['mousedown', 'touchstart', 'pointerdown'].forEach((ev) =>
+        el.addEventListener(ev, (e) => e.stopPropagation(), { passive: true }),
+      )
+    }
+
     const fcanvas = new fabric.StaticCanvas(cv, { width: DESIGN_W, height: DESIGN_H })
     // Sin fondo: la imagen de la página ya está debajo
     const objectsOnly = Object.assign({}, parsed, { background: '', backgroundImage: null })
@@ -504,12 +554,15 @@ async function init() {
 
         // Hotspot animado: reemplazar con div CSS
         if (d.kind === 'hotspot') {
-          const animClass = d.animStyle === 'blink' ? 'hs-blink' : d.animStyle === 'ripple' ? 'hs-ring' : 'hs-pulse'
-          const color = d.color || '#ef4444'
+          const hsStyle = d.hotspot?.style ?? d.animStyle
+          const hsColor = d.hotspot?.color ?? d.color
+          const animClass = hsStyle === 'blink' ? 'hs-blink' : hsStyle === 'ripple' ? 'hs-ring' : 'hs-pulse'
+          const color = hsColor || '#ef4444'
           const hs = document.createElement('div')
           hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;pointer-events:auto;`
           hs.innerHTML = `<div class="${animClass}" style="width:36px;height:36px;border-radius:50%;background:${color}44;border:2.5px solid ${color};display:flex;align-items:center;justify-content:center;"><div style="width:14px;height:14px;border-radius:50%;background:${color};"></div></div>`
           if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action) })
+          blockFlipDrag(hs)
           wrap.appendChild(hs)
           fcanvas.remove(obj)
           return
@@ -522,6 +575,7 @@ async function init() {
             const holder = document.createElement('div')
             holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;pointer-events:auto;`
             holder.appendChild(node)
+            blockFlipDrag(holder)
             wrap.appendChild(holder)
           }
           fcanvas.remove(obj)
@@ -536,6 +590,7 @@ async function init() {
         hot.title = ''
         hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;pointer-events:auto;`
         hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action) })
+        blockFlipDrag(hot)
         wrap.appendChild(hot)
       })
       fcanvas.renderAll()

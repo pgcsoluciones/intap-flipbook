@@ -3,6 +3,13 @@ import { useParams, Link } from 'react-router-dom'
 // @ts-ignore
 import { fabric } from 'fabric'
 import { api } from '../lib/api'
+import FileField from '../components/FileField'
+
+// Tipos MIME para los distintos campos de subida del editor
+const ACCEPT_AUDIO = 'audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/mp4,audio/aac'
+const ACCEPT_VIDEO = 'video/mp4,video/webm,video/ogg'
+const ACCEPT_IMAGE = 'image/jpeg,image/png,image/webp,image/svg+xml,image/gif'
+const ACCEPT_FILE  = 'application/pdf,application/zip,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png,image/webp'
 
 // ─── Iconos SVG monocromáticos (estilo línea, 20px, stroke uniforme) ──────────
 // "stroke" = trazo. Todos comparten grosor 1.6 y currentColor para mantener
@@ -186,7 +193,7 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
 ]
 
 // Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
-type WidgetType = 'map' | 'whatsapp' | 'contact' | 'video' | 'audio' | 'qr' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner'
+type WidgetType = 'map' | 'whatsapp' | 'contact' | 'video' | 'audio' | 'qr' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download'
 const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean }[] = [
   { type: 'map',          label: 'Mapa',                  icon: 'map',      premium: false },
   { type: 'whatsapp',     label: 'WhatsApp',              icon: 'whatsapp', premium: false },
@@ -196,6 +203,7 @@ const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean
   { type: 'qr',           label: 'Código QR',             icon: 'qr',       premium: false },
   { type: 'table',        label: 'Tabla',                 icon: 'table',    premium: false },
   { type: 'like',         label: 'Me gusta',              icon: 'like',     premium: false },
+  { type: 'download',     label: 'Descargar archivo',     icon: 'uploads',  premium: false },
   { type: 'popup_banner', label: 'Pop-up emergente',      icon: 'badge',    premium: false },
   { type: 'embed',        label: 'Incrustar / HTML',      icon: 'embed',    premium: false },
   { type: 'quiz',         label: 'Cuestionario',          icon: 'quiz',     premium: false },
@@ -211,13 +219,16 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   qr:       { data: '', caption: 'Escanéame' },
   table:    { csv: 'Producto, Precio\nCafé, $2.50\nTé, $2.00' },
   like:     { label: 'Me gusta' },
+  download: { url: '', filename: '', title: 'Descarga aquí', button: 'Descargar', buttonColor: '#4F46E5' },
   embed:    { html: '' },
   quiz:     { title: 'Cuestionario', questions: [{ text: '¿Tu pregunta?', options: ['Opción A', 'Opción B'], type: 'single' }] },
   popup_banner: {
     template: 'offer',
-    position: 'bottom',
+    position: 'center',
     trigger: 'delay',
     delay: 5,
+    animation: 'slide',
+    autoClose: 0,
     title: '¡Oferta relámpago!',
     text: 'Aprovechá este descuento exclusivo por tiempo limitado.',
     buttonText: 'Ver oferta',
@@ -1544,6 +1555,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
     map: 'Mapa', whatsapp: 'WhatsApp', contact: 'Formulario', video: 'Video',
     audio: 'Audio', qr: 'Código QR', table: 'Tabla', like: 'Me gusta',
     embed: 'Incrustar / HTML', quiz: 'Cuestionario', popup_banner: 'Pop-up emergente',
+    download: 'Descargar archivo',
   }
 
   return (
@@ -1604,11 +1616,14 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
 
       {type === 'video' && (
         <>
-          <Field label="URL del video (YouTube, Vimeo o archivo .mp4)">
+          <Field label="URL del video (YouTube o Vimeo)">
             <input style={s.propInput} placeholder="https://youtube.com/watch?v=..." defaultValue={cfg.url ?? ''} onChange={(e) => setCfg({ url: e.target.value })} />
           </Field>
-          <Field label="Portada / thumbnail (URL — opcional, para MP4)">
-            <input style={s.propInput} placeholder="https://..." defaultValue={cfg.poster ?? ''} onChange={(e) => setCfg({ poster: e.target.value })} />
+          <Field label="…o sube un archivo de video (MP4/WebM)">
+            <FileField value={/^https?:\/\/(www\.)?(youtube|youtu\.be|vimeo)/.test(cfg.url ?? '') ? '' : (cfg.url ?? '')} onChange={(url) => setCfg({ url })} accept={ACCEPT_VIDEO} preview={false} hint="MP4, WebM · máx 50 MB" />
+          </Field>
+          <Field label="Portada / thumbnail (opcional, para MP4)">
+            <FileField value={cfg.poster ?? ''} onChange={(url) => setCfg({ poster: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP" />
           </Field>
           <Field label="Opciones de reproducción">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1623,8 +1638,8 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
 
       {type === 'audio' && (
         <>
-          <Field label="URL del audio (.mp3, .ogg, etc.)">
-            <input style={s.propInput} placeholder="https://..." defaultValue={cfg.url ?? ''} onChange={(e) => setCfg({ url: e.target.value })} />
+          <Field label="Archivo de audio">
+            <FileField value={cfg.url ?? ''} onChange={(url) => setCfg({ url })} accept={ACCEPT_AUDIO} preview={false} hint="MP3, OGG, WAV, M4A · máx 50 MB" />
           </Field>
           <Field label="Color del reproductor">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1662,6 +1677,26 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
         <Field label="Texto del botón">
           <input style={s.propInput} defaultValue={cfg.label ?? 'Me gusta'} onChange={(e) => setCfg({ label: e.target.value })} />
         </Field>
+      )}
+
+      {type === 'download' && (
+        <>
+          <Field label="Archivo a descargar">
+            <FileField value={cfg.url ?? ''} onChange={(url) => setCfg({ url })} accept={ACCEPT_FILE} preview={false} hint="PDF, ZIP, Office, imágenes · máx 50 MB" />
+          </Field>
+          <Field label="Título">
+            <input style={s.propInput} defaultValue={cfg.title ?? 'Descarga aquí'} onChange={(e) => setCfg({ title: e.target.value })} />
+          </Field>
+          <Field label="Texto del botón">
+            <input style={s.propInput} defaultValue={cfg.button ?? 'Descargar'} onChange={(e) => setCfg({ button: e.target.value })} />
+          </Field>
+          <Field label="Nombre del archivo descargado (opcional)">
+            <input style={s.propInput} placeholder="catalogo.pdf" defaultValue={cfg.filename ?? ''} onChange={(e) => setCfg({ filename: e.target.value })} />
+          </Field>
+          <Field label="Color del botón">
+            <input type="color" defaultValue={cfg.buttonColor ?? '#4F46E5'} onChange={(e) => setCfg({ buttonColor: e.target.value })} style={s.colorInput} />
+          </Field>
+        </>
       )}
 
       {type === 'embed' && (
@@ -1733,6 +1768,18 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
               <input style={s.propInput} type="number" min={0} max={120} defaultValue={cfg.delay ?? 5} onChange={(e) => setCfg({ delay: +e.target.value })} />
             </Field>
           )}
+          <Field label="Animación de entrada">
+            <select style={s.propInput} defaultValue={cfg.animation ?? 'slide'} onChange={(e) => setCfg({ animation: e.target.value })}>
+              <option value="slide">Deslizar (suave)</option>
+              <option value="bounce">Saltos</option>
+              <option value="heartbeat">Latidos</option>
+              <option value="zoom">Zoom</option>
+              <option value="none">Sin animación</option>
+            </select>
+          </Field>
+          <Field label="Cerrar solo tras X segundos (0 = no cerrar)">
+            <input style={s.propInput} type="number" min={0} max={120} defaultValue={cfg.autoClose ?? 0} onChange={(e) => setCfg({ autoClose: +e.target.value })} />
+          </Field>
           <Field label="Título del pop-up">
             <input style={s.propInput} defaultValue={cfg.title ?? ''} onChange={(e) => setCfg({ title: e.target.value })} />
           </Field>
@@ -1745,8 +1792,8 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
           <Field label="URL del botón">
             <input style={s.propInput} placeholder="https://..." defaultValue={cfg.buttonUrl ?? ''} onChange={(e) => setCfg({ buttonUrl: e.target.value })} />
           </Field>
-          <Field label="Imagen (URL, opcional)">
-            <input style={s.propInput} placeholder="https://..." defaultValue={cfg.image ?? ''} onChange={(e) => setCfg({ image: e.target.value })} />
+          <Field label="Imagen (opcional)">
+            <FileField value={cfg.image ?? ''} onChange={(url) => setCfg({ image: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP" />
           </Field>
           <Field label="Colores">
             <div style={{ display: 'flex', gap: 12 }}>
@@ -1832,8 +1879,8 @@ function ActionEditor({ data, pages, setData }: { data: any; pages: any[]; setDa
       )}
 
       {action.type === 'popup_image' && (
-        <PropGroup label="URL de imagen">
-          <input style={s.propInput} placeholder="https://..." defaultValue={action.image ?? ''} onChange={(e) => setAction({ image: e.target.value })} />
+        <PropGroup label="Imagen emergente">
+          <FileField value={action.image ?? ''} onChange={(url) => setAction({ image: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP · máx 10 MB" />
         </PropGroup>
       )}
 
@@ -1856,8 +1903,8 @@ function ActionEditor({ data, pages, setData }: { data: any; pages: any[]; setDa
 
       {action.type === 'download' && (
         <>
-          <PropGroup label="URL del archivo a descargar">
-            <input style={s.propInput} placeholder="https://..." defaultValue={action.url ?? ''} onChange={(e) => setAction({ url: e.target.value })} />
+          <PropGroup label="Archivo a descargar">
+            <FileField value={action.url ?? ''} onChange={(url) => setAction({ url })} accept={ACCEPT_FILE} preview={false} hint="PDF, ZIP, Office, imágenes · máx 50 MB" />
           </PropGroup>
           <PropGroup label="Nombre del archivo (opcional)">
             <input style={s.propInput} placeholder="catalogo.pdf" defaultValue={action.filename ?? ''} onChange={(e) => setAction({ filename: e.target.value })} />
