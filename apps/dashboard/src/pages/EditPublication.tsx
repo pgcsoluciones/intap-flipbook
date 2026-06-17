@@ -4,6 +4,7 @@ import { useParams, Link } from 'react-router-dom'
 import { fabric } from 'fabric'
 import { api } from '../lib/api'
 import FileField from '../components/FileField'
+import WidgetPreview from '../components/WidgetPreview'
 
 // Tipos MIME para los distintos campos de subida del editor
 const ACCEPT_AUDIO = 'audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/mp4,audio/aac'
@@ -1634,6 +1635,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
   const type: WidgetType = widget.type
   const setCfg = (patch: any) => setData({ widget: { ...widget, config: { ...cfg, ...patch } } })
   const [quizQuestions, setQuizQuestions] = React.useState<any[]>(cfg.questions ?? [{ text: '¿Tu pregunta?', options: ['Opción A', 'Opción B'], type: 'single' }])
+  const [showPreview, setShowPreview] = React.useState(false)
 
   const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <PropGroup label={label}>{children}</PropGroup>
@@ -1654,6 +1656,15 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
   return (
     <>
       <div style={s.actionDivider}>Configuración · {labels[type]}</div>
+
+      <button
+        type="button"
+        onClick={() => setShowPreview(true)}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', marginBottom: 12, padding: '9px', border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4F46E5', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+      >
+        👁 Vista previa
+      </button>
+      {showPreview && <WidgetPreview type={type} config={cfg} onClose={() => setShowPreview(false)} />}
 
       {type === 'map' && <MapWidgetProps cfg={cfg} setCfg={setCfg} />}
 
