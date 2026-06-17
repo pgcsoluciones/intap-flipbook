@@ -1025,10 +1025,18 @@ function ContextPanel(p: any) {
           ) : (
             <div style={cp.tplGrid}>
               {p.templates.map((t: any) => (
-                <div key={t.id} style={cp.tplCard} title={t.name}>
+                <div
+                  key={t.id}
+                  style={{ ...cp.tplCard, ...(t.locked ? cp.tplCardLocked : {}) }}
+                  title={t.locked ? `${t.name} — Requiere plan superior` : t.name}
+                  onClick={t.locked ? () => alert('Esta plantilla requiere un plan superior. Actualiza tu plan para acceder.') : undefined}
+                >
                   {t.cover_url
-                    ? <img src={t.cover_url} alt={t.name} style={cp.tplImg} />
+                    ? <img src={t.cover_url} alt={t.name} style={{ ...cp.tplImg, ...(t.locked ? { filter: 'grayscale(60%) opacity(0.7)' } : {}) }} />
                     : <div style={cp.tplPlaceholder}><Icon name="templates" size={26} /></div>}
+                  {t.locked && (
+                    <div style={cp.tplLockOverlay}>🔒</div>
+                  )}
                   <div style={cp.tplName}>{t.name}</div>
                 </div>
               ))}
@@ -1929,11 +1937,13 @@ const cp: Record<string, React.CSSProperties> = {
   search:     { width: '100%', boxSizing: 'border-box' as const, border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontSize: 13, marginBottom: 12 },
   empty:      { fontSize: 12, color: '#9ca3af', textAlign: 'center' as const, padding: '20px 0' },
   hint:       { fontSize: 11, color: '#9ca3af', marginTop: 10, marginBottom: 4, lineHeight: 1.5 },
-  tplGrid:    { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 },
-  tplCard:    { border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', cursor: 'pointer' },
-  tplImg:     { width: '100%', aspectRatio: '0.707', objectFit: 'cover' as const, display: 'block' },
+  tplGrid:        { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 },
+  tplCard:        { border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', cursor: 'pointer', position: 'relative' as const },
+  tplCardLocked:  { cursor: 'not-allowed', opacity: 0.85 },
+  tplImg:         { width: '100%', aspectRatio: '0.707', objectFit: 'cover' as const, display: 'block' },
   tplPlaceholder: { width: '100%', aspectRatio: '0.707', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', color: '#94a3b8' },
-  tplName:    { fontSize: 11, padding: '6px 8px', color: '#374151', whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' },
+  tplLockOverlay: { position: 'absolute' as const, top: 4, right: 6, fontSize: 16, lineHeight: 1 },
+  tplName:        { fontSize: 11, padding: '6px 8px', color: '#374151', whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' },
   stack:      { display: 'flex', flexDirection: 'column', gap: 8 },
   listBtn:    { display: 'flex', alignItems: 'center', gap: 10, width: '100%', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', background: '#fff', cursor: 'pointer', fontSize: 13, color: '#374151', textAlign: 'left' as const },
   shapeGrid:  { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 },
