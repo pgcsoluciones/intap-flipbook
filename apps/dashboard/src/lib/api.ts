@@ -14,8 +14,22 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...(init.headers ?? {}),
     },
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+  const raw = await res.text()
+  let data: any = null
+  try {
+    data = raw ? JSON.parse(raw) : null
+  } catch {
+    // La respuesta no es JSON (p. ej. "404 Not Found" de una ruta no desplegada)
+    if (!res.ok) {
+      throw new Error(
+        res.status === 404
+          ? 'Esta función aún no está disponible en el servidor (falta desplegar la API).'
+          : `Error ${res.status}: ${raw.slice(0, 120)}`,
+      )
+    }
+    throw new Error('Respuesta inválida del servidor')
+  }
+  if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
   return data
 }
 
