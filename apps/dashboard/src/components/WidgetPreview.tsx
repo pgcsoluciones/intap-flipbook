@@ -153,28 +153,26 @@ function Body({ type, config }: { type: string; config: any }) {
       )
     }
     case 'popup_banner': {
+      // Previsualización del cintillo lateral: imagen 25% / texto+CTA 75%
       const hasImg = !!cfg.image
-      const imgRight = cfg.imagePosition === 'right'
       const bg = cfg.bgColor || '#1a1827'
       const tc = cfg.textColor || '#fff'
+      const btnBg = cfg.buttonColor || '#4F46E5'
       const zoom = cfg.imageZoom || 1
       const px = cfg.imagePosX ?? 50
       const py = cfg.imagePosY ?? 50
-      const img = hasImg ? (
-        <img src={cfg.image} style={{ width: '45%', flexShrink: 0, alignSelf: 'stretch', display: 'block', objectFit: 'cover', objectPosition: `${px}% ${py}%`, transform: `scale(${zoom})`, transformOrigin: 'center' }} />
-      ) : null
-      const text = (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1, justifyContent: 'center', padding: '26px 24px', textAlign: hasImg ? 'left' : 'center', alignItems: hasImg ? 'flex-start' : 'center' }}>
-          {cfg.title && <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.2 }}>{cfg.title}</div>}
-          {cfg.text && <div style={{ fontSize: 13, opacity: 0.88, lineHeight: 1.5 }}>{cfg.text}</div>}
-          {cfg.buttonText && <button style={{ background: cfg.buttonColor || '#4F46E5', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 22px', fontWeight: 700, cursor: 'pointer', fontSize: 14 }}>{cfg.buttonText}</button>}
-        </div>
-      )
       return (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
-          <div style={{ position: 'relative', background: bg, color: tc, fontFamily: 'Inter, sans-serif', borderRadius: 14, overflow: 'hidden', width: 380, maxWidth: '92%', boxShadow: '0 20px 60px rgba(0,0,0,.5)', display: 'flex', flexDirection: hasImg ? 'row' : 'column', alignItems: hasImg ? 'stretch' : 'center', minHeight: hasImg ? 190 : undefined }}>
-            {hasImg && imgRight ? <>{text}{img}</> : <>{img}{text}</>}
-            <span style={{ position: 'absolute', top: 10, right: 12, width: 26, height: 26, borderRadius: '50%', background: 'rgba(0,0,0,.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>✕</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', padding: 12 }}>
+          <div style={{ background: bg, color: tc, fontFamily: 'Inter, sans-serif', borderRadius: 10, overflow: 'hidden', width: '100%', maxWidth: 360, boxShadow: '0 8px 32px rgba(0,0,0,.4)', display: 'flex', flexDirection: 'row', alignItems: 'stretch', minHeight: 130 }}>
+            {hasImg && (
+              <img src={cfg.image} style={{ width: '25%', flexShrink: 0, objectFit: 'cover', objectPosition: `${px}% ${py}%`, transform: `scale(${zoom})`, transformOrigin: 'center', alignSelf: 'stretch', display: 'block' }} />
+            )}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 8, padding: '14px 16px' }}>
+              {cfg.title && <div style={{ fontWeight: 800, fontSize: 15, lineHeight: 1.25 }}>{cfg.title}</div>}
+              {cfg.text && <div style={{ fontSize: 12, opacity: 0.88, lineHeight: 1.5 }}>{cfg.text}</div>}
+              {cfg.buttonText && <button style={{ alignSelf: 'flex-start', background: btnBg, color: '#fff', border: 'none', borderRadius: 6, padding: '7px 14px', fontWeight: 700, cursor: 'pointer', fontSize: 12 }}>{cfg.buttonText}</button>}
+            </div>
+            <div style={{ width: 28, background: btnBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff', cursor: 'pointer', writingMode: 'vertical-rl', flexShrink: 0 }}>✕</div>
           </div>
         </div>
       )

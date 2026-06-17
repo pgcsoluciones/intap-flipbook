@@ -479,89 +479,86 @@ async function init() {
   }
   function showBanner(cfg) {
     if (document.getElementById('flipbook-banner')) return
-    // El pop-up NUNCA cae encima de la lectura: se ancla FUERA del flipbook,
-    // debajo (por defecto) o arriba de su borde, centrado horizontalmente.
-    const place = cfg.position === 'top' ? 'top' : 'bottom'
-    const slideAnim = place === 'top' ? 'pb-in-t' : 'pb-in-b'
-    const animClass = { bounce: 'pb-anim-bounce', heartbeat: 'pb-anim-heartbeat', zoom: 'pb-anim-zoom', slide: '', none: '' }[cfg.animation || 'slide'] || ''
 
+    const side = cfg.position === 'right' ? 'right' : 'left'
+    const bg   = cfg.bgColor    || '#1a1827'
+    const tc   = cfg.textColor  || '#fff'
+    const btnBg = cfg.buttonColor || '#4F46E5'
     const hasImg = !!cfg.image
-    const horizontal = hasImg
-    const imgRight = cfg.imagePosition === 'right'
-    const bg = cfg.bgColor || '#1a1827'
-    const tc = cfg.textColor || '#fff'
 
-    // Geometría del flipbook para anclar el banner fuera de su recuadro
-    const flipEl = document.getElementById('flipbook')
-    const r = flipEl
-      ? flipEl.getBoundingClientRect()
-      : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight, width: window.innerWidth }
-    const flipW = r.width || (portrait ? pageWidth : pageWidth * 2)
-    const cardW = Math.min(Math.max(hasImg ? 360 : 280, Math.round(flipW * 0.55)), 460)
-    const cx = Math.round(r.left + flipW / 2)
-    const gap = 10
+    // Animación de entrada: la tarjeta llega deslizando desde el lateral
+    const animClass = { bounce: 'pb-anim-bounce', heartbeat: 'pb-anim-heartbeat', zoom: 'pb-anim-zoom' }[cfg.animation] || ''
 
     const outer = document.createElement('div')
     outer.id = 'flipbook-banner'
-    // Anclado al borde del flipbook: debajo (top = borde inferior) o arriba
-    // (translateY -100% para que el borde inferior del banner toque el superior).
-    outer.style.cssText = place === 'top'
-      ? `position:fixed;z-index:2000;left:${cx}px;top:${Math.round(r.top - gap)}px;transform:translate(-50%,-100%);`
-      : `position:fixed;z-index:2000;left:${cx}px;top:${Math.round(r.bottom + gap)}px;transform:translateX(-50%);`
+    outer.className = `side-${side}${animClass ? ' ' + animClass : ''}`
 
-    const inner = document.createElement('div')
-    if (animClass) inner.className = animClass
-    const animCss = animClass ? '' : (slideAnim ? `animation:${slideAnim} 0.35s ease-out;` : '')
-    inner.style.cssText = `position:relative;background:${bg};color:${tc};font-family:Inter,sans-serif;border-radius:14px;overflow:hidden;width:${cardW}px;max-width:92vw;box-shadow:0 16px 44px rgba(0,0,0,.4);display:flex;${horizontal ? 'flex-direction:row;align-items:stretch;min-height:150px;' : 'flex-direction:column;'}${animCss}`
+    // ── Tarjeta (imagen 25 % + texto 75 %) ──────────────────────────────────
+    const card = document.createElement('div')
+    card.className = 'fb-card'
+    card.style.background = bg
+    card.style.color = tc
 
-    function makeBannerBtn() {
-      const btn = document.createElement('button')
-      btn.textContent = cfg.buttonText
-      btn.style.cssText = `background:${cfg.buttonColor || '#4F46E5'};color:#fff;border:none;border-radius:8px;padding:10px 22px;font-weight:700;cursor:pointer;font-size:14px;white-space:nowrap;align-self:flex-start;`
-      if (cfg.buttonUrl) btn.addEventListener('click', () => window.open(cfg.buttonUrl, '_blank'))
-      return btn
-    }
-
-    // Imagen — encuadre ajustable (zoom + reposición) definido en el editor.
-    const imZoom = cfg.imageZoom || 1
-    const imPX = cfg.imagePosX ?? 50
-    const imPY = cfg.imagePosY ?? 50
-    const frame = `object-fit:cover;object-position:${imPX}% ${imPY}%;transform:scale(${imZoom});transform-origin:center;`
-    let imgEl = null
     if (hasImg) {
-      imgEl = document.createElement('img')
-      imgEl.src = cfg.image
-      imgEl.style.cssText = `width:45%;flex-shrink:0;align-self:stretch;display:block;${frame}`
+      const imZoom = cfg.imageZoom || 1
+      const imPX   = cfg.imagePosX ?? 50
+      const imPY   = cfg.imagePosY ?? 50
+      const img = document.createElement('img')
+      img.className = 'fb-img'
+      img.src = cfg.image
+      img.style.objectPosition = `${imPX}% ${imPY}%`
+      img.style.transform      = `scale(${imZoom})`
+      img.style.transformOrigin = 'center'
+      card.appendChild(img)
     }
 
-    // Columna de texto
-    const textWrap = document.createElement('div')
-    textWrap.style.cssText = `display:flex;flex-direction:column;gap:10px;flex:1;justify-content:center;padding:22px 24px;${horizontal ? 'text-align:left;align-items:flex-start;' : 'text-align:center;align-items:center;'}`
-    if (cfg.title) { const t = document.createElement('div'); t.textContent = cfg.title; t.style.cssText = 'font-weight:800;font-size:19px;line-height:1.2;'; textWrap.appendChild(t) }
-    if (cfg.text) { const t = document.createElement('div'); t.textContent = cfg.text; t.style.cssText = 'font-size:13px;opacity:.88;line-height:1.5;'; textWrap.appendChild(t) }
-    if (cfg.buttonText) { const b = makeBannerBtn(); if (!horizontal) b.style.alignSelf = 'center'; textWrap.appendChild(b) }
-
-    // Orden imagen ↔ texto según el lado elegido
-    if (horizontal && imgRight) {
-      inner.appendChild(textWrap)
-      inner.appendChild(imgEl)
-    } else {
-      if (imgEl) inner.appendChild(imgEl)
-      inner.appendChild(textWrap)
+    const body = document.createElement('div')
+    body.className = 'fb-body'
+    if (cfg.title) {
+      const t = document.createElement('div')
+      t.className = 'fb-title'
+      t.textContent = cfg.title
+      body.appendChild(t)
     }
+    if (cfg.text) {
+      const t = document.createElement('div')
+      t.className = 'fb-text'
+      t.textContent = cfg.text
+      body.appendChild(t)
+    }
+    if (cfg.buttonText) {
+      const btn = document.createElement('button')
+      btn.className = 'fb-btn'
+      btn.textContent = cfg.buttonText
+      btn.style.background = btnBg
+      btn.style.color = '#fff'
+      if (cfg.buttonUrl) btn.addEventListener('click', () => window.open(cfg.buttonUrl, '_blank'))
+      body.appendChild(btn)
+    }
+    card.appendChild(body)
 
-    const close = document.createElement('button')
-    close.textContent = '✕'
-    close.style.cssText = 'position:absolute;top:10px;right:12px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;border:none;color:inherit;opacity:.9;cursor:pointer;font-size:14px;z-index:2;'
-    close.addEventListener('click', () => outer.remove())
-    inner.appendChild(close)
-    outer.appendChild(inner)
+    // ── Pestaña / tab lateral ───────────────────────────────────────────────
+    // Actúa como toggle: expande si está colapsado, colapsa si está abierto.
+    const tab = document.createElement('div')
+    tab.className = 'fb-tab'
+    tab.style.background = btnBg
+    tab.style.color = '#fff'
+    // En móvil arranca colapsado; en escritorio arranca abierto.
+    const startsCollapsed = window.innerWidth <= 700
+    if (startsCollapsed) outer.classList.add('collapsed')
+    tab.textContent = startsCollapsed ? '▶ Oferta' : '✕'
+    tab.addEventListener('click', () => {
+      const isCollapsed = outer.classList.toggle('collapsed')
+      tab.textContent = isCollapsed ? '▶ Oferta' : '✕'
+    })
+
+    outer.appendChild(card)
+    outer.appendChild(tab)
     document.body.appendChild(outer)
-    // Auto-cierre tras X segundos si no se cierra manualmente
+
+    // Auto-cierre
     const autoClose = parseInt(cfg.autoClose ?? cfg.autoDismiss ?? 0, 10)
-    if (autoClose > 0) {
-      setTimeout(() => outer.remove(), autoClose * 1000)
-    }
+    if (autoClose > 0) setTimeout(() => outer.remove(), autoClose * 1000)
   }
 
   function buildOverlay(div, canvasJson) {

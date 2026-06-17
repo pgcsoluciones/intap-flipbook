@@ -225,7 +225,7 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   quiz:     { title: 'Cuestionario', questions: [{ text: '¿Tu pregunta?', options: ['Opción A', 'Opción B'], type: 'single' }] },
   popup_banner: {
     template: 'offer',
-    position: 'bottom',
+    position: 'left',
     trigger: 'delay',
     delay: 5,
     animation: 'slide',
@@ -1831,10 +1831,10 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
               ))}
             </div>
           </Field>
-          <Field label="Posición (fuera de la lectura)">
-            <select style={s.propInput} defaultValue={cfg.position ?? 'bottom'} onChange={(e) => setCfg({ position: e.target.value })}>
-              <option value="bottom">Debajo del catálogo</option>
-              <option value="top">Arriba del catálogo</option>
+          <Field label="Lado donde aparece">
+            <select style={s.propInput} defaultValue={cfg.position ?? 'left'} onChange={(e) => setCfg({ position: e.target.value })}>
+              <option value="left">Lateral izquierdo</option>
+              <option value="right">Lateral derecho</option>
             </select>
           </Field>
           <Field label="Cuándo aparecer">
