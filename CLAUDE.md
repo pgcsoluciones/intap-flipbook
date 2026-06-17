@@ -247,6 +247,44 @@ npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase8b.sql --r
 
 ---
 
+## 🆕 Sesión jun-2026 — Fixes editor/viewer + uploads + respuestas (commits 6a81c82 → 0fb780d)
+
+### Fixes críticos del editor (`035fa6a`)
+- **Foco saltaba al escribir** (texto y selector de color): el `onChange` del `PropsPanel` llamaba a `refreshSelected()` que incrementaba `key={selectVersion}`, remontando todo el panel en cada tecla. Fix: quitar `refreshSelected()` del `onChange`.
+- **Autoguardado sobreescribía con canvas vacío**: los eventos `object:added` se disparaban durante `loadFromJSON`. Fix: guardia `isLoading` que bloquea `onChange` hasta que termina la carga.
+- **Viewer no ejecutaba clics**: StPageFlip inyecta su canvas encima e intercepta eventos. Fix: `pointer-events:none` en el `wrap` del overlay + `pointer-events:auto` en cada `<a>`/hotspot/widget.
+
+### Uploads en todo el editor (`2dc2bea`)
+- `upload.ts`: ahora acepta audio (mp3/ogg/wav/m4a/aac), video (mp4/webm/ogv), documentos (pdf/zip/doc/docx/xls/xlsx) e imágenes (incluye svg/gif). Límite 10 MB imágenes / **50 MB medios**. Mapa `EXT_BY_TYPE`.
+- `FileField` (Examinar + arrastrar/soltar + URL) integrado en: widget Audio, Video (+ portada), Popup banner (imagen), acción popup_image, acción download.
+- **Nuevo widget `download`** (título + archivo + botón + color) renderizado en viewer.
+- Fixes de desajuste editor↔viewer: hotspot lee `data.hotspot.{style,color}`; formulario usa `nameRequired/emailRequired/phoneRequired/showComment`; cuestionario lee `q.text` y `q.type==='multi'`.
+
+### Popup emergente mejorado (`2dc2bea`)
+- Centrado y compacto (~40% del ancho del flipbook). Animaciones de entrada: saltos/latidos/zoom/deslizar (`pb-anim-*`). Auto-cierre configurable (`autoClose` segundos).
+
+### Prioridad de clic sobre volteo (`2dc2bea`)
+- `blockFlipDrag()` detiene `mousedown/touchstart/pointerdown` en widgets, hotspots y zonas de acción → un clic dentro (responder cuestionario/formulario) no pasa la página; solo clics fuera voltean.
+
+### Panel derecho estilo FlipHTML5 (`091eeed`)
+- **Mapa** (`MapWidgetProps`): buscador de ubicación con **vista previa embebida en vivo** + link embebido + zoom.
+- **QR** (`QrWidgetProps`): vista previa del código en tiempo real.
+- Propiedades comunes: ahora se ve/edita **Tamaño (ancho/alto)** y **Rotación (0–360)** además de Posición/Opacidad. Formas rect: redondeo de esquinas.
+
+### Repositorio de respuestas (`0fb780d`) — Fase 11
+- **D1**: tabla `form_responses` (`migration_fase11.sql`) — ✅ migrada en remoto.
+- **API**: `POST /view/:slug/response` (público), `GET /api/responses`, `GET /api/responses/unread-count`, `PATCH /api/responses/:id/read`, `DELETE /api/responses/:id`.
+- **Viewer**: formulario de contacto y cuestionario guardan la respuesta vía `saveResponse()` (contacto además abre mailto si hay `toEmail`).
+- **Dashboard**: página `/responses` (`TenantResponses.tsx`) con filtros (todas/sin leer/formularios/cuestionarios), marcar leída y eliminar. Item "📨 Respuestas" en el menú.
+
+> **Estado de deploys (sesión jun-2026):** Worker `5a8f04bc`, viewer desplegado, D1 migrada, dashboard auto-deploy. Todo en producción.
+
+### "Usar plantilla" — Opción C (`6a81c82`)
+- `POST /api/templates/:id/apply` (en `pages.ts`): crea publicación nueva con `title` o agrega páginas a una existente (`publication_id`). Copia `template_pages` → `pages`.
+- Frontend: `api.templates.apply()`, modal en `TenantTemplates`, `useTemplate()` en el editor.
+
+---
+
 ## 🚫 Reglas obligatorias
 
 - No cambiar el stack (Workers, D1, R2, KV, Hono, React/Vite, StPageFlip, Fabric.js)
