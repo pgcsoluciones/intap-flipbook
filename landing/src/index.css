@@ -58,6 +58,15 @@
     background: linear-gradient(180deg, rgba(79, 70, 229, 0.03), transparent 45%);
     pointer-events: none;
   }
+
+  .testimonial-avatar {
+    box-shadow: 0 12px 24px rgba(79, 70, 229, 0.22);
+  }
+
+  .hero-book-svg .page-flip {
+    transform-origin: 396px 210px;
+    animation: page-turn 5.8s ease-in-out infinite;
+  }
 }
 
 @layer utilities {
@@ -72,5 +81,61 @@
   [data-reveal].revealed {
     opacity: 1;
     transform: translateY(0);
+  }
+
+  .icon-float {
+    animation: icon-float 3.2s ease-in-out infinite;
+  }
+
+  .icon-pulse {
+    animation: icon-pulse 2.8s ease-in-out infinite;
+  }
+
+  .icon-slide {
+    animation: icon-slide 3.4s ease-in-out infinite;
+  }
+}
+
+@keyframes page-turn {
+  0%,
+  100% {
+    transform: perspective(600px) rotateY(0deg);
+  }
+
+  50% {
+    transform: perspective(600px) rotateY(-22deg) translateX(-6px);
+  }
+}
+
+@keyframes icon-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes icon-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+@keyframes icon-slide {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  50% {
+    transform: translateX(2px);
   }
 }

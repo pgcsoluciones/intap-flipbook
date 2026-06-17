@@ -7,11 +7,11 @@ const navLinks = [
 ];
 
 const trustLogos = [
-  "Ferretería",
-  "Restaurante",
-  "Boutique",
-  "Eventos",
-  "Seguridad",
+  { name: "Ferretería Don Carlos", icon: HardwareLogoIcon },
+  { name: "Restaurante El Mangú", icon: RestaurantLogoIcon },
+  { name: "Boutique Bella RD", icon: BoutiqueLogoIcon },
+  { name: "Eventos Reales", icon: EventsLogoIcon },
+  { name: "SecureRD", icon: SecurityLogoIcon },
 ];
 
 const steps = [
@@ -20,21 +20,21 @@ const steps = [
     title: "Sube tus imágenes",
     description:
       "Carga las páginas de tu catálogo, menú o revista y ordénalas en una experiencia lista para publicar.",
-    icon: UploadIcon,
+    icon: CloudUploadAnimatedIcon,
   },
   {
     number: "02",
     title: "Personaliza tu flipbook",
     description:
       "Ajusta portada, colores, enlaces y detalles visuales para que tu marca se vea más profesional.",
-    icon: SparklesIcon,
+    icon: CursorCustomizeAnimatedIcon,
   },
   {
     number: "03",
     title: "Comparte el link",
     description:
       "Publica tu flipbook y compártelo por WhatsApp, redes, correo o desde tu página web.",
-    icon: ShareIcon,
+    icon: ShareLinkAnimatedIcon,
   },
 ];
 
@@ -48,10 +48,34 @@ const features = [
 ];
 
 const useCases = [
-  "Catálogos de productos",
-  "Menús de restaurante",
-  "Portafolios",
-  "Revistas digitales",
+  {
+    title: "Catálogos de productos",
+    description:
+      "Ideal para compartir líneas de productos con mejor presencia digital y enlaces hacia ventas.",
+    gradient: "from-indigo-700 via-primary to-indigo-500",
+    icon: CatalogUseCaseIcon,
+  },
+  {
+    title: "Menús de restaurante",
+    description:
+      "Presenta menús visuales y promociones en un formato cómodo para móvil y fácil de compartir.",
+    gradient: "from-amber-500 via-warning to-orange-400",
+    icon: MenuUseCaseIcon,
+  },
+  {
+    title: "Portafolios",
+    description:
+      "Muestra proyectos, trabajos y piezas visuales con una experiencia más profesional y ordenada.",
+    gradient: "from-cyan-600 via-accent to-sky-400",
+    icon: PortfolioUseCaseIcon,
+  },
+  {
+    title: "Revistas digitales",
+    description:
+      "Convierte ediciones completas en una experiencia de lectura más inmersiva y elegante.",
+    gradient: "from-violet-700 via-fuchsia-600 to-purple-500",
+    icon: MagazineUseCaseIcon,
+  },
 ];
 
 const pricingPlans = [
@@ -86,25 +110,31 @@ const pricingPlans = [
 
 const testimonials = [
   {
-    name: "Paola Jiménez",
+    name: "María Rodríguez",
+    initials: "MR",
     role: "Gerente comercial",
-    company: "Boutique Caribe",
+    company: "Bella Casa RD",
     quote:
       "Ahora enviamos el catálogo por WhatsApp y la presentación se siente mucho más premium que un PDF tradicional.",
+    gradient: "from-primary to-violet-500",
   },
   {
-    name: "Luis de León",
+    name: "Carlos Martínez",
+    initials: "CM",
     role: "Director de mercadeo",
-    company: "Eventos Capital RD",
+    company: "Eventos Reales",
     quote:
       "El flipbook nos ayudó a presentar propuestas con más impacto visual y una imagen mucho más profesional.",
+    gradient: "from-accent to-sky-500",
   },
   {
-    name: "María Abreu",
+    name: "Ana Pérez",
+    initials: "AP",
     role: "Propietaria",
     company: "Sabores del Patio",
     quote:
       "Usamos Intap Flip para el menú y para promociones. Es rápido, fácil de compartir y se ve excelente en móvil.",
+    gradient: "from-emerald-500 to-cyan-500",
   },
 ];
 
@@ -230,8 +260,8 @@ function App() {
             <div className="relative" data-reveal id="demo">
               <div className="absolute -left-6 top-12 hidden h-28 w-28 rounded-full bg-cyan-200/60 blur-3xl lg:block"></div>
               <div className="absolute -right-4 bottom-10 hidden h-32 w-32 rounded-full bg-indigo-300/60 blur-3xl lg:block"></div>
-              <div className="hero-orbit orbit-one"></div>
-              <div className="hero-orbit orbit-two"></div>
+              <div className="hero-orbit orbit-one hidden lg:block"></div>
+              <div className="hero-orbit orbit-two hidden lg:block"></div>
               <div className="animate-float rounded-[2rem] border border-slate-200 bg-white p-4 shadow-lift">
                 <div className="rounded-[1.6rem] bg-dark p-4 text-white">
                   <div className="mb-4 flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
@@ -256,45 +286,7 @@ function App() {
                     </span>
                   </div>
 
-                  <div className="grid gap-4 lg:grid-cols-[0.22fr_0.78fr]">
-                    <div className="rounded-3xl border border-white/10 bg-white/5 p-3">
-                      <div className="space-y-3">
-                        {[1, 2, 3, 4].map((item) => (
-                          <div key={item} className="h-16 rounded-2xl bg-gradient-to-br from-white/15 to-cyan-400/15"></div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="grid gap-4 rounded-3xl bg-slate-50 p-4 text-slate-900">
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="rounded-[1.4rem] bg-gradient-to-br from-indigo-100 via-white to-cyan-100 p-5">
-                          <span className="inline-flex rounded-full bg-white/90 px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] text-primary">
-                            Portada
-                          </span>
-                          <h2 className="mt-10 max-w-[10rem] text-3xl font-extrabold tracking-tight text-dark">
-                            Tu catálogo ahora impacta mejor
-                          </h2>
-                          <p className="mt-4 text-sm leading-6 text-slate-600">
-                            Presenta colecciones, menús y portafolios con una experiencia interactiva más atractiva.
-                          </p>
-                        </div>
-
-                        <div className="grid gap-3">
-                          <div className="h-32 rounded-[1.4rem] bg-gradient-to-br from-cyan-100 to-slate-100"></div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="h-24 rounded-[1.2rem] bg-gradient-to-br from-indigo-50 to-cyan-50"></div>
-                            <div className="h-24 rounded-[1.2rem] bg-gradient-to-br from-emerald-50 to-slate-100"></div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        <InfoMiniCard title="Efecto real" text="Paso de página fluido" />
-                        <InfoMiniCard title="Link listo" text="Compártelo al instante" />
-                        <InfoMiniCard title="Responsive" text="Móvil, tablet y desktop" />
-                      </div>
-                    </div>
-                  </div>
+                  <HeroFlipbookMockup />
                 </div>
               </div>
 
@@ -302,7 +294,7 @@ function App() {
                 <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Tiempo de creación</p>
                 <p className="text-lg font-bold text-dark">Menos de 10 minutos</p>
               </div>
-              <div className="absolute -right-2 top-8 rounded-2xl border border-indigo-100 bg-white/95 px-4 py-3 shadow-lift">
+              <div className="absolute right-3 top-3 hidden rounded-2xl border border-indigo-100 bg-white/95 px-4 py-3 shadow-lift sm:block lg:-right-2 lg:top-8">
                 <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Ideal para</p>
                 <p className="text-sm font-bold text-dark">Catálogos, menús y portafolios</p>
               </div>
@@ -316,14 +308,20 @@ function App() {
               Usado por negocios en República Dominicana
             </p>
             <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              {trustLogos.map((item) => (
+              {trustLogos.map((item) => {
+                const Icon = item.icon;
+                return (
                 <div
-                  key={item}
-                  className="flex min-h-20 items-center justify-center rounded-3xl border border-slate-200 bg-slate-50 px-4 text-center text-sm font-bold text-slate-700"
+                  key={item.name}
+                  className="flex min-h-24 flex-col items-center justify-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 text-center text-sm font-bold text-slate-700 transition hover:-translate-y-1 hover:shadow-lift"
                 >
-                  {item}
+                  <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-primary shadow-sm">
+                    <Icon />
+                  </span>
+                  <span>{item.name}</span>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </section>
@@ -387,30 +385,29 @@ function App() {
           description="La idea es simple: transformar archivos estáticos en experiencias visuales más cómodas de explorar y compartir."
         >
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-            {useCases.map((item, index) => (
+            {useCases.map((item) => {
+              const Icon = item.icon;
+              return (
               <article
-                key={item}
+                key={item.title}
                 className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white transition hover:-translate-y-1 hover:shadow-lift"
                 data-reveal
               >
-                <div
-                  className={`h-44 bg-gradient-to-br ${
-                    [
-                      "from-indigo-200 via-white to-cyan-100",
-                      "from-warning/30 via-white to-amber-100",
-                      "from-emerald-100 via-white to-cyan-100",
-                      "from-slate-200 via-white to-indigo-100",
-                    ][index]
-                  }`}
-                ></div>
+                <div className={`relative flex h-44 items-center justify-center overflow-hidden bg-gradient-to-br ${item.gradient}`}>
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.28),transparent_28%)]"></div>
+                  <div className="absolute -right-8 -top-8 h-28 w-28 rounded-full border border-white/20"></div>
+                  <div className="absolute -bottom-10 -left-4 h-32 w-32 rounded-full border border-white/10"></div>
+                  <span className="relative text-white/95">
+                    <Icon />
+                  </span>
+                </div>
                 <div className="p-6">
-                  <h3 className="text-xl font-bold tracking-tight text-dark">{item}</h3>
-                  <p className="mt-3 leading-7 text-slate-600">
-                    Ideal para compartir contenido con mejor presencia digital y una imagen más cuidada.
-                  </p>
+                  <h3 className="text-xl font-bold tracking-tight text-dark">{item.title}</h3>
+                  <p className="mt-3 leading-7 text-slate-600">{item.description}</p>
                 </div>
               </article>
-            ))}
+              );
+            })}
           </div>
         </SectionBlock>
 
@@ -502,17 +499,13 @@ function App() {
                     <span>★</span>
                     <span>★</span>
                   </div>
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-                    Cliente
-                  </span>
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+                      Cliente
+                    </span>
                 </div>
                 <div className="flex items-center gap-4">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent text-lg font-extrabold text-white">
-                    {item.name
-                      .split(" ")
-                      .map((part) => part[0])
-                      .join("")
-                      .slice(0, 2)}
+                  <div className={`testimonial-avatar flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br ${item.gradient} text-lg font-extrabold text-white`}>
+                    {item.initials}
                   </div>
                   <div>
                     <h3 className="font-bold text-dark">{item.name}</h3>
@@ -629,33 +622,208 @@ function InfoMiniCard({ title, text }) {
   );
 }
 
-function UploadIcon() {
+function HeroFlipbookMockup() {
   return (
-    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M12 16V4"></path>
-      <path d="M7 9l5-5 5 5"></path>
-      <path d="M4 20h16"></path>
+    <div className="grid gap-4 lg:grid-cols-[0.22fr_0.78fr]">
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-3">
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((item) => (
+            <div key={item} className="flex h-16 items-center gap-3 rounded-2xl bg-gradient-to-br from-white/10 to-cyan-400/15 px-3">
+              <div className="h-10 w-8 rounded-lg bg-white/20"></div>
+              <div className="flex-1 space-y-2">
+                <div className="h-2.5 w-3/4 rounded-full bg-white/25"></div>
+                <div className="h-2.5 w-1/2 rounded-full bg-cyan-300/25"></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-4 rounded-3xl bg-slate-50 p-4 text-slate-900">
+        <div className="rounded-[1.6rem] bg-gradient-to-br from-indigo-100 via-white to-cyan-100 p-4">
+          <svg viewBox="0 0 760 420" className="hero-book-svg w-full">
+            <defs>
+              <linearGradient id="coverGlow" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#4F46E5" />
+                <stop offset="100%" stopColor="#06B6D4" />
+              </linearGradient>
+              <linearGradient id="pageTint" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#FFFFFF" />
+                <stop offset="100%" stopColor="#E0F2FE" />
+              </linearGradient>
+              <filter id="bookShadow" x="-20%" y="-20%" width="140%" height="160%">
+                <feDropShadow dx="0" dy="18" stdDeviation="18" floodColor="#0F172A" floodOpacity="0.18" />
+              </filter>
+            </defs>
+
+            <ellipse cx="380" cy="360" rx="250" ry="26" fill="#0F172A" opacity="0.12" />
+            <g filter="url(#bookShadow)">
+              <path d="M114 116C114 97 130 82 149 82H364V330H149C130 330 114 315 114 296V116Z" fill="url(#pageTint)" />
+              <path d="M646 116C646 97 630 82 611 82H396V330H611C630 330 646 315 646 296V116Z" fill="url(#pageTint)" />
+              <path d="M379 82H396V330H379Z" fill="#D7E0EA" />
+              <path d="M160 110H334V306H160C151 306 144 299 144 290V126C144 117 151 110 160 110Z" fill="url(#coverGlow)" />
+              <path d="M428 110H600C609 110 616 117 616 126V290C616 299 609 306 600 306H428V110Z" fill="#FFFFFF" />
+              <path className="page-flip" d="M396 106C475 118 528 150 574 222C528 282 472 305 396 314V106Z" fill="url(#pageTint)" stroke="#CFE8F8" strokeWidth="2" />
+            </g>
+
+            <g>
+              <rect x="184" y="140" width="92" height="16" rx="8" fill="white" fillOpacity="0.88" />
+              <rect x="184" y="173" width="118" height="12" rx="6" fill="white" fillOpacity="0.64" />
+              <rect x="184" y="200" width="78" height="12" rx="6" fill="#BAE6FD" />
+              <rect x="184" y="234" width="130" height="46" rx="16" fill="white" fillOpacity="0.22" />
+              <rect x="442" y="136" width="130" height="88" rx="18" fill="#DBEAFE" />
+              <rect x="442" y="242" width="62" height="44" rx="14" fill="#E0F2FE" />
+              <rect x="516" y="242" width="62" height="44" rx="14" fill="#EEF2FF" />
+              <rect x="590" y="242" width="62" height="44" rx="14" fill="#D1FAE5" />
+              <rect x="442" y="304" width="170" height="10" rx="5" fill="#CBD5E1" />
+            </g>
+          </svg>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <InfoMiniCard title="Efecto real" text="Paso de página fluido" />
+          <InfoMiniCard title="Link listo" text="Compártelo al instante" />
+          <InfoMiniCard title="Responsive" text="Móvil, tablet y desktop" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CloudUploadAnimatedIcon() {
+  return (
+    <svg viewBox="0 0 48 48" className="icon-float h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M15 35H34C39 35 43 31 43 26C43 21.7 39.8 18 35.6 17.3C34.9 11.5 30 7 24 7C18.6 7 14 10.7 12.7 15.8C7.9 16.3 4 20.4 4 25.3C4 30.7 8.3 35 13.7 35H15Z"></path>
+      <path d="M24 31V16"></path>
+      <path d="M18.5 21.5L24 16L29.5 21.5"></path>
     </svg>
   );
 }
 
-function SparklesIcon() {
+function CursorCustomizeAnimatedIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3z"></path>
-      <path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"></path>
+    <svg viewBox="0 0 48 48" className="icon-pulse h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="7" y="8" width="34" height="25" rx="6"></rect>
+      <path d="M16 18H26"></path>
+      <path d="M16 24H22"></path>
+      <path d="M29 19L23 38L28 35L31 41L35 39L32 33L37 33L29 19Z" fill="currentColor" stroke="none"></path>
     </svg>
   );
 }
 
-function ShareIcon() {
+function ShareLinkAnimatedIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M8 12l8-5"></path>
-      <path d="M8 12l8 5"></path>
-      <circle cx="6" cy="12" r="2.5"></circle>
-      <circle cx="18" cy="7" r="2.5"></circle>
-      <circle cx="18" cy="17" r="2.5"></circle>
+    <svg viewBox="0 0 48 48" className="icon-slide h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M18 17H14C9.6 17 6 20.6 6 25C6 29.4 9.6 33 14 33H20"></path>
+      <path d="M30 17H34C38.4 17 42 20.6 42 25C42 29.4 38.4 33 34 33H28"></path>
+      <path d="M17 25H31"></path>
+      <path d="M29 20L34 25L29 30"></path>
+    </svg>
+  );
+}
+
+function CatalogUseCaseIcon() {
+  return (
+    <svg viewBox="0 0 80 80" className="h-24 w-24" fill="none">
+      <rect x="12" y="16" width="40" height="48" rx="10" fill="white" fillOpacity="0.18" stroke="white" strokeWidth="2.4" />
+      <rect x="20" y="24" width="24" height="6" rx="3" fill="white" fillOpacity="0.95" />
+      <rect x="20" y="36" width="24" height="18" rx="6" fill="white" fillOpacity="0.28" />
+      <path d="M55 24L68 31V49L55 56L42 49V31L55 24Z" fill="white" fillOpacity="0.95" />
+      <path d="M52 40H58" stroke="#4F46E5" strokeWidth="3" strokeLinecap="round" />
+      <path d="M55 37V43" stroke="#4F46E5" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MenuUseCaseIcon() {
+  return (
+    <svg viewBox="0 0 80 80" className="h-24 w-24" fill="none">
+      <circle cx="40" cy="42" r="18" fill="white" fillOpacity="0.18" stroke="white" strokeWidth="2.4" />
+      <circle cx="40" cy="42" r="10" fill="white" fillOpacity="0.92" />
+      <path d="M20 18V36" stroke="white" strokeWidth="3.2" strokeLinecap="round" />
+      <path d="M16 18V26" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M20 18V26" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M24 18V26" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M60 18V38" stroke="white" strokeWidth="3.2" strokeLinecap="round" />
+      <path d="M56 18C56 14.7 58.7 12 62 12V25C62 28.3 59.3 31 56 31" stroke="white" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PortfolioUseCaseIcon() {
+  return (
+    <svg viewBox="0 0 80 80" className="h-24 w-24" fill="none">
+      <rect x="12" y="22" width="56" height="38" rx="10" fill="white" fillOpacity="0.18" stroke="white" strokeWidth="2.4" />
+      <path d="M30 22V18C30 14.7 32.7 12 36 12H44C47.3 12 50 14.7 50 18V22" stroke="white" strokeWidth="2.4" />
+      <rect x="20" y="30" width="18" height="12" rx="4" fill="white" fillOpacity="0.95" />
+      <path d="M45 48L52 40L60 50" stroke="white" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="49" cy="33" r="4" fill="white" fillOpacity="0.9" />
+    </svg>
+  );
+}
+
+function MagazineUseCaseIcon() {
+  return (
+    <svg viewBox="0 0 80 80" className="h-24 w-24" fill="none">
+      <path d="M12 20C12 16.7 14.7 14 18 14H38V60H18C14.7 60 12 57.3 12 54V20Z" fill="white" fillOpacity="0.18" stroke="white" strokeWidth="2.4" />
+      <path d="M68 20C68 16.7 65.3 14 62 14H42V60H62C65.3 60 68 57.3 68 54V20Z" fill="white" fillOpacity="0.18" stroke="white" strokeWidth="2.4" />
+      <path d="M23 24H32" stroke="white" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M48 24H57" stroke="white" strokeWidth="2.4" strokeLinecap="round" />
+      <rect x="21" y="31" width="13" height="18" rx="4" fill="white" fillOpacity="0.92" />
+      <rect x="46" y="31" width="13" height="18" rx="4" fill="white" fillOpacity="0.92" />
+    </svg>
+  );
+}
+
+function HardwareLogoIcon() {
+  return (
+    <svg viewBox="0 0 32 32" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M8 9L13 14"></path>
+      <path d="M10 7L15 12"></path>
+      <path d="M19 7L25 13L14 24L8 18L19 7Z"></path>
+    </svg>
+  );
+}
+
+function RestaurantLogoIcon() {
+  return (
+    <svg viewBox="0 0 32 32" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M9 6V16"></path>
+      <path d="M6 6V11"></path>
+      <path d="M9 6V11"></path>
+      <path d="M12 6V11"></path>
+      <path d="M22 6V18"></path>
+      <path d="M19 6C19 4 20.8 3 22 3V10C22 12.2 20.2 14 18 14"></path>
+    </svg>
+  );
+}
+
+function BoutiqueLogoIcon() {
+  return (
+    <svg viewBox="0 0 32 32" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M8 13L10 8H22L24 13"></path>
+      <path d="M7 13H25V24H7V13Z"></path>
+      <path d="M13 13C13 15 14.3 16 16 16C17.7 16 19 15 19 13"></path>
+    </svg>
+  );
+}
+
+function EventsLogoIcon() {
+  return (
+    <svg viewBox="0 0 32 32" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M16 4V28"></path>
+      <path d="M16 7C19 9 21 12 21 15C21 18 19 21 16 23"></path>
+      <path d="M16 7C13 9 11 12 11 15C11 18 13 21 16 23"></path>
+      <circle cx="16" cy="15" r="9"></circle>
+    </svg>
+  );
+}
+
+function SecurityLogoIcon() {
+  return (
+    <svg viewBox="0 0 32 32" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M16 4L24 7V14C24 20 20 24 16 27C12 24 8 20 8 14V7L16 4Z"></path>
+      <path d="M13 15L15 17L19 13"></path>
     </svg>
   );
 }
