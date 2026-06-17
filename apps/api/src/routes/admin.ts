@@ -465,10 +465,32 @@ admin.put('/referrals/:id', async (c) => {
   const body = await c.req.json<{ action: 'approve' | 'reject'; reason?: string }>()
   const adminId = c.get('user').sub
   const newStatus = body.action === 'approve' ? 'approved' : 'rejected'
+
+  const ref = await c.env.DB.prepare('SELECT * FROM referrals WHERE id = ?')
+    .bind(id).first<{ referrer_id: string; reward_applied: number }>()
+
   await c.env.DB.prepare(`
     UPDATE referrals SET status = ?, resolved_at = datetime('now'), resolved_by = ?, reject_reason = ?
     WHERE id = ?
   `).bind(newStatus, adminId, body.reason ?? null, id).run()
+
+  if (body.action === 'approve' && ref && !ref.reward_applied) {
+    const config = await c.env.DB.prepare('SELECT reward_type, reward_value FROM referral_config WHERE id = 1')
+      .first<{ reward_type: string; reward_value: number }>()
+    if (config?.reward_type === 'free_days') {
+      const days = config.reward_value ?? 15
+      await c.env.DB.prepare(
+        `UPDATE users SET
+          plan_expires_at = datetime(COALESCE(
+            CASE WHEN plan_expires_at > datetime('now') THEN plan_expires_at ELSE NULL END,
+            datetime('now')
+          ), '+' || ? || ' days')
+         WHERE id = ?`
+      ).bind(days, ref.referrer_id).run()
+    }
+    await c.env.DB.prepare('UPDATE referrals SET reward_applied = 1 WHERE id = ?').bind(id).run()
+  }
+
   return c.json({ success: true })
 })
 

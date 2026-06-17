@@ -65,7 +65,9 @@ async function init() {
   const { data } = await res.json()
   document.title = data.title
 
-  // Sonido siempre habilitado independientemente del plan
+  // Registrar vista (fire-and-forget — no bloqueamos la carga del flipbook)
+  fetch(`${API_BASE}/view/${slug}/track`, { method: 'POST' }).catch(() => {})
+
   soundEnabled = true
 
   const portrait = window.innerWidth < 700
@@ -813,6 +815,40 @@ async function init() {
       panel.classList.remove('open')
     }
   })
+
+  // ── Marca de agua ──────────────────────────────────────────────────────────
+  if (data.watermark_enabled && data.watermark) {
+    const wm = data.watermark
+    const el = document.createElement('a')
+    el.id = 'flipbook-watermark'
+    el.href = wm.link_url || 'https://intapflipbook.com'
+    el.target = '_blank'
+    el.rel = 'noopener noreferrer'
+    el.textContent = wm.text || 'Creado con Intap Flipbook'
+
+    const pos = wm.position || 'bottom-right'
+    const opacity = Math.min(100, Math.max(0, wm.opacity ?? 80)) / 100
+    const isRight = pos.includes('right')
+    const isBottom = pos.includes('bottom')
+
+    el.style.cssText = [
+      'position:fixed',
+      'z-index:2000',
+      'background:rgba(0,0,0,.55)',
+      'color:#fff',
+      'font-size:0.7rem',
+      'padding:3px 10px',
+      'border-radius:20px',
+      'text-decoration:none',
+      'white-space:nowrap',
+      'pointer-events:auto',
+      `opacity:${opacity}`,
+      isBottom ? 'bottom:12px' : 'top:12px',
+      isRight ? 'right:12px' : 'left:12px',
+    ].join(';')
+
+    document.body.appendChild(el)
+  }
 }
 
 init().catch((err) => console.error('Flipbook init error:', err))

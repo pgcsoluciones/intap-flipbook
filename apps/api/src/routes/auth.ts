@@ -7,7 +7,7 @@ import type { AuthVariables } from '../middleware/jwt'
 const auth = new Hono<{ Bindings: Env; Variables: AuthVariables }>()
 
 auth.post('/register', async (c) => {
-  const body = await c.req.json<{ email: string; password: string; name?: string; slug?: string }>()
+  const body = await c.req.json<{ email: string; password: string; name?: string; slug?: string; referral_code?: string }>()
 
   if (!body.email || !body.password) {
     return c.json({ success: false, error: 'email and password are required' }, 400)
@@ -35,6 +35,18 @@ auth.post('/register', async (c) => {
   )
     .bind(id, body.email.toLowerCase(), passwordHash, body.name ?? null, slug)
     .run()
+
+  // Si viene con código de referido, vincular al referrer
+  if (body.referral_code) {
+    const referrer = await c.env.DB.prepare(
+      'SELECT id FROM users WHERE referral_code = ?'
+    ).bind(body.referral_code).first<{ id: string }>()
+    if (referrer && referrer.id !== id) {
+      await c.env.DB.prepare(
+        `INSERT OR IGNORE INTO referrals (referrer_id, referred_id, status) VALUES (?, ?, 'pending')`
+      ).bind(referrer.id, id).run()
+    }
+  }
 
   const token = await signJwt(
     { sub: id, email: body.email.toLowerCase() },

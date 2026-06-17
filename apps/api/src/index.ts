@@ -55,8 +55,11 @@ app.get('/api/me/usage', jwtMiddleware, async (c) => {
 app.get('/view/:slug', async (c) => {
   const slug = c.req.param('slug')
   const pub = await c.env.DB.prepare(
-    `SELECT id, title, description, cover_image_url, sound_enabled
-     FROM publications WHERE public_slug = ? AND status = 'published'`,
+    `SELECT p.id, p.title, p.description, p.cover_image_url, p.sound_enabled,
+            u.plan_id, u.watermark_override
+     FROM publications p
+     JOIN users u ON u.id = p.user_id
+     WHERE p.public_slug = ? AND p.status = 'published'`,
   )
     .bind(slug)
     .first<{
@@ -65,22 +68,40 @@ app.get('/view/:slug', async (c) => {
       description: string | null
       cover_image_url: string | null
       sound_enabled: number
+      plan_id: string
+      watermark_override: string
     }>()
 
   if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
 
-  const { results: pages } = await c.env.DB.prepare(
-    `SELECT id, page_number, image_url, title, description, price, canvas_json
-     FROM pages WHERE publication_id = ? ORDER BY page_number ASC`,
-  )
-    .bind(pub.id)
-    .all()
+  const [{ results: pages }, wmConfig] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id, page_number, image_url, title, description, price, canvas_json
+       FROM pages WHERE publication_id = ? ORDER BY page_number ASC`,
+    ).bind(pub.id).all(),
+    c.env.DB.prepare('SELECT text, link_url, position, opacity FROM watermark_config WHERE id = 1').first<{
+      text: string; link_url: string; position: string; opacity: number
+    }>(),
+  ])
+
+  // La marca de agua se muestra en planes free, a menos que el admin la oculte (force_hide).
+  const planIsPaid = pub.plan_id !== 'free'
+  const override = pub.watermark_override ?? 'plan'
+  const watermarkEnabled =
+    override === 'force_show' ? true :
+    override === 'force_hide' ? false :
+    !planIsPaid
 
   return c.json({
     success: true,
     data: {
-      ...pub,
+      id: pub.id,
+      title: pub.title,
+      description: pub.description,
+      cover_image_url: pub.cover_image_url,
       sound_enabled: pub.sound_enabled === 1,
+      watermark_enabled: watermarkEnabled,
+      watermark: wmConfig ?? { text: 'Intap Flipbook', link_url: 'https://intapflipbook.com', position: 'bottom-right', opacity: 80 },
       pages,
     },
   })
@@ -117,6 +138,29 @@ app.get('/api/plan-requests', jwtMiddleware, async (c) => {
      WHERE pr.user_id = ? ORDER BY pr.created_at DESC LIMIT 10`
   ).bind(userId).all()
   return c.json({ success: true, data: results })
+})
+
+// Registra una vista de publicación — público (sin auth), fire-and-forget
+app.post('/view/:slug/track', async (c) => {
+  const slug = c.req.param('slug')
+  const pub = await c.env.DB.prepare(
+    `SELECT id FROM publications WHERE public_slug = ? AND status = 'published'`
+  ).bind(slug).first<{ id: string }>()
+  if (!pub) return c.json({ success: false }, 404)
+
+  const device = c.req.header('user-agent')?.includes('Mobi') ? 'mobile' : 'desktop'
+  try {
+    await Promise.all([
+      c.env.DB.prepare(
+        `INSERT INTO publication_views (publication_id, device) VALUES (?, ?)`
+      ).bind(pub.id, device).run(),
+      c.env.DB.prepare(
+        `UPDATE publications SET views_count = views_count + 1 WHERE id = ?`
+      ).bind(pub.id).run(),
+    ])
+  } catch (_) {}
+
+  return c.json({ success: true }, 201)
 })
 
 // Recibe respuestas de formularios / cuestionarios desde el viewer — público (sin auth)
