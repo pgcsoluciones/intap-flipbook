@@ -493,45 +493,79 @@ async function init() {
         : ''
     const slideAnim = pos === 'top' ? 'pb-in-t' : pos === 'bottom' ? 'pb-in-b' : (cfg.animation === 'none' ? '' : 'pb-in-c')
 
-    // Ancho ~40 % del flipbook cuando está centrado (compacto, no de extremo a extremo)
+    // Layout centrado (modal): si hay imagen → rectángulo horizontal (imagen a un
+    // lado, texto+botón al otro, estilo banner promocional); si no → columna.
+    // Ancho compacto ≤ 40 % del flipbook (nunca de extremo a extremo).
+    const isCenter = pos === 'center'
+    const hasImg = !!cfg.image
+    const horizontal = isCenter && hasImg
+    const imgRight = cfg.imagePosition === 'right'
     const flipW = portrait ? pageWidth : pageWidth * 2
-    const centerW = Math.max(260, Math.round(flipW * 0.4))
+    const centerW = Math.max(horizontal ? 360 : 280, Math.round(flipW * 0.4))
+    const bg = cfg.bgColor || '#1a1827'
+    const tc = cfg.textColor || '#fff'
 
     const outer = document.createElement('div')
     outer.id = 'flipbook-banner'
     outer.style.cssText = `z-index:2000;${posMap[pos] || posMap.bottom}`
+
     const inner = document.createElement('div')
-    const baseAnim = animClass ? `${animClass};` : (slideAnim ? `animation:${slideAnim} 0.35s ease-out;` : '')
-    inner.style.cssText = `background:${cfg.bgColor || '#1a1827'};color:${cfg.textColor || '#fff'};padding:18px 22px;display:flex;gap:14px;font-family:Inter,sans-serif;${animClass ? '' : baseAnim}${pos === 'center' ? `border-radius:14px;width:${centerW}px;max-width:92vw;flex-direction:column;align-items:center;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);` : 'align-items:center;justify-content:space-between;'}`
     if (animClass) inner.className = animClass
-    if (cfg.image) {
-      const img = document.createElement('img')
-      img.src = cfg.image
-      img.style.cssText = pos === 'center'
-        ? 'width:100%;max-height:160px;object-fit:cover;border-radius:10px;'
-        : 'width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;'
-      inner.appendChild(img)
+    const animCss = animClass ? '' : (slideAnim ? `animation:${slideAnim} 0.35s ease-out;` : '')
+    if (isCenter) {
+      inner.style.cssText = `position:relative;background:${bg};color:${tc};font-family:Inter,sans-serif;border-radius:14px;overflow:hidden;width:${centerW}px;max-width:92vw;box-shadow:0 20px 60px rgba(0,0,0,.5);display:flex;${horizontal ? 'flex-direction:row;align-items:stretch;min-height:190px;' : 'flex-direction:column;'}${animCss}`
+    } else {
+      inner.style.cssText = `background:${bg};color:${tc};padding:18px 22px;display:flex;gap:14px;font-family:Inter,sans-serif;align-items:center;justify-content:space-between;${animCss}`
     }
-    const textWrap = document.createElement('div')
-    textWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;flex:1;'
-    if (cfg.title) { const t = document.createElement('div'); t.textContent = cfg.title; t.style.cssText = 'font-weight:700;font-size:16px;'; textWrap.appendChild(t) }
-    if (cfg.text) { const t = document.createElement('div'); t.textContent = cfg.text; t.style.cssText = 'font-size:13px;opacity:.85;line-height:1.5;'; textWrap.appendChild(t) }
-    inner.appendChild(textWrap)
-    if (cfg.buttonText) {
+
+    // Botón reutilizable (en centrado vive dentro de la columna de texto; en
+    // cintillo es hermano de la columna).
+    function makeBannerBtn() {
       const btn = document.createElement('button')
       btn.textContent = cfg.buttonText
       btn.style.cssText = `background:${cfg.buttonColor || '#4F46E5'};color:#fff;border:none;border-radius:8px;padding:10px 22px;font-weight:700;cursor:pointer;font-size:14px;white-space:nowrap;flex-shrink:0;`
       if (cfg.buttonUrl) btn.addEventListener('click', () => window.open(cfg.buttonUrl, '_blank'))
-      inner.appendChild(btn)
+      return btn
     }
+
+    // Imagen
+    let imgEl = null
+    if (hasImg) {
+      imgEl = document.createElement('img')
+      imgEl.src = cfg.image
+      imgEl.style.cssText = horizontal
+        ? 'width:45%;object-fit:cover;flex-shrink:0;align-self:stretch;display:block;'
+        : isCenter
+          ? 'width:100%;max-height:170px;object-fit:cover;display:block;'
+          : 'width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;'
+    }
+
+    // Columna de texto
+    const textWrap = document.createElement('div')
+    textWrap.style.cssText = isCenter
+      ? `display:flex;flex-direction:column;gap:10px;flex:1;justify-content:center;padding:${horizontal ? '26px 24px' : '22px 24px 24px'};${horizontal ? 'text-align:left;align-items:flex-start;' : 'text-align:center;align-items:center;'}`
+      : 'display:flex;flex-direction:column;gap:4px;flex:1;'
+    if (cfg.title) { const t = document.createElement('div'); t.textContent = cfg.title; t.style.cssText = `font-weight:800;font-size:${isCenter ? '20px' : '16px'};line-height:1.2;`; textWrap.appendChild(t) }
+    if (cfg.text) { const t = document.createElement('div'); t.textContent = cfg.text; t.style.cssText = 'font-size:13px;opacity:.88;line-height:1.5;'; textWrap.appendChild(t) }
+    if (cfg.buttonText && isCenter) textWrap.appendChild(makeBannerBtn())
+
+    // Orden imagen ↔ texto según el lado elegido
+    if (horizontal && imgRight) {
+      inner.appendChild(textWrap)
+      inner.appendChild(imgEl)
+    } else {
+      if (imgEl) inner.appendChild(imgEl)
+      inner.appendChild(textWrap)
+    }
+    if (cfg.buttonText && !isCenter) inner.appendChild(makeBannerBtn())
+
     const close = document.createElement('button')
     close.textContent = '✕'
-    close.style.cssText = pos === 'center'
-      ? 'position:absolute;top:8px;right:12px;background:none;border:none;color:inherit;opacity:.7;cursor:pointer;font-size:18px;'
+    close.style.cssText = isCenter
+      ? 'position:absolute;top:10px;right:12px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;border:none;color:inherit;opacity:.9;cursor:pointer;font-size:14px;z-index:2;'
       : 'background:none;border:none;color:inherit;opacity:.6;cursor:pointer;font-size:16px;padding:0 4px;flex-shrink:0;'
     close.addEventListener('click', () => outer.remove())
     inner.appendChild(close)
-    if (pos === 'center') inner.style.position = 'relative'
     outer.appendChild(inner)
     document.body.appendChild(outer)
     // Auto-cierre tras X segundos si no se cierra manualmente

@@ -236,6 +236,7 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
     bgColor: '#1e1b4b',
     textColor: '#ffffff',
     image: '',
+    imagePosition: 'left',
     showOnce: true,
   },
 }
@@ -1862,6 +1863,14 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
           <Field label="Imagen (opcional)">
             <FileField value={cfg.image ?? ''} onChange={(url) => setCfg({ image: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP" />
           </Field>
+          {cfg.image && (cfg.position ?? 'center') === 'center' && (
+            <Field label="Lado de la imagen">
+              <select style={s.propInput} defaultValue={cfg.imagePosition ?? 'left'} onChange={(e) => setCfg({ imagePosition: e.target.value })}>
+                <option value="left">Imagen a la izquierda</option>
+                <option value="right">Imagen a la derecha</option>
+              </select>
+            </Field>
+          )}
           <Field label="Colores">
             <div style={{ display: 'flex', gap: 12 }}>
               <div style={{ flex: 1 }}>
