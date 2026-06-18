@@ -23,6 +23,9 @@ export default function ProfilePage() {
   const [savingPw, setSavingPw]           = useState(false)
   const [msgProfile, setMsgProfile]       = useState<{ text: string; ok: boolean } | null>(null)
   const [msgPw, setMsgPw]                 = useState<{ text: string; ok: boolean } | null>(null)
+  const [watermarkTenant, setWatermarkTenant] = useState<string | null>(null)
+  const [savingWm, setSavingWm]               = useState(false)
+  const [msgWm, setMsgWm]                     = useState<{ text: string; ok: boolean } | null>(null)
 
   useEffect(() => {
     api.auth.me().then((r) => {
@@ -30,8 +33,30 @@ export default function ProfilePage() {
       setName(r.data.name ?? '')
       setSlug(r.data.slug ?? '')
       setEmail(r.data.email ?? '')
+      setWatermarkTenant(r.data.watermark_tenant ?? null)
     })
   }, [])
+
+  async function handleSaveWatermark(value: string | null) {
+    setSavingWm(true)
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/auth/me/watermark`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ watermark_tenant: value }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al guardar')
+      setWatermarkTenant(value)
+      setMsgWm({ text: 'Preferencia guardada.', ok: true })
+    } catch (e: any) {
+      setMsgWm({ text: e.message, ok: false })
+    } finally {
+      setSavingWm(false)
+      setTimeout(() => setMsgWm(null), 3000)
+    }
+  }
 
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault()
@@ -200,6 +225,52 @@ export default function ProfilePage() {
           </button>
         </form>
       </section>
+
+      {/* Marca de agua — solo visible en planes basic/pro */}
+      {user?.plan_id !== 'free' && (
+        <section style={styles.card}>
+          <h2 style={styles.sectionTitle}>Marca de agua en mis flipbooks</h2>
+          <p style={{ color: '#6b7280', fontSize: '0.85rem', marginBottom: '1rem' }}>
+            Controlá si la marca "Intap Flipbook" aparece en tus publicaciones. Tu elección tiene prioridad sobre la configuración general del sistema.
+            {user?.plan_id === 'basic' && <><br /><span style={{ color: '#92400e' }}>En el plan Basic está activa por defecto. Podés desactivarla.</span></>}
+            {user?.plan_id === 'pro'   && <><br /><span style={{ color: '#065f46' }}>En el plan Pro está inactiva por defecto. Podés activarla si lo deseás (ej. si sos sponsor).</span></>}
+          </p>
+          {msgWm && (
+            <div style={{ ...styles.alert, background: msgWm.ok ? '#d1fae5' : '#fee2e2', color: msgWm.ok ? '#065f46' : '#991b1b', marginBottom: '1rem' }}>
+              {msgWm.text}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            {[
+              { value: null,   label: 'Por defecto del plan', desc: user?.plan_id === 'basic' ? 'Activa' : 'Inactiva' },
+              { value: 'show', label: 'Siempre mostrar',      desc: 'Aparece en todas mis publicaciones' },
+              { value: 'hide', label: 'Siempre ocultar',      desc: 'No aparece en ninguna publicación' },
+            ].map((opt) => {
+              const active = watermarkTenant === opt.value
+              return (
+                <button
+                  key={String(opt.value)}
+                  disabled={savingWm}
+                  onClick={() => handleSaveWatermark(opt.value)}
+                  style={{
+                    border: active ? '2px solid #4f46e5' : '1px solid #d1d5db',
+                    background: active ? '#eef2ff' : '#fff',
+                    borderRadius: 10,
+                    padding: '0.65rem 1rem',
+                    cursor: savingWm ? 'default' : 'pointer',
+                    textAlign: 'left',
+                    minWidth: 160,
+                    opacity: savingWm ? 0.6 : 1,
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: '0.875rem', color: active ? '#4338ca' : '#111827' }}>{opt.label}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: 2 }}>{opt.desc}</div>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Cerrar sesión */}
       <section style={styles.card}>

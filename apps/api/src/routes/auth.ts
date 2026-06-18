@@ -87,7 +87,7 @@ auth.get('/me', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
 
   const user = await c.env.DB.prepare(
-    'SELECT id, email, name, slug, plan_id, is_admin, created_at FROM users WHERE id = ?',
+    'SELECT id, email, name, slug, plan_id, is_admin, created_at, watermark_tenant FROM users WHERE id = ?',
   )
     .bind(sub)
     .first<{ id: string; email: string; name: string | null; slug: string | null; plan_id: string; is_admin: number; created_at: string }>()
@@ -121,6 +121,19 @@ auth.put('/me', jwtMiddleware, async (c) => {
     .bind(sub)
     .first()
   return c.json({ success: true, data: user })
+})
+
+// PUT /auth/me/watermark — el tenant controla su propia marca de agua (solo basic/pro)
+auth.put('/me/watermark', jwtMiddleware, async (c) => {
+  const { sub } = c.get('user')
+  const body = await c.req.json<{ watermark_tenant?: string | null }>()
+  const user = await c.env.DB.prepare('SELECT plan_id FROM users WHERE id = ?').bind(sub).first<{ plan_id: string }>()
+  if (!user) return c.json({ success: false, error: 'User not found' }, 404)
+  if (user.plan_id === 'free') return c.json({ success: false, error: 'El plan Free no puede modificar la marca de agua' }, 403)
+  const allowed = ['show', 'hide', null]
+  const value = allowed.includes(body.watermark_tenant ?? null) ? (body.watermark_tenant ?? null) : null
+  await c.env.DB.prepare('UPDATE users SET watermark_tenant = ? WHERE id = ?').bind(value, sub).run()
+  return c.json({ success: true })
 })
 
 // PUT /auth/password — change password

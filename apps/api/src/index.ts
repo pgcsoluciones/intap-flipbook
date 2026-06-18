@@ -118,7 +118,7 @@ app.get('/view/:slug', async (c) => {
   const slug = c.req.param('slug')
   const pub = await c.env.DB.prepare(
     `SELECT p.id, p.title, p.description, p.cover_image_url, p.sound_enabled,
-            u.plan_id, u.watermark_override
+            u.plan_id, u.watermark_override, u.watermark_tenant
      FROM publications p
      JOIN users u ON u.id = p.user_id
      WHERE p.public_slug = ? AND p.status = 'published'`,
@@ -132,6 +132,7 @@ app.get('/view/:slug', async (c) => {
       sound_enabled: number
       plan_id: string
       watermark_override: string
+      watermark_tenant: string | null
     }>()
 
   if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
@@ -146,13 +147,18 @@ app.get('/view/:slug', async (c) => {
     }>(),
   ])
 
-  // La marca de agua se muestra en planes free, a menos que el admin la oculte (force_hide).
-  const planIsPaid = pub.plan_id !== 'free'
-  const override = pub.watermark_override ?? 'plan'
+  // Prioridad: 1) free siempre activa, 2) elección del tenant, 3) override del admin, 4) default por plan
+  const planIsFree = pub.plan_id === 'free'
+  const tenantChoice = pub.watermark_tenant   // 'show' | 'hide' | null
+  const adminOverride = pub.watermark_override ?? 'plan'  // 'force_show' | 'force_hide' | 'plan'
+  const planDefault = pub.plan_id === 'basic'  // basic=true(activa), pro=false(oculta)
   const watermarkEnabled =
-    override === 'force_show' ? true :
-    override === 'force_hide' ? false :
-    !planIsPaid
+    planIsFree ? true :
+    tenantChoice === 'show' ? true :
+    tenantChoice === 'hide' ? false :
+    adminOverride === 'force_show' ? true :
+    adminOverride === 'force_hide' ? false :
+    planDefault
 
   return c.json({
     success: true,
