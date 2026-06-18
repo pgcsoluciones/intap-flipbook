@@ -323,34 +323,8 @@ export default function TenantStats() {
           </div>
         )}
 
-        {/* Tabla de vistas recientes */}
-        {recentViews.length > 0 && (
-          <div style={s.card}>
-            <h2 style={s.cardTitle}>Últimas vistas</h2>
-            <table style={s.table}>
-              <thead>
-                <tr>
-                  {['Flipbook', 'Dispositivo', 'Fecha'].map((h) => (
-                    <th key={h} style={s.th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {recentViews.slice(0, 10).map((v, i) => (
-                  <tr key={v.id ?? i} style={s.tr}>
-                    <td style={s.td}>{v.flipbook_title}</td>
-                    <td style={s.td}>
-                      <span style={s.deviceCell}>
-                        {DEVICE_ICON[v.device] ?? '🖥️'} {v.device}
-                      </span>
-                    </td>
-                    <td style={{ ...s.td, color: '#9ca3af' }}>{fmtDateTime(v.viewed_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {/* Tabla de vistas recientes con filtros y paginación */}
+        {recentViews.length > 0 && <RecentViewsReport views={recentViews} />}
 
         {stats.total_views === 0 && (
           <div style={{ ...s.card, textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
@@ -359,6 +333,97 @@ export default function TenantStats() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// Reporte de vistas recientes: filtro por dispositivo y por flipbook + paginación (10/pág)
+const PAGE_SIZE = 10
+function RecentViewsReport({ views }: { views: RecentView[] }) {
+  const [deviceFilter, setDeviceFilter] = useState('')
+  const [fbFilter, setFbFilter]         = useState('')
+  const [page, setPage]                 = useState(1)
+
+  // Opciones únicas de dispositivo para el selector
+  const devices = Array.from(new Set(views.map((v) => v.device).filter(Boolean)))
+
+  const filtered = views.filter((v) => {
+    const dMatch = !deviceFilter || v.device === deviceFilter
+    const fMatch = !fbFilter || (v.flipbook_title ?? '').toLowerCase().includes(fbFilter.toLowerCase())
+    return dMatch && fMatch
+  })
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage   = Math.min(page, totalPages)
+  const pageRows   = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+
+  // Si cambian los filtros y la página queda fuera de rango, volver a la 1
+  function resetTo1<T>(setter: (v: T) => void) {
+    return (val: T) => { setter(val); setPage(1) }
+  }
+
+  return (
+    <div style={s.card}>
+      <h2 style={s.cardTitle}>Últimas vistas</h2>
+
+      {/* Filtros */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+        <input
+          style={{ flex: 1, minWidth: 160, border: '1px solid #d1d5db', borderRadius: 8, padding: '7px 10px', fontSize: 13, boxSizing: 'border-box' }}
+          placeholder="Buscar por flipbook..."
+          value={fbFilter}
+          onChange={(e) => resetTo1(setFbFilter)(e.target.value)}
+        />
+        <select
+          style={{ border: '1px solid #d1d5db', borderRadius: 8, padding: '7px 10px', fontSize: 13, background: '#fff' }}
+          value={deviceFilter}
+          onChange={(e) => resetTo1(setDeviceFilter)(e.target.value)}
+        >
+          <option value="">Todos los dispositivos</option>
+          {devices.map((d) => <option key={d} value={d}>{DEVICE_ICON[d] ?? '🖥️'} {d}</option>)}
+        </select>
+      </div>
+
+      <table style={s.table}>
+        <thead>
+          <tr>
+            {['Flipbook', 'Dispositivo', 'Fecha'].map((h) => (
+              <th key={h} style={s.th}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {pageRows.map((v, i) => (
+            <tr key={v.id ?? i} style={s.tr}>
+              <td style={s.td}>{v.flipbook_title}</td>
+              <td style={s.td}>
+                <span style={s.deviceCell}>
+                  {DEVICE_ICON[v.device] ?? '🖥️'} {v.device}
+                </span>
+              </td>
+              <td style={{ ...s.td, color: '#9ca3af' }}>{fmtDateTime(v.viewed_at)}</td>
+            </tr>
+          ))}
+          {pageRows.length === 0 && (
+            <tr><td colSpan={3} style={{ textAlign: 'center', padding: '1.5rem', color: '#9ca3af' }}>Sin resultados para el filtro.</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      {/* Paginación */}
+      {filtered.length > PAGE_SIZE && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 12 }}>
+          <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage <= 1}
+            style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #d1d5db', background: safePage <= 1 ? '#f3f4f6' : '#fff', cursor: safePage <= 1 ? 'default' : 'pointer', fontSize: 13 }}>
+            ◀ Anterior
+          </button>
+          <span style={{ fontSize: 13, color: '#6b7280' }}>Página {safePage} de {totalPages}</span>
+          <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={safePage >= totalPages}
+            style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #d1d5db', background: safePage >= totalPages ? '#f3f4f6' : '#fff', cursor: safePage >= totalPages ? 'default' : 'pointer', fontSize: 13 }}>
+            Siguiente ▶
+          </button>
+        </div>
+      )}
     </div>
   )
 }

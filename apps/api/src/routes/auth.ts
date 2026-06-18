@@ -208,7 +208,7 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
      JOIN publications pub ON pub.id = pv.publication_id
      WHERE pub.user_id = ?
      ORDER BY pv.viewed_at DESC
-     LIMIT 20`,
+     LIMIT 200`,
   )
     .bind(sub)
     .all()
