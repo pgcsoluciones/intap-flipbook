@@ -106,9 +106,9 @@ async function init() {
     pageWidth = Math.min(390, window.innerWidth - 8)
   } else {
     // En escritorio: llenar lo máximo posible sin que la altura desborde el viewport
-    const availW = Math.floor(window.innerWidth / 2) - 24
-    const availH = window.innerHeight - 100  // reservar espacio para controles
-    const byW = Math.min(680, availW)
+    const availW = Math.floor(window.innerWidth / 2) - 12  // menos margen lateral
+    const availH = window.innerHeight - 64  // reservar solo lo justo para controles
+    const byW = Math.min(900, availW)       // tope más amplio (antes 680)
     const byH = Math.floor(availH / 1.414)
     pageWidth = Math.min(byW, byH)
   }
@@ -951,37 +951,56 @@ async function init() {
     }
   })
 
-  // ── Marca de agua — aparece en la barra de controles ─────────────────────
+  // ── Marca de agua ────────────────────────────────────────────────────────
   if (data.watermark_enabled && data.watermark) {
     const wm = data.watermark
-    const controls = document.getElementById('controls')
     const opacity = Math.min(100, Math.max(0, wm.opacity ?? 80)) / 100
+    const isMobile = window.innerWidth < 700
 
-    // Separador
-    const sep = document.createElement('div')
-    sep.className = 'ctrl-sep'
-    controls.appendChild(sep)
-
-    // Enlace de marca de agua dentro de la barra de controles
     const el = document.createElement('a')
     el.id = 'flipbook-watermark'
     el.href = wm.link_url || 'https://intapflipbook.com'
     el.target = '_blank'
     el.rel = 'noopener noreferrer'
     el.textContent = wm.text || 'Creado con Intap Flipbook'
-    el.style.cssText = [
-      'color:rgba(255,255,255,.75)',
-      'font-size:0.7rem',
-      'text-decoration:none',
-      'white-space:nowrap',
-      'flex-shrink:0',
-      'font-family:Inter,sans-serif',
-      `opacity:${opacity}`,
-      'padding:2px 4px',
-    ].join(';')
-    el.addEventListener('mouseenter', () => { el.style.opacity = '1'; el.style.color = '#fff' })
-    el.addEventListener('mouseleave', () => { el.style.opacity = String(opacity); el.style.color = 'rgba(255,255,255,.75)' })
-    controls.appendChild(el)
+
+    if (isMobile) {
+      // En móvil: barra fija propia JUSTO ENCIMA de los controles, siempre visible.
+      el.style.cssText = [
+        'position:fixed',
+        'left:0', 'right:0', 'bottom:56px',  // sobre la barra de navegación
+        'z-index:60',
+        'text-align:center',
+        'color:#fff',
+        'background:rgba(26,26,46,.85)',
+        'font-size:0.7rem',
+        'text-decoration:none',
+        'font-family:Inter,sans-serif',
+        `opacity:${opacity}`,
+        'padding:5px 8px',
+        'pointer-events:auto',
+      ].join(';')
+      document.body.appendChild(el)
+    } else {
+      // En escritorio: dentro de la barra de controles, tras un separador.
+      const controls = document.getElementById('controls')
+      const sep = document.createElement('div')
+      sep.className = 'ctrl-sep'
+      controls.appendChild(sep)
+      el.style.cssText = [
+        'color:rgba(255,255,255,.75)',
+        'font-size:0.7rem',
+        'text-decoration:none',
+        'white-space:nowrap',
+        'flex-shrink:0',
+        'font-family:Inter,sans-serif',
+        `opacity:${opacity}`,
+        'padding:2px 4px',
+      ].join(';')
+      el.addEventListener('mouseenter', () => { el.style.opacity = '1'; el.style.color = '#fff' })
+      el.addEventListener('mouseleave', () => { el.style.opacity = String(opacity); el.style.color = 'rgba(255,255,255,.75)' })
+      controls.appendChild(el)
+    }
   }
 }
 

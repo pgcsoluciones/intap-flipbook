@@ -318,6 +318,34 @@ app.post('/view/:slug/response', async (c) => {
 
 // Cron: degradar planes expirados a free (corre 1x/día vía [triggers].crons en wrangler.toml)
 async function degradeExpiredTenants(db: D1Database) {
+  // 1) Avisar a quienes vencen pronto (dentro de los próximos 5 días), una sola vez por ciclo.
+  //    Evitamos duplicar el aviso buscando una notificación de tipo 'plan_expiry' creada hoy.
+  const { results: expiringSoon } = await db.prepare(
+    `SELECT id, plan_id, plan_expires_at
+     FROM users
+     WHERE plan_id != 'free'
+       AND plan_expires_at IS NOT NULL
+       AND plan_expires_at > datetime('now')
+       AND plan_expires_at <= datetime('now', '+5 days')`
+  ).all<{ id: string; plan_id: string; plan_expires_at: string }>()
+
+  for (const u of expiringSoon) {
+    const already = await db.prepare(
+      `SELECT 1 FROM notifications
+       WHERE user_id = ? AND title LIKE 'Tu plan vence%'
+         AND date(created_at) = date('now') LIMIT 1`
+    ).bind(u.id).first()
+    if (already) continue
+    await db.prepare(
+      `INSERT INTO notifications (user_id, title, message, read) VALUES (?, ?, ?, 0)`
+    ).bind(
+      u.id,
+      `Tu plan ${String(u.plan_id).toUpperCase()} vence pronto`,
+      `Tu plan vence el ${u.plan_expires_at.slice(0, 10)}. Renová tu pago para no perder el acceso a las funciones de tu plan.`
+    ).run()
+  }
+
+  // 2) Degradar a free los planes ya vencidos.
   await db.prepare(
     `UPDATE users
      SET plan_id = 'free', plan_expires_at = NULL

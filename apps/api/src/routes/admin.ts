@@ -268,13 +268,14 @@ admin.post('/plans', async (c) => {
   const body = await c.req.json<any>()
   const id = body.id ?? body.name?.toLowerCase().replace(/\s+/g, '_')
   await c.env.DB.prepare(`
-    INSERT INTO plans (id, name, max_publications, max_pages_per_pub, max_storage_mb, custom_domain, sound_enabled, price_usd, status)
-    VALUES (?,?,?,?,?,?,?,?,?)
+    INSERT INTO plans (id, name, max_publications, max_pages_per_pub, max_storage_mb, custom_domain, sound_enabled, price_usd, status, billing_period, period_days)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)
   `).bind(
     id, body.name,
     body.max_publications ?? null, body.max_pages_per_pub ?? null, body.max_storage_mb ?? null,
     body.custom_domain ? 1 : 0, body.sound_enabled ? 1 : 0,
-    body.price_usd ?? 0, body.status ?? 'active'
+    body.price_usd ?? 0, body.status ?? 'active',
+    body.billing_period ?? 'monthly', body.period_days ?? 30
   ).run()
   return c.json({ success: true, data: { id } })
 })
@@ -286,13 +287,15 @@ admin.put('/plans/:id', async (c) => {
   await c.env.DB.prepare(`
     UPDATE plans SET
       name = ?, max_publications = ?, max_pages_per_pub = ?, max_storage_mb = ?,
-      custom_domain = ?, sound_enabled = ?, price_usd = ?, status = ?
+      custom_domain = ?, sound_enabled = ?, price_usd = ?, status = ?,
+      billing_period = ?, period_days = ?
     WHERE id = ?
   `).bind(
     body.name,
     body.max_publications ?? null, body.max_pages_per_pub ?? null, body.max_storage_mb ?? null,
     body.custom_domain ? 1 : 0, body.sound_enabled ? 1 : 0,
     body.price_usd ?? 0, body.status ?? 'active',
+    body.billing_period ?? 'monthly', body.period_days ?? 30,
     id
   ).run()
   return c.json({ success: true })
@@ -303,7 +306,7 @@ admin.put('/plans/:id', async (c) => {
 // GET /admin/payments
 admin.get('/payments', async (c) => {
   const { results } = await c.env.DB.prepare(`
-    SELECT p.*, u.email, u.name
+    SELECT p.*, u.email AS tenant_email, u.name AS tenant_name
     FROM payments p
     JOIN users u ON u.id = p.user_id
     ORDER BY p.created_at DESC
@@ -316,19 +319,31 @@ admin.get('/payments', async (c) => {
 admin.post('/payments', async (c) => {
   const body = await c.req.json<any>()
   const adminId = c.get('user').sub
+  // El frontend a veces envía `tenant_id` y otras `user_id`: aceptamos ambos.
+  const targetUserId = body.user_id ?? body.tenant_id
+  if (!targetUserId) return c.json({ success: false, error: 'Falta el tenant (user_id).' }, 400)
+  const status = body.status ?? 'paid'
+
+  // Si no mandan period_days, usamos los días de vigencia configurados en el plan.
+  let periodDays = Number(body.period_days)
+  if (!periodDays || isNaN(periodDays)) {
+    const planRow = await c.env.DB.prepare('SELECT period_days FROM plans WHERE id = ?')
+      .bind(body.plan_paid).first<{ period_days: number | null }>()
+    periodDays = planRow?.period_days ?? 30
+  }
+
   const { meta } = await c.env.DB.prepare(`
     INSERT INTO payments (user_id, amount, currency, method, reference, status, plan_paid, period_days, notes, registered_by)
     VALUES (?,?,?,?,?,?,?,?,?,?)
   `).bind(
-    body.user_id, body.amount, body.currency ?? 'USD',
-    body.method, body.reference ?? null, body.status ?? 'paid',
-    body.plan_paid, body.period_days ?? 30, body.notes ?? null, adminId
+    targetUserId, body.amount, body.currency ?? 'USD',
+    body.method, body.reference ?? null, status,
+    body.plan_paid, periodDays, body.notes ?? null, adminId
   ).run()
 
-  if (body.status === 'paid') {
+  if (status === 'paid') {
     const current = await c.env.DB.prepare('SELECT plan_id FROM users WHERE id = ?')
-      .bind(body.user_id).first<{ plan_id: string }>()
-    const periodDays = Number(body.period_days ?? 30)
+      .bind(targetUserId).first<{ plan_id: string }>()
     await c.env.DB.prepare(
       `UPDATE users SET plan_id = ?,
         plan_expires_at = datetime(COALESCE(
@@ -336,13 +351,26 @@ admin.post('/payments', async (c) => {
           datetime('now')
         ), '+' || ? || ' days')
        WHERE id = ?`
-    ).bind(body.plan_paid, periodDays, body.user_id).run()
+    ).bind(body.plan_paid, periodDays, targetUserId).run()
     await c.env.DB.prepare(
       'INSERT INTO plan_history (user_id, from_plan, to_plan, changed_by, reason) VALUES (?,?,?,?,?)'
-    ).bind(body.user_id, current?.plan_id ?? null, body.plan_paid, adminId, 'manual_payment').run()
+    ).bind(targetUserId, current?.plan_id ?? null, body.plan_paid, adminId, 'manual_payment').run()
+    // Notificar al tenant que su pago fue registrado y su plan activado.
+    await c.env.DB.prepare(
+      `INSERT INTO notifications (user_id, title, message, read) VALUES (?, ?, ?, 0)`
+    ).bind(
+      targetUserId,
+      `Pago registrado — plan ${String(body.plan_paid).toUpperCase()} activo`,
+      `Registramos tu pago de ${body.currency ?? 'USD'} ${Number(body.amount).toFixed(2)}. Tu plan ${body.plan_paid} queda activo por ${periodDays} días. ¡Gracias!`
+    ).run()
   }
 
-  return c.json({ success: true, data: { id: meta.last_row_id } })
+  // Devolvemos la fila completa para que el frontend la muestre sin "Invalid Date / $NaN".
+  const row = await c.env.DB.prepare(
+    `SELECT p.*, u.email AS tenant_email, u.name AS tenant_name
+     FROM payments p JOIN users u ON u.id = p.user_id WHERE p.id = ?`
+  ).bind(meta.last_row_id).first()
+  return c.json({ success: true, data: row })
 })
 
 // ─── GATEWAYS ─────────────────────────────────────────────────────────────────

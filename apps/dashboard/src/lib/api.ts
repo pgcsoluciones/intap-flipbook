@@ -46,7 +46,7 @@ export const api = {
         body: JSON.stringify({ email, password }),
       }),
     me: () =>
-      request<{ success: true; data: { id: string; email: string; name: string; slug: string | null; plan_id: string; is_admin?: number } }>('/auth/me'),
+      request<{ success: true; data: { id: string; email: string; name: string; slug: string | null; plan_id: string; is_admin?: number; watermark_tenant?: string | null } }>('/auth/me'),
     updateProfile: (body: { name?: string; slug?: string }) =>
       request<{ success: true; data: any }>('/auth/me', { method: 'PUT', body: JSON.stringify(body) }),
     impersonate: (userId: string) =>

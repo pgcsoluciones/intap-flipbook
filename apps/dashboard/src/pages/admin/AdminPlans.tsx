@@ -27,8 +27,13 @@ interface Plan {
   sound_enabled: boolean
   custom_domain: boolean
   status: 'active' | 'hidden'
+  billing_period?: 'monthly' | 'quarterly' | 'annual' | 'custom'
+  period_days?: number
   tenant_count: number
 }
+
+// Días de vigencia por frecuencia (custom = el admin escribe los días)
+const PERIOD_DAYS: Record<string, number> = { monthly: 30, quarterly: 90, annual: 365 }
 
 // Formulario de plan — usa string para los campos numéricos para poder escribir "ilimitado"
 interface PlanForm {
@@ -40,6 +45,8 @@ interface PlanForm {
   sound_enabled: boolean
   custom_domain: boolean
   status: 'active' | 'hidden'
+  billing_period: 'monthly' | 'quarterly' | 'annual' | 'custom'
+  period_days: string
 }
 
 const EMPTY_FORM: PlanForm = {
@@ -51,6 +58,8 @@ const EMPTY_FORM: PlanForm = {
   sound_enabled: false,
   custom_domain: false,
   status: 'active',
+  billing_period: 'monthly',
+  period_days: '30',
 }
 
 function planToForm(p: Plan): PlanForm {
@@ -63,6 +72,8 @@ function planToForm(p: Plan): PlanForm {
     sound_enabled:     p.sound_enabled,
     custom_domain:     p.custom_domain,
     status:            p.status,
+    billing_period:    p.billing_period ?? 'monthly',
+    period_days:       p.period_days == null ? '30' : String(p.period_days),
   }
 }
 
@@ -78,6 +89,11 @@ function formToBody(f: PlanForm) {
     sound_enabled:     f.sound_enabled,
     custom_domain:     f.custom_domain,
     status:            f.status,
+    billing_period:    f.billing_period,
+    // monthly/quarterly/annual usan días fijos; custom usa lo que escribió el admin
+    period_days:       f.billing_period === 'custom'
+                         ? (Number(f.period_days) || 30)
+                         : PERIOD_DAYS[f.billing_period],
   }
 }
 
@@ -119,11 +135,32 @@ function PlanFormFields({
           onChange={(e) => set('name', e.target.value)} />
       </div>
 
-      <div style={s.fieldGroup}>
-        <label style={s.fieldLabel}>Precio mensual (USD)</label>
-        <input type="number" min={0} step="0.01" style={s.fieldInput} placeholder="0.00" value={form.price_usd}
-          onChange={(e) => set('price_usd', e.target.value)} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={s.fieldGroup}>
+          <label style={s.fieldLabel}>Precio (USD)</label>
+          <input type="number" min={0} step="0.01" style={s.fieldInput} placeholder="0.00" value={form.price_usd}
+            onChange={(e) => set('price_usd', e.target.value)} />
+        </div>
+        <div style={s.fieldGroup}>
+          <label style={s.fieldLabel}>Frecuencia de facturación</label>
+          <select style={s.fieldSelect} value={form.billing_period}
+            onChange={(e) => set('billing_period', e.target.value as PlanForm['billing_period'])}>
+            <option value="monthly">Mensual (30 días)</option>
+            <option value="quarterly">Trimestral (90 días)</option>
+            <option value="annual">Anual (365 días)</option>
+            <option value="custom">Personalizado</option>
+          </select>
+        </div>
       </div>
+
+      {form.billing_period === 'custom' && (
+        <div style={s.fieldGroup}>
+          <label style={s.fieldLabel}>Días de vigencia (personalizado)</label>
+          <input type="number" min={1} style={s.fieldInput} placeholder="Ej: 180" value={form.period_days}
+            onChange={(e) => set('period_days', e.target.value)} />
+          <span style={s.fieldHint}>Cantidad de días que dura el plan tras cada pago.</span>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div style={s.fieldGroup}>
