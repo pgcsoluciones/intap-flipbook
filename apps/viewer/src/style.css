@@ -244,7 +244,7 @@ body {
 
 /* ── Responsive móvil ────────────────────────────────────────────────────── */
 @media (max-width: 700px) {
-  #flipbook-container { padding: 8px 0 0; }
+  #flipbook-container { padding: 8px 4px 0; }
   #thumbnail-panel { bottom: 68px; }
 
   /* Controles más compactos */
@@ -255,6 +255,9 @@ body {
     margin: 10px auto 12px;
   }
   #controls button { font-size: 0.9rem; padding: 3px 5px; }
+
+  /* Marca de agua: si está en la barra, que no ensanche demasiado */
+  #flipbook-watermark { font-size: 0.62rem !important; }
 
   /* Banner: comienza colapsado en móvil, solo se ve la pestaña */
   #flipbook-banner { top: auto; transform: none; bottom: 88px; }

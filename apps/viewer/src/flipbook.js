@@ -117,10 +117,15 @@ async function init() {
 
   const container = document.getElementById('flipbook')
 
-  // índice 0: blank invisible → portada (idx 1) queda sola en lado derecho
-  container.appendChild(makeBlank(pageWidth, pageHeight))
+  // En escritorio agregamos páginas en blanco para que portada/contraportada
+  // queden solas en su lado. En móvil (una sola página visible) NO se agregan,
+  // así la portada (página real 1) es lo primero que se ve.
+  const lead = portrait ? 0 : 1
 
-  // índices 1..realCount: páginas reales
+  // índice 0 (solo escritorio): blank invisible → portada queda sola a la derecha
+  if (!portrait) container.appendChild(makeBlank(pageWidth, pageHeight))
+
+  // índices lead..lead+realCount-1: páginas reales
   const pageDivs = []
   data.pages.forEach((page) => {
     const div = document.createElement('div')
@@ -142,8 +147,12 @@ async function init() {
     container.appendChild(div)
   })
 
-  // índice realCount+1: blank invisible → contraportada (idx realCount) queda sola en lado izquierdo
-  container.appendChild(makeBlank(pageWidth, pageHeight))
+  // blank final (solo escritorio): contraportada queda sola a la izquierda
+  if (!portrait) container.appendChild(makeBlank(pageWidth, pageHeight))
+
+  // Índices de página real dentro del flipbook (incluye blanks en escritorio)
+  const firstIdx = lead                 // primera página real
+  const lastIdx  = lead + realCount - 1 // última página real
 
   await waitForImages(container)
 
@@ -700,6 +709,9 @@ async function init() {
     container.style.transformOrigin = 'center center'
     container.style.transition = 'transform 0.35s ease'
   }
+  // Convierte el índice del flipbook (con blanks) al número de página real (1..realCount)
+  const pageNumOf = (idx) => Math.max(1, Math.min(idx - lead + 1, realCount))
+
   function applyCenter() {
     if (portrait) return
     const idx = pageFlip.getCurrentPageIndex()
@@ -711,21 +723,20 @@ async function init() {
 
   function updatePageInfo() {
     const idx = pageFlip.getCurrentPageIndex()
-    const current = Math.max(1, Math.min(idx, realCount))
-    document.getElementById('page-info').textContent = `${current} / ${realCount}`
+    document.getElementById('page-info').textContent = `${pageNumOf(idx)} / ${realCount}`
   }
 
   // Actualiza estado habilitado/deshabilitado de los botones de navegación
   function updateNavButtons() {
     const idx = pageFlip.getCurrentPageIndex()
-    document.getElementById('btn-prev').disabled = idx <= 1
-    document.getElementById('btn-next').disabled = idx >= realCount
+    document.getElementById('btn-prev').disabled = idx <= firstIdx
+    document.getElementById('btn-next').disabled = idx >= lastIdx
   }
 
   // Actualiza miniatura activa
   function updateActiveThumbnail() {
     const idx = pageFlip.getCurrentPageIndex()
-    const current = Math.max(1, Math.min(idx, realCount))
+    const current = pageNumOf(idx)
     document.querySelectorAll('.thumb-item').forEach((el, i) => {
       el.classList.toggle('active', i + 1 === current)
     })
@@ -734,14 +745,14 @@ async function init() {
   function onFlipChange() {
     const idx = pageFlip.getCurrentPageIndex()
     // Si el swipe/drag llegó a una página en blanco, volver a la real más cercana
-    if (idx <= 0) { pageFlip.flip(1); return }
-    if (idx > realCount) { pageFlip.flip(realCount); return }
+    if (idx < firstIdx) { pageFlip.flip(firstIdx); return }
+    if (idx > lastIdx) { pageFlip.flip(lastIdx); return }
     playFlipSound()
     updatePageInfo()
     applyCenter()
     updateNavButtons()
     updateActiveThumbnail()
-    startPageTimer(idx)
+    startPageTimer(pageNumOf(idx))
   }
 
   pageFlip.on('flip', onFlipChange)
@@ -770,7 +781,7 @@ async function init() {
     item.appendChild(img)
     item.appendChild(label)
     item.addEventListener('click', () => {
-      pageFlip.flip(i + 1)
+      pageFlip.flip(lead + i)
       document.getElementById('thumbnail-panel').classList.remove('open')
     })
     thumbList.appendChild(item)
@@ -782,7 +793,7 @@ async function init() {
     stopAutoplay()
     autoplayTimer = setInterval(() => {
       const idx = pageFlip.getCurrentPageIndex()
-      if (idx >= realCount) { stopAutoplay(); return }
+      if (idx >= lastIdx) { stopAutoplay(); return }
       pageFlip.flipNext()
     }, 3000)
     document.getElementById('btn-autoplay').textContent = '⏸'
@@ -804,41 +815,119 @@ async function init() {
     applyTransform()
   })
 
-  document.getElementById('btn-first').addEventListener('click', () => pageFlip.flip(1))
-  document.getElementById('btn-last').addEventListener('click', () => pageFlip.flip(realCount))
+  document.getElementById('btn-first').addEventListener('click', () => pageFlip.flip(firstIdx))
+  document.getElementById('btn-last').addEventListener('click', () => pageFlip.flip(lastIdx))
 
   document.getElementById('btn-prev').addEventListener('click', () => {
     const idx = pageFlip.getCurrentPageIndex()
-    if (idx > 1) pageFlip.flipPrev()
+    if (idx > firstIdx) pageFlip.flipPrev()
   })
 
   document.getElementById('btn-next').addEventListener('click', () => {
     const idx = pageFlip.getCurrentPageIndex()
-    if (idx < realCount) pageFlip.flipNext()
+    if (idx < lastIdx) pageFlip.flipNext()
   })
 
   document.getElementById('btn-autoplay').addEventListener('click', () => {
     autoplayTimer ? stopAutoplay() : startAutoplay()
   })
 
-  document.getElementById('btn-share').addEventListener('click', () => {
+  // ── Menú de compartir en redes sociales ─────────────────────────────────────
+  function openShareMenu() {
+    // Si ya existe, lo cerramos (toggle)
+    const existing = document.getElementById('share-menu-overlay')
+    if (existing) { existing.remove(); return }
+
     const url = location.href
-    if (navigator.share) {
-      navigator.share({ title: data.title, url }).catch(() => {})
-    } else {
+    const title = data.title || 'Mira este catálogo'
+    const eUrl = encodeURIComponent(url)
+    const eText = encodeURIComponent(`${title} ${url}`)
+
+    // Opciones de compartir: etiqueta, color, icono SVG y enlace destino
+    const opts = [
+      { label: 'WhatsApp', color: '#25D366', href: `https://wa.me/?text=${eText}`,
+        icon: '<path d="M12 2a10 10 0 0 0-8.6 15l-1.3 4.7 4.8-1.3A10 10 0 1 0 12 2zm0 18a8 8 0 0 1-4.1-1.1l-.3-.2-2.8.8.8-2.7-.2-.3A8 8 0 1 1 12 20zm4.4-6c-.2-.1-1.4-.7-1.6-.8s-.4-.1-.6.1-.6.8-.8 1-.3.1-.5 0a6.5 6.5 0 0 1-3.2-2.8c-.2-.4.2-.4.6-1.2.1-.2 0-.3 0-.5l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3A2.8 2.8 0 0 0 6 8.6c0 1.7 1.2 3.3 1.4 3.5s2.4 3.7 5.9 5c2 .8 2.4.7 2.9.6s1.4-.6 1.6-1.1.2-1 .1-1.1-.2-.2-.5-.3z"/>' },
+      { label: 'Facebook', color: '#1877F2', href: `https://www.facebook.com/sharer/sharer.php?u=${eUrl}`,
+        icon: '<path d="M22 12a10 10 0 1 0-11.6 9.9v-7H7.9V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.5h-1.3c-1.2 0-1.6.8-1.6 1.6V12h2.8l-.4 2.9h-2.4v7A10 10 0 0 0 22 12z"/>' },
+      { label: 'X', color: '#000000', href: `https://twitter.com/intent/tweet?url=${eUrl}&text=${encodeURIComponent(title)}`,
+        icon: '<path d="M18.9 2H22l-7.1 8.1L23 22h-6.4l-5-6.6L5.8 22H2.7l7.6-8.7L1.7 2h6.5l4.5 6 5.2-6zm-1.1 18h1.7L7.3 3.8H5.5L17.8 20z"/>' },
+      { label: 'Telegram', color: '#0088CC', href: `https://t.me/share/url?url=${eUrl}&text=${encodeURIComponent(title)}`,
+        icon: '<path d="M21.9 4.3l-3.3 15.5c-.2 1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.3-5 9.1-8.2c.4-.3-.1-.5-.6-.2L6.3 13 1.5 11.5c-1-.3-1-1 .2-1.5l18.7-7.2c.9-.3 1.7.2 1.5 1.5z"/>' },
+      { label: 'Email', color: '#6B7280', href: `mailto:?subject=${encodeURIComponent(title)}&body=${eText}`,
+        icon: '<path d="M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm9 7L4 7v1l8 5 8-5V7l-8 5z"/>' },
+    ]
+
+    const overlay = document.createElement('div')
+    overlay.id = 'share-menu-overlay'
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;'
+
+    const card = document.createElement('div')
+    card.style.cssText = 'background:#fff;border-radius:16px;padding:22px 20px;max-width:360px;width:100%;font-family:Inter,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,.3);'
+
+    const h = document.createElement('div')
+    h.textContent = 'Compartir catálogo'
+    h.style.cssText = 'font-weight:700;font-size:16px;color:#111827;margin-bottom:16px;text-align:center;'
+    card.appendChild(h)
+
+    const grid = document.createElement('div')
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:12px;'
+    opts.forEach((o) => {
+      const a = document.createElement('a')
+      a.href = o.href
+      a.target = '_blank'
+      a.rel = 'noopener noreferrer'
+      a.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;text-decoration:none;color:#374151;font-size:11px;font-weight:600;'
+      a.innerHTML = `<span style="width:46px;height:46px;border-radius:50%;background:${o.color};display:flex;align-items:center;justify-content:center;">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="#fff">${o.icon}</svg></span>${o.label}`
+      a.addEventListener('click', () => setTimeout(() => overlay.remove(), 100))
+      grid.appendChild(a)
+    })
+    card.appendChild(grid)
+
+    // Fila de copiar enlace
+    const copyRow = document.createElement('div')
+    copyRow.style.cssText = 'display:flex;gap:8px;margin-top:18px;'
+    const input = document.createElement('input')
+    input.value = url
+    input.readOnly = true
+    input.style.cssText = 'flex:1;border:1px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:12px;color:#374151;font-family:Inter,sans-serif;'
+    const copyBtn = document.createElement('button')
+    copyBtn.textContent = 'Copiar'
+    copyBtn.style.cssText = 'background:#4F46E5;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-weight:700;font-size:12px;cursor:pointer;font-family:Inter,sans-serif;'
+    copyBtn.addEventListener('click', () => {
       navigator.clipboard.writeText(url).then(() => {
-        const btn = document.getElementById('btn-share')
-        btn.textContent = '✓'
-        setTimeout(() => { btn.textContent = '↗' }, 1500)
+        copyBtn.textContent = '✓ Copiado'
+        setTimeout(() => { copyBtn.textContent = 'Copiar' }, 1500)
       })
+      input.select()
+    })
+    copyRow.appendChild(input)
+    copyRow.appendChild(copyBtn)
+    card.appendChild(copyRow)
+
+    // Botón nativo del sistema (móvil) si está disponible
+    if (navigator.share) {
+      const nativeBtn = document.createElement('button')
+      nativeBtn.textContent = 'Más opciones…'
+      nativeBtn.style.cssText = 'width:100%;margin-top:12px;background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:10px;font-weight:600;font-size:13px;cursor:pointer;font-family:Inter,sans-serif;'
+      nativeBtn.addEventListener('click', () => {
+        navigator.share({ title, url }).catch(() => {})
+      })
+      card.appendChild(nativeBtn)
     }
+
+    overlay.appendChild(card)
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove() })
+    document.body.appendChild(overlay)
+  }
+
+  document.getElementById('btn-share').addEventListener('click', () => {
+    openShareMenu()
   })
 
   document.getElementById('btn-thumbnails').addEventListener('click', () => {
     document.getElementById('thumbnail-panel').classList.toggle('open')
   })
-
-  document.getElementById('btn-print').addEventListener('click', () => window.print())
 
   document.getElementById('btn-fullscreen').addEventListener('click', () => {
     if (!document.fullscreenElement) {
