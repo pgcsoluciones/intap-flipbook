@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { API_BASE } from '../../lib/api'
 
 function authH() {
@@ -26,6 +27,7 @@ function KPI({ icon, label, value, sub }: { icon: string; label: string; value: 
 }
 
 export default function AdminDashboard() {
+  const navigate = useNavigate()
   const [stats, setStats]     = useState<any>(null)
   const [users, setUsers]     = useState<any[]>([])
   const [requests, setReqs]   = useState<any[]>([])
@@ -44,21 +46,9 @@ export default function AdminDashboard() {
       ])
       setStats(s.data)
       setUsers(u.data)
-      setReqs(r.data ?? [])
+      setReqs((r.data ?? []).filter((x: any) => x.status === 'pending'))
     } catch (e: any) { setMsg(e.message) }
     finally { setLoading(false) }
-  }
-
-  async function handleRequest(id: number, action: 'approve' | 'reject') {
-    try {
-      await fetch(`${API_BASE}/admin/plan-requests/${id}`, {
-        method: 'PUT',
-        headers: authH(),
-        body: JSON.stringify({ action }),
-      })
-      setReqs((prev) => prev.filter((r) => r.id !== id))
-      flash(action === 'approve' ? 'Solicitud aprobada.' : 'Solicitud rechazada.')
-    } catch (e: any) { flash(e.message) }
   }
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000) }
@@ -107,7 +97,7 @@ export default function AdminDashboard() {
       {/* Solicitudes pendientes */}
       <section style={s.card}>
         <h2 style={s.cardTitle}>Solicitudes de cambio de plan</h2>
-        {requests.length === 0 ? (
+        {requests.filter(r => r.status === 'pending').length === 0 ? (
           <p style={{ color: '#9ca3af', fontSize: 13 }}>No hay solicitudes pendientes.</p>
         ) : (
           <table style={s.table}>
@@ -115,17 +105,14 @@ export default function AdminDashboard() {
               <tr>{['Tenant', 'Dirección', 'Plan solicitado', 'Fecha', 'Acciones'].map((h) => <th key={h} style={s.th}>{h}</th>)}</tr>
             </thead>
             <tbody>
-              {requests.map((r) => (
+              {requests.filter(r => r.status === 'pending').map((r) => (
                 <tr key={r.id} style={s.tr}>
-                  <td style={s.td}>{r.email ?? r.user_id}</td>
+                  <td style={s.td}><Link to={'/admin/tenants/' + r.user_id} style={{color:'#4f46e5',fontWeight:600,textDecoration:'none'}}>{r.email ?? r.user_id}</Link></td>
                   <td style={s.td}><span style={{ ...s.badge, background: r.direction === 'upgrade' ? '#d1fae5' : '#fee2e2', color: r.direction === 'upgrade' ? '#065f46' : '#991b1b' }}>{r.direction}</span></td>
                   <td style={s.td}>{r.requested_plan}</td>
                   <td style={s.td}>{new Date(r.created_at).toLocaleDateString('es-AR')}</td>
                   <td style={s.td}>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button onClick={() => handleRequest(r.id, 'approve')} style={s.btnApprove}>✓ Aprobar</button>
-                      <button onClick={() => handleRequest(r.id, 'reject')}  style={s.btnReject}>✗ Rechazar</button>
-                    </div>
+                    <button onClick={() => navigate('/admin/tenants/' + r.user_id)} style={{background:'#4f46e5',color:'#fff',border:'none',borderRadius:6,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:600}}>Ver perfil →</button>
                   </td>
                 </tr>
               ))}

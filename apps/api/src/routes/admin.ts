@@ -230,6 +230,21 @@ admin.put('/plan-requests/:id', async (c) => {
     await c.env.DB.prepare(
       'INSERT INTO plan_history (user_id, from_plan, to_plan, changed_by, reason) VALUES (?,?,?,?,?)'
     ).bind(req.user_id, current?.plan_id ?? null, req.requested_plan, adminId, 'plan_request_approved').run()
+    await c.env.DB.prepare(
+      `INSERT INTO notifications (user_id, title, message, read) VALUES (?, ?, ?, 0)`
+    ).bind(
+      req.user_id,
+      `¡Tu plan ${req.requested_plan} está activo!`,
+      `Tu solicitud de cambio al plan ${req.requested_plan} fue aprobada y activada. ¡Gracias por tu confianza!`
+    ).run().catch(() => {})
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO notifications (user_id, title, message, read) VALUES (?, ?, ?, 0)`
+    ).bind(
+      req.user_id,
+      'Solicitud de plan rechazada',
+      `Tu solicitud de cambio al plan ${req.requested_plan} no pudo procesarse en este momento.${body.notes ? ' Motivo: ' + body.notes : ' Contactanos para más información.'}`
+    ).run().catch(() => {})
   }
 
   return c.json({ success: true })

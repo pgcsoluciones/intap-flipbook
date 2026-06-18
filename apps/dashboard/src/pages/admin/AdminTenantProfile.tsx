@@ -87,6 +87,15 @@ export default function AdminTenantProfile() {
   const [msg, setMsg]         = useState('')
   const [msgType, setMsgType] = useState<'ok' | 'err'>('ok')
 
+  // Estado solicitud pendiente de cambio de plan
+  const [pendingReq, setPendingReq] = useState<any>(null)
+
+  // Estados del formulario inline de pago para solicitud pendiente
+  const [payReq, setPayReq] = useState({ amount: '', currency: 'USD', method: 'transfer', reference: '', notes: '' })
+  const [rejectReason, setRejectReason] = useState('')
+  const [showReject, setShowReject] = useState(false)
+  const [reqLoading, setReqLoading] = useState(false)
+
   // Estados de modales
   const [showPlanModal, setShowPlanModal]   = useState(false)
   const [showPayModal, setShowPayModal]     = useState(false)
@@ -108,7 +117,7 @@ export default function AdminTenantProfile() {
   })
   const [payLoading, setPayLoading] = useState(false)
 
-  // Carga inicial: datos del tenant + historial de pagos
+  // Carga inicial: datos del tenant + historial de pagos + solicitud pendiente
   useEffect(() => {
     if (!id) return
     Promise.all([
@@ -127,6 +136,13 @@ export default function AdminTenantProfile() {
       })
       .catch((e) => flash(e.message, 'err'))
       .finally(() => setLoading(false))
+
+    adminFetch<{ data: any[] }>('/plan-requests')
+      .then((r) => {
+        const req = r.data.find((x: any) => x.user_id === id && x.status === 'pending')
+        setPendingReq(req ?? null)
+      })
+      .catch(() => {})
   }, [id])
 
   // Toast temporal: muestra un mensaje 3 segundos y luego desaparece
@@ -196,6 +212,73 @@ export default function AdminTenantProfile() {
       flash(e.message, 'err')
     } finally {
       setPayLoading(false)
+    }
+  }
+
+  async function handleActivateWithPayment() {
+    if (!pendingReq) return
+    setReqLoading(true)
+    try {
+      await adminFetch('/payments', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: id,
+          amount: Number(payReq.amount),
+          currency: payReq.currency,
+          method: payReq.method,
+          reference: payReq.reference,
+          notes: payReq.notes,
+          plan_paid: pendingReq.requested_plan,
+        }),
+      })
+      await adminFetch(`/plan-requests/${pendingReq.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ action: 'approve' }),
+      })
+      setTenant((t) => t ? { ...t, plan_id: pendingReq.requested_plan } as any : t)
+      setPendingReq(null)
+      setPayReq({ amount: '', currency: 'USD', method: 'transfer', reference: '', notes: '' })
+      flash('¡Plan activado y pago registrado!')
+    } catch (e: any) {
+      flash(e.message ?? 'Error', 'err')
+    } finally {
+      setReqLoading(false)
+    }
+  }
+
+  async function handleRejectRequest() {
+    if (!pendingReq) return
+    setReqLoading(true)
+    try {
+      await adminFetch(`/plan-requests/${pendingReq.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ action: 'reject', notes: rejectReason }),
+      })
+      setPendingReq(null)
+      setShowReject(false)
+      setRejectReason('')
+      flash('Solicitud rechazada.')
+    } catch (e: any) {
+      flash(e.message ?? 'Error', 'err')
+    } finally {
+      setReqLoading(false)
+    }
+  }
+
+  async function handleSendPaymentInstructions() {
+    try {
+      await adminFetch('/notifications', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: id,
+          title: 'Instrucciones de pago',
+          message: `Para activar tu plan ${pendingReq?.requested_plan ?? ''}, enviá tu comprobante de pago a soporte@intapflipbook.com indicando tu email registrado.`,
+          type: 'payment_instructions',
+        }),
+      })
+      flash('Instrucciones enviadas al tenant.')
+    } catch (e: any) {
+      flash(e.message ?? 'Error', 'err')
     }
   }
 
@@ -371,6 +454,85 @@ export default function AdminTenantProfile() {
         </div>
 
       </div>
+
+      {pendingReq && (
+        <div style={{ ...s.card, borderLeft: '4px solid #f59e0b', gridColumn: '1 / -1', marginTop: 20 }}>
+          <h2 style={s.cardTitle}>⚠️ Solicitud de cambio de plan pendiente</h2>
+          <div style={s.row}>
+            <span style={s.label}>Plan solicitado</span>
+            <span style={{ ...s.value, fontWeight: 700, color: '#4f46e5', textTransform: 'uppercase' }}>{pendingReq.requested_plan}</span>
+          </div>
+          <div style={s.row}>
+            <span style={s.label}>Dirección</span>
+            <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: pendingReq.direction === 'upgrade' ? '#d1fae5' : '#fee2e2', color: pendingReq.direction === 'upgrade' ? '#065f46' : '#991b1b' }}>{pendingReq.direction}</span>
+          </div>
+          <div style={s.row}>
+            <span style={s.label}>Fecha de solicitud</span>
+            <span style={s.value}>{new Date(pendingReq.created_at).toLocaleDateString('es-AR')}</span>
+          </div>
+          {pendingReq.notes && (
+            <div style={{ ...s.row, alignItems: 'flex-start' }}>
+              <span style={s.label}>Mensaje del tenant</span>
+              <span style={{ ...s.value, fontStyle: 'italic', color: '#6b7280' }}>{pendingReq.notes}</span>
+            </div>
+          )}
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #f3f4f6' }}>
+            <p style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 12 }}>Registrar pago y activar plan</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+              <div>
+                <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 4 }}>Monto</label>
+                <input type="number" placeholder="0.00" value={payReq.amount} onChange={(e) => setPayReq(p => ({ ...p, amount: e.target.value }))} style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' as const }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 4 }}>Moneda</label>
+                <select value={payReq.currency} onChange={(e) => setPayReq(p => ({ ...p, currency: e.target.value }))} style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13 }}>
+                  <option value="USD">USD</option>
+                  <option value="ARS">ARS</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 4 }}>Método</label>
+                <select value={payReq.method} onChange={(e) => setPayReq(p => ({ ...p, method: e.target.value }))} style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13 }}>
+                  <option value="transfer">Transferencia</option>
+                  <option value="cash">Efectivo</option>
+                  <option value="card">Tarjeta</option>
+                  <option value="crypto">Crypto</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 4 }}>Referencia</label>
+                <input type="text" placeholder="N° comprobante" value={payReq.reference} onChange={(e) => setPayReq(p => ({ ...p, reference: e.target.value }))} style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' as const }} />
+              </div>
+            </div>
+            <input type="text" placeholder="Notas del pago (opcional)" value={payReq.notes} onChange={(e) => setPayReq(p => ({ ...p, notes: e.target.value }))} style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, marginBottom: 10, boxSizing: 'border-box' as const }} />
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button onClick={handleActivateWithPayment} disabled={reqLoading || !payReq.amount} style={{ background: '#059669', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontSize: 13, opacity: (!payReq.amount || reqLoading) ? 0.5 : 1 }}>
+                {reqLoading ? '...' : '✓ Activar plan con pago registrado'}
+              </button>
+              <button onClick={handleSendPaymentInstructions} style={{ background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                📨 Enviar instrucciones de pago
+              </button>
+              <button onClick={() => setShowReject(!showReject)} style={{ background: '#fee2e2', color: '#991b1b', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                ✗ Rechazar
+              </button>
+            </div>
+            {showReject && (
+              <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  placeholder="Motivo del rechazo..."
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  style={{ flex: 1, padding: '7px 10px', borderRadius: 7, border: '1px solid #fca5a5', fontSize: 13 }}
+                />
+                <button onClick={handleRejectRequest} disabled={reqLoading} style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                  Confirmar rechazo
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Historial de pagos ── */}
       <div style={{ ...s.card, marginTop: 20 }}>
