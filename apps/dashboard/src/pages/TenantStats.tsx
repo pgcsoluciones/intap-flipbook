@@ -22,12 +22,40 @@ type RecentView = {
   device: string
 }
 
+type PageTime = {
+  page_number: number
+  visits: number
+  avg_ms: number
+}
+
+type ButtonClick = {
+  label: string
+  action_type: string
+  page_number: number
+  clicks: number
+}
+
 type Stats = {
   total_views: number
   published_count: number
   total_pages: number
   publications: FlipbookStat[]
   recent_views: RecentView[]
+  page_times: PageTime[]
+  button_clicks: ButtonClick[]
+}
+
+function fmtDuration(ms: number) {
+  const s = Math.round((ms ?? 0) / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  return `${m}m ${s % 60}s`
+}
+
+const ACTION_LABEL: Record<string, string> = {
+  link: '🔗 Enlace', page: '📄 Ir a página', call: '📞 Llamar', email: '✉️ Email',
+  whatsapp: '💬 WhatsApp', popup_text: '💬 Popup texto', popup_image: '🖼️ Popup imagen',
+  popup_video: '🎬 Popup video', download: '⬇️ Descarga', show_hide: '👁️ Mostrar/ocultar',
 }
 
 const DEVICE_ICON: Record<string, string> = { mobile: '📱', desktop: '💻', tablet: '📋' }
@@ -121,17 +149,19 @@ export default function TenantStats() {
   const [stats, setStats]     = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
+  const [selectedPub, setSelectedPub] = useState<string>('') // '' = todas
 
   useEffect(() => {
     if (!localStorage.getItem('token')) { navigate('/login'); return }
     load()
-  }, [])
+  }, [selectedPub])
 
   async function load() {
     setLoading(true)
     setError(null)
     try {
-      const r = await fetch(`${API_BASE}/auth/stats/my`, { headers: authH() })
+      const qs = selectedPub ? `?publication_id=${encodeURIComponent(selectedPub)}` : ''
+      const r = await fetch(`${API_BASE}/auth/stats/my${qs}`, { headers: authH() })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const d = await r.json()
       if (!d.success) throw new Error(d.error ?? 'Error al cargar estadísticas')
@@ -172,6 +202,10 @@ export default function TenantStats() {
   const publications = stats.publications ?? []
   const recentViews  = stats.recent_views ?? []
   const maxViews     = Math.max(...publications.map((f) => f.views ?? 0), 1)
+  const pageTimes    = stats.page_times ?? []
+  const buttonClicks = stats.button_clicks ?? []
+  const maxAvgMs     = Math.max(...pageTimes.map((p) => p.avg_ms ?? 0), 1)
+  const maxClicks    = Math.max(...buttonClicks.map((b) => b.clicks ?? 0), 1)
 
   return (
     <div style={s.page}>
@@ -180,6 +214,23 @@ export default function TenantStats() {
           <h1 style={s.h1}>Mis estadísticas</h1>
           <p style={s.sub}>Resumen de rendimiento de tus flipbooks</p>
         </div>
+
+        {/* Selector de publicación para el detalle de analíticas */}
+        {publications.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, color: '#6b7280', fontWeight: 600 }}>Analíticas de:</span>
+            <select
+              value={selectedPub}
+              onChange={(e) => setSelectedPub(e.target.value)}
+              style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, background: '#fff', minWidth: 200 }}
+            >
+              <option value="">Todas las publicaciones</option>
+              {publications.map((p) => (
+                <option key={p.id} value={p.id}>{p.title}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Summary cards */}
         <div style={s.summaryRow}>
@@ -219,6 +270,59 @@ export default function TenantStats() {
             <div style={{ ...s.card, minWidth: 180 }}>
               <h2 style={s.cardTitle}>Dispositivos</h2>
               <DeviceDonut views={recentViews} />
+            </div>
+          </div>
+        )}
+
+        {/* Tiempo de permanencia por página */}
+        {pageTimes.length > 0 && (
+          <div style={s.card}>
+            <h2 style={s.cardTitle}>⏱️ Tiempo promedio por página</h2>
+            <div style={s.barList}>
+              {pageTimes
+                .slice()
+                .sort((a, b) => (b.avg_ms ?? 0) - (a.avg_ms ?? 0))
+                .map((pt) => {
+                  const pct = Math.round(((pt.avg_ms ?? 0) / maxAvgMs) * 100)
+                  return (
+                    <div key={pt.page_number} style={s.barRow}>
+                      <div style={s.barLabel}>
+                        <span style={s.barTitle}>Página {pt.page_number}</span>
+                        <span style={s.barCount}>{fmtDuration(pt.avg_ms)} · {pt.visits} visita{pt.visits === 1 ? '' : 's'}</span>
+                      </div>
+                      <div style={s.barTrack}>
+                        <div style={{ ...s.barFill, width: `${pct}%`, background: '#059669' }} />
+                      </div>
+                    </div>
+                  )
+                })}
+            </div>
+          </div>
+        )}
+
+        {/* Botones más clickeados */}
+        {buttonClicks.length > 0 && (
+          <div style={s.card}>
+            <h2 style={s.cardTitle}>🖱️ Botones más clickeados</h2>
+            <div style={s.barList}>
+              {buttonClicks.map((bc, i) => {
+                const pct = Math.round(((bc.clicks ?? 0) / maxClicks) * 100)
+                const kind = ACTION_LABEL[bc.action_type] ?? bc.action_type
+                return (
+                  <div key={i} style={s.barRow}>
+                    <div style={s.barLabel}>
+                      <span style={s.barTitle}>
+                        {bc.label || kind}
+                        <span style={{ color: '#9ca3af', fontWeight: 400 }}> · {kind} · pág {bc.page_number}</span>
+                      </span>
+                      <span style={s.barCount}>{bc.clicks} clic{bc.clicks === 1 ? '' : 's'}</span>
+                    </div>
+                    <div style={s.barTrack}>
+                      <div style={{ ...s.barFill, width: `${pct}%`, background: '#d97706' }} />
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}

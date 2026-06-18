@@ -200,12 +200,50 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
     .bind(sub)
     .all()
 
+  // Filtro opcional por publicación (?publication_id=...) para ver el detalle de una sola
+  const pubFilter = c.req.query('publication_id')
+  const ownedIds = pubs.map((p) => p.id)
+  const scopedIds = pubFilter && ownedIds.includes(pubFilter) ? [pubFilter] : ownedIds
+
+  let pageTimes: unknown[] = []
+  let buttonClicks: unknown[] = []
+  if (scopedIds.length > 0) {
+    const placeholders = scopedIds.map(() => '?').join(',')
+
+    // Tiempo promedio y vistas por número de página
+    const pt = await c.env.DB.prepare(
+      `SELECT page_number,
+              COUNT(*) as visits,
+              AVG(duration_ms) as avg_ms
+       FROM page_events
+       WHERE type = 'page_time' AND duration_ms IS NOT NULL
+         AND publication_id IN (${placeholders})
+       GROUP BY page_number
+       ORDER BY page_number ASC`,
+    ).bind(...scopedIds).all()
+    pageTimes = pt.results
+
+    // Ranking de botones más clickeados
+    const bc = await c.env.DB.prepare(
+      `SELECT label, action_type, page_number, COUNT(*) as clicks
+       FROM page_events
+       WHERE type = 'click'
+         AND publication_id IN (${placeholders})
+       GROUP BY label, action_type, page_number
+       ORDER BY clicks DESC
+       LIMIT 20`,
+    ).bind(...scopedIds).all()
+    buttonClicks = bc.results
+  }
+
   return c.json({ success: true, data: {
     publications: pubs,
     total_views: totalViews,
     published_count: publishedCount,
     total_pages: totalPages,
     recent_views: recentViews,
+    page_times: pageTimes,
+    button_clicks: buttonClicks,
   } })
 })
 

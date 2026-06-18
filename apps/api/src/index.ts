@@ -247,6 +247,34 @@ app.post('/view/:slug/track', async (c) => {
   return c.json({ success: true }, 201)
 })
 
+// Registra un evento de analítica (tiempo en página o clic en botón) — público, fire-and-forget
+app.post('/view/:slug/event', async (c) => {
+  const slug = c.req.param('slug')
+  const pub = await c.env.DB.prepare(
+    `SELECT id FROM publications WHERE public_slug = ? AND status = 'published'`
+  ).bind(slug).first<{ id: string }>()
+  if (!pub) return c.json({ success: false }, 404)
+
+  let body: any = {}
+  try { body = await c.req.json() } catch (_) {}
+
+  const type = body.type === 'click' ? 'click' : 'page_time'
+  const pageNumber = Number.isFinite(Number(body.page_number)) ? Number(body.page_number) : null
+  const label = typeof body.label === 'string' ? body.label.slice(0, 120) : null
+  const actionType = typeof body.action_type === 'string' ? body.action_type.slice(0, 40) : null
+  const durationMs = Number.isFinite(Number(body.duration_ms)) ? Math.max(0, Math.round(Number(body.duration_ms))) : null
+  const device = c.req.header('user-agent')?.includes('Mobi') ? 'mobile' : 'desktop'
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO page_events (publication_id, type, page_number, label, action_type, duration_ms, device)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(pub.id, type, pageNumber, label, actionType, durationMs, device).run()
+  } catch (_) {}
+
+  return c.json({ success: true }, 201)
+})
+
 // Recibe respuestas de formularios / cuestionarios desde el viewer — público (sin auth)
 app.post('/view/:slug/response', async (c) => {
   const slug = c.req.param('slug')

@@ -68,6 +68,36 @@ async function init() {
   // Registrar vista (fire-and-forget — no bloqueamos la carga del flipbook)
   fetch(`${API_BASE}/view/${slug}/track`, { method: 'POST' }).catch(() => {})
 
+  // ── Analítica avanzada (Fase 14): envío fire-and-forget vía sendBeacon ──
+  // sendBeacon entrega los datos aunque el usuario cierre la pestaña.
+  const EVENT_URL = `${API_BASE}/view/${slug}/event`
+  function sendEvent(payload) {
+    try {
+      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' })
+      if (navigator.sendBeacon && navigator.sendBeacon(EVENT_URL, blob)) return
+    } catch (_) {}
+    // Fallback si sendBeacon no está disponible
+    fetch(EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), keepalive: true }).catch(() => {})
+  }
+  // Cronómetro de permanencia por página
+  let trackedPage = 1
+  let pageEnterTime = Date.now()
+  function flushPageTime() {
+    const ms = Date.now() - pageEnterTime
+    if (ms >= 500 && ms < 1000 * 60 * 30) { // ignora rebotes <0.5s y sesiones >30min
+      sendEvent({ type: 'page_time', page_number: trackedPage, duration_ms: ms })
+    }
+  }
+  function startPageTimer(pageNumber) {
+    if (pageNumber === trackedPage) return
+    flushPageTime()
+    trackedPage = pageNumber
+    pageEnterTime = Date.now()
+  }
+  // Al ocultar/cerrar la pestaña, mandar el tiempo de la página actual
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushPageTime() })
+  window.addEventListener('pagehide', flushPageTime)
+
   soundEnabled = true
 
   const portrait = window.innerWidth < 700
@@ -132,6 +162,13 @@ async function init() {
 
   function runAction(a) {
     if (!a || !a.type) return
+    // Analítica: registrar el clic en este botón/enlace
+    sendEvent({
+      type: 'click',
+      page_number: trackedPage,
+      action_type: a.type,
+      label: a.label || a.text || a.url || a.phone || a.email || a.type,
+    })
     switch (a.type) {
       case 'link':
         if (a.url) window.open(a.url, a.target === '_self' ? '_self' : '_blank')
@@ -696,6 +733,7 @@ async function init() {
     applyCenter()
     updateNavButtons()
     updateActiveThumbnail()
+    startPageTimer(idx)
   }
 
   pageFlip.on('flip', onFlipChange)
