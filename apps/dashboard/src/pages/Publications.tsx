@@ -24,7 +24,7 @@ const CAT_OPTIONS = [
   { value: 'otro',       label: 'Otro' },
 ]
 
-const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp']
+const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml']
 
 type Tab = 'active' | 'trash'
 
@@ -48,7 +48,8 @@ export default function Publications() {
 
   // Modal de creación
   // mode: 'choose' (elegir cómo empezar) | 'upload' (cargar imágenes) | 'scratch' (lienzo en blanco)
-  const [mode, setMode]               = useState<'choose' | 'upload' | 'scratch' | 'pdf'>('choose')
+  const [mode, setMode]               = useState<'choose' | 'upload' | 'scratch' | 'pdf' | 'template'>('choose')
+  const [templates, setTemplates]     = useState<any[]>([])
   const [showModal, setShowModal]     = useState(false)
   const [modalFiles, setModalFiles]   = useState<File[]>([])
   const [previews, setPreviews]       = useState<string[]>([])
@@ -69,7 +70,12 @@ export default function Publications() {
       .catch(() => { localStorage.removeItem('token'); navigate('/login') })
       .finally(() => setLoading(false))
     api.folders.list().then((r) => setFolders(r.data ?? [])).catch(() => {})
+    api.templates.list().then((r) => setTemplates(r.data ?? [])).catch(() => {})
   }, [])
+
+  // Carpeta destino actual: solo si hay una carpeta real seleccionada (no 'Todas'/'Sin carpeta')
+  const targetFolderId = (selectedFolder !== 'none' && selectedFolder !== null) ? selectedFolder : null
+  const targetFolderName = targetFolderId ? folders.find((f) => f.id === targetFolderId)?.name : null
 
   // ── Archivos ──────────────────────────────────────────────
   function addFiles(incoming: FileList | null) {
@@ -86,9 +92,10 @@ export default function Publications() {
     setPreviews((prev) => prev.filter((_, j) => j !== i))
   }
 
-  function openModal() {
+  function openModal(startMode: 'choose' | 'scratch' = 'choose') {
     setModalFiles([]); setPreviews([]); setTitle(''); setCategory('catalogo')
-    setModalError(''); setProgress(''); setMode('choose'); setShowModal(true)
+    setModalError(''); setProgress(''); setPdfFile(null); setPdfProgress('')
+    setMode(startMode); setShowModal(true)
   }
 
   function closeModal() {
@@ -170,6 +177,25 @@ export default function Publications() {
     }
   }
 
+  // ── Aplicar plantilla → crea proyecto nuevo (en la carpeta seleccionada si la hay) ──
+  async function handleApplyTemplate(tpl: any) {
+    if (tpl.locked) { alert('Esta plantilla requiere un plan superior. Actualizá tu plan para acceder.'); return }
+    const name = title.trim() || tpl.name
+    setCreating(true); setModalError('')
+    try {
+      const r = await api.templates.apply(tpl.id, { title: name })
+      const pubId = r.data.publication_id
+      // Si hay una carpeta seleccionada, mover el nuevo proyecto a esa carpeta
+      if (targetFolderId) {
+        await api.folders.move(pubId, targetFolderId).catch(() => {})
+      }
+      navigate(`/publications/${pubId}/editor`)
+    } catch (err: any) {
+      setModalError(err.message ?? 'No se pudo aplicar la plantilla.')
+      setCreating(false)
+    }
+  }
+
   // ── Acciones sobre publicaciones ──────────────────────────
   async function handleDelete(id: string) {
     if (!confirm('¿Mover a papelera?')) return
@@ -234,6 +260,7 @@ export default function Publications() {
                 {mode === 'choose' ? 'Nuevo flipbook'
                   : mode === 'scratch' ? 'Empezar desde cero'
                   : mode === 'pdf' ? 'Importar PDF'
+                  : mode === 'template' ? 'Elegí una plantilla'
                   : 'Cargar imágenes'}
               </h2>
               <button style={s.closeBtn} onClick={closeModal} disabled={creating}>✕</button>
@@ -250,12 +277,15 @@ export default function Publications() {
                 <button style={s.choiceCard} onClick={() => setMode('upload')}>
                   <div style={s.choiceIcon}>📤</div>
                   <div style={s.choiceTitle}>Cargar imágenes / archivo</div>
-                  <div style={s.choiceSub}>Subí tus páginas en JPG, PNG o WEBP y se convierten en flipbook.</div>
+                  <div style={s.choiceSub}>Subí tus páginas en JPG, PNG, WEBP o SVG y se convierten en flipbook.</div>
                 </button>
-                <button style={s.choiceCard} onClick={() => { closeModal(); navigate('/templates') }}>
+                <button style={s.choiceCard} onClick={() => setMode('template')}>
                   <div style={s.choiceIcon}>🗂️</div>
                   <div style={s.choiceTitle}>Usar una plantilla</div>
-                  <div style={s.choiceSub}>Partí de un diseño prearmado y personalizalo.</div>
+                  <div style={s.choiceSub}>
+                    Partí de un diseño prearmado y personalizalo.
+                    {targetFolderName && <> Se creará en la carpeta «{targetFolderName}».</>}
+                  </div>
                 </button>
                 <button style={s.choiceCard} onClick={() => setMode('pdf')}>
                   <div style={s.choiceIcon}>📄</div>
@@ -293,6 +323,54 @@ export default function Publications() {
                   </button>
                 </div>
               </form>
+            )}
+
+            {/* ── Paso 2d: elegir plantilla (se aplica a la carpeta seleccionada) ── */}
+            {mode === 'template' && (
+              <div style={s.modalForm}>
+                <div style={s.formField}>
+                  <label style={s.formLabel}>Nombre del flipbook (opcional)</label>
+                  <input
+                    style={s.formInput}
+                    placeholder="Si lo dejás vacío, se usa el nombre de la plantilla"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    disabled={creating}
+                  />
+                </div>
+                {targetFolderName && (
+                  <div style={{ fontSize: 12, color: '#4f46e5', fontWeight: 500 }}>
+                    📁 Se creará dentro de la carpeta «{targetFolderName}».
+                  </div>
+                )}
+                {templates.length === 0 ? (
+                  <p style={{ fontSize: 13, color: '#9ca3af', textAlign: 'center', padding: '20px 0' }}>
+                    No hay plantillas disponibles todavía.
+                  </p>
+                ) : (
+                  <div style={s.tplGrid}>
+                    {templates.map((t) => (
+                      <button
+                        key={t.id}
+                        style={{ ...s.tplCard, ...(t.locked ? { opacity: 0.6 } : {}) }}
+                        disabled={creating}
+                        title={t.locked ? `${t.name} — Requiere plan superior` : `Usar ${t.name}`}
+                        onClick={() => handleApplyTemplate(t)}
+                      >
+                        {t.cover_url
+                          ? <img src={t.cover_url} alt={t.name} style={s.tplImg} />
+                          : <div style={s.tplPlaceholder}>🗂️</div>}
+                        {t.locked && <div style={s.tplLock}>🔒</div>}
+                        <div style={s.tplName}>{t.name}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {modalError && <div style={s.errorText}>{modalError}</div>}
+                <div style={s.modalFooter}>
+                  <button type="button" style={s.btnCancel} onClick={() => setMode('choose')} disabled={creating}>← Volver</button>
+                </div>
+              </div>
             )}
 
             {/* ── Paso 2c: importar PDF ── */}
@@ -366,12 +444,12 @@ export default function Publications() {
               <div style={{ fontSize: 40 }}>📤</div>
               <div style={s.dropTitle}>Arrastrá tus imágenes aquí</div>
               <div style={s.dropSub}>o hacé click para seleccionar</div>
-              <div style={s.dropFormats}>JPG · PNG · WEBP &nbsp;·&nbsp; Múltiples archivos &nbsp;·&nbsp; Máx. 10 MB c/u</div>
+              <div style={s.dropFormats}>JPG · PNG · WEBP · SVG &nbsp;·&nbsp; Múltiples archivos &nbsp;·&nbsp; Máx. 10 MB c/u</div>
               <input
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".jpg,.jpeg,.png,.webp"
+                accept=".jpg,.jpeg,.png,.webp,.svg"
                 style={{ display: 'none' }}
                 onChange={(e) => addFiles(e.target.files)}
               />
@@ -435,7 +513,8 @@ export default function Publications() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <button style={{ ...s.btnNew, whiteSpace: 'nowrap' }} onClick={openModal}>+ Subir</button>
+          <button style={{ ...s.btnGhost, whiteSpace: 'nowrap' }} onClick={() => openModal('scratch')}>+ Crear desde cero</button>
+          <button style={{ ...s.btnNew, whiteSpace: 'nowrap' }} onClick={() => openModal('choose')}>+ Subir</button>
         </div>
       </div>
 
@@ -489,7 +568,7 @@ export default function Publications() {
               <div style={s.emptyTitle}>{search ? 'Sin resultados' : 'Aún no hay archivos'}</div>
               <div style={s.emptySub}>{search ? 'Probá con otro término.' : 'Subí tus imágenes para crear tu primer flipbook.'}</div>
               {!search && (
-                <button style={{ ...s.btnNew, marginTop: 20, padding: '12px 28px', fontSize: 15 }} onClick={openModal}>
+                <button style={{ ...s.btnNew, marginTop: 20, padding: '12px 28px', fontSize: 15 }} onClick={() => openModal('choose')}>
                   Cargar ahora
                 </button>
               )}
@@ -628,6 +707,7 @@ const s: Record<string, React.CSSProperties> = {
   pageTitle: { fontSize: 22, fontWeight: 700, color: '#111827', margin: 0 },
   searchInput: { border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', fontSize: 13, outline: 'none', width: 200, background: '#fff' },
   btnNew:  { background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  btnGhost: { background: '#fff', color: '#4f46e5', border: '1.5px solid #4f46e5', borderRadius: 8, padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 
   tabs:    { display: 'flex', gap: 0, borderBottom: '2px solid #f3f4f6', marginBottom: '1.5rem' },
   tabBtn:  { background: 'none', border: 'none', borderBottom: '2px solid transparent', padding: '10px 18px', fontSize: 13, fontWeight: 500, color: '#6b7280', cursor: 'pointer', marginBottom: -2 },
@@ -667,6 +747,13 @@ const s: Record<string, React.CSSProperties> = {
   choiceIcon:  { fontSize: 28, marginBottom: 6 },
   choiceTitle: { fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 2 },
   choiceSub:   { fontSize: 12.5, color: '#6b7280', lineHeight: 1.4 },
+
+  tplGrid:     { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 10, maxHeight: 320, overflowY: 'auto', padding: '4px 2px' },
+  tplCard:     { position: 'relative', background: '#fafafe', border: '1.5px solid #e5e7eb', borderRadius: 10, padding: 6, cursor: 'pointer', textAlign: 'center', overflow: 'hidden' },
+  tplImg:      { width: '100%', height: 90, objectFit: 'cover', borderRadius: 6, display: 'block' },
+  tplPlaceholder: { width: '100%', height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, background: '#eef2ff', borderRadius: 6 },
+  tplLock:     { position: 'absolute', top: 10, right: 10, fontSize: 16 },
+  tplName:     { fontSize: 11, fontWeight: 600, color: '#374151', marginTop: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
 
   dropZone: {
     margin: '20px 24px 0',
