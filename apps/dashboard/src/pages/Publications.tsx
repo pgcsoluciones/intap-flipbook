@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useIsMobile } from '../hooks/useIsMobile'
+import { BLANK_PAGE_URL } from './EditPublication'
 
 const CATEGORIES: Record<string, string> = {
   catalogo:   'Catálogo',
@@ -46,6 +47,8 @@ export default function Publications() {
   const [newFolderName, setNewFolderName]     = useState('')
 
   // Modal de creación
+  // mode: 'choose' (elegir cómo empezar) | 'upload' (cargar imágenes) | 'scratch' (lienzo en blanco)
+  const [mode, setMode]               = useState<'choose' | 'upload' | 'scratch'>('choose')
   const [showModal, setShowModal]     = useState(false)
   const [modalFiles, setModalFiles]   = useState<File[]>([])
   const [previews, setPreviews]       = useState<string[]>([])
@@ -82,7 +85,7 @@ export default function Publications() {
 
   function openModal() {
     setModalFiles([]); setPreviews([]); setTitle(''); setCategory('catalogo')
-    setModalError(''); setProgress(''); setShowModal(true)
+    setModalError(''); setProgress(''); setMode('choose'); setShowModal(true)
   }
 
   function closeModal() {
@@ -108,6 +111,23 @@ export default function Publications() {
     } catch (err: any) {
       setModalError(err.message ?? 'Error al crear.')
       setCreating(false); setProgress('')
+    }
+  }
+
+  // ── Crear desde cero (lienzo en blanco) ───────────────────
+  async function handleCreateBlank(e: React.FormEvent) {
+    e.preventDefault()
+    if (!title.trim()) { setModalError('El nombre es requerido.'); return }
+    setCreating(true); setModalError('')
+    try {
+      const pubRes = await api.publications.create({ title: title.trim(), description: '', category })
+      const pubId: string = pubRes.data.id
+      // Una primera página en blanco lista para editar
+      await api.pages.add(pubId, { image_url: BLANK_PAGE_URL })
+      navigate(`/publications/${pubId}/editor`)
+    } catch (err: any) {
+      setModalError(err.message ?? 'Error al crear.')
+      setCreating(false)
     }
   }
 
@@ -171,10 +191,68 @@ export default function Publications() {
         <div style={s.overlay} onClick={(e) => e.target === e.currentTarget && closeModal()}>
           <div style={s.modal}>
             <div style={s.modalHeader}>
-              <h2 style={s.modalTitle}>Nuevo flipbook</h2>
+              <h2 style={s.modalTitle}>
+                {mode === 'choose' ? 'Nuevo flipbook'
+                  : mode === 'scratch' ? 'Empezar desde cero'
+                  : 'Cargar imágenes'}
+              </h2>
               <button style={s.closeBtn} onClick={closeModal} disabled={creating}>✕</button>
             </div>
 
+            {/* ── Paso 1: elegir cómo empezar ── */}
+            {mode === 'choose' && (
+              <div style={s.chooseWrap}>
+                <button style={s.choiceCard} onClick={() => setMode('scratch')}>
+                  <div style={s.choiceIcon}>🎨</div>
+                  <div style={s.choiceTitle}>Empezar desde cero</div>
+                  <div style={s.choiceSub}>Abrí el constructor con una página en blanco y diseñá a tu gusto.</div>
+                </button>
+                <button style={s.choiceCard} onClick={() => setMode('upload')}>
+                  <div style={s.choiceIcon}>📤</div>
+                  <div style={s.choiceTitle}>Cargar imágenes / archivo</div>
+                  <div style={s.choiceSub}>Subí tus páginas en JPG, PNG o WEBP y se convierten en flipbook.</div>
+                </button>
+                <button style={s.choiceCard} onClick={() => { closeModal(); navigate('/templates') }}>
+                  <div style={s.choiceIcon}>🗂️</div>
+                  <div style={s.choiceTitle}>Usar una plantilla</div>
+                  <div style={s.choiceSub}>Partí de un diseño prearmado y personalizalo.</div>
+                </button>
+              </div>
+            )}
+
+            {/* ── Paso 2a: desde cero (solo nombre + categoría) ── */}
+            {mode === 'scratch' && (
+              <form onSubmit={handleCreateBlank} style={s.modalForm}>
+                <div style={s.formField}>
+                  <label style={s.formLabel}>Nombre del flipbook *</label>
+                  <input
+                    style={s.formInput}
+                    required autoFocus
+                    placeholder="Ej: Catálogo Temporada 2025"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    disabled={creating}
+                  />
+                </div>
+                <div style={s.formField}>
+                  <label style={s.formLabel}>Categoría</label>
+                  <select style={s.formInput} value={category} onChange={(e) => setCategory(e.target.value)} disabled={creating}>
+                    {CAT_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  </select>
+                </div>
+                {modalError && <div style={s.errorText}>{modalError}</div>}
+                <div style={s.modalFooter}>
+                  <button type="button" style={s.btnCancel} onClick={() => setMode('choose')} disabled={creating}>← Volver</button>
+                  <button type="submit" style={{ ...s.btnCreate, opacity: creating ? 0.7 : 1 }} disabled={creating || !title.trim()}>
+                    {creating ? 'Creando...' : 'Abrir constructor →'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* ── Paso 2b: cargar imágenes ── */}
+            {mode === 'upload' && (
+            <>
             {/* Zona drag & drop */}
             <div
               style={{
@@ -237,12 +315,14 @@ export default function Publications() {
               {progress && <div style={s.progressText}>{progress}</div>}
               {modalError && <div style={s.errorText}>{modalError}</div>}
               <div style={s.modalFooter}>
-                <button type="button" style={s.btnCancel} onClick={closeModal} disabled={creating}>Cancelar</button>
+                <button type="button" style={s.btnCancel} onClick={() => setMode('choose')} disabled={creating}>← Volver</button>
                 <button type="submit" style={{ ...s.btnCreate, opacity: creating ? 0.7 : 1 }} disabled={creating || !title.trim()}>
                   {creating ? 'Creando...' : 'Crear flipbook →'}
                 </button>
               </div>
             </form>
+            </>
+            )}
           </div>
         </div>
       )}
@@ -483,6 +563,12 @@ const s: Record<string, React.CSSProperties> = {
   modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 24px 16px', borderBottom: '1px solid #f3f4f6' },
   modalTitle: { fontSize: 18, fontWeight: 700, color: '#111827', margin: 0 },
   closeBtn:   { background: 'none', border: 'none', fontSize: 18, color: '#9ca3af', cursor: 'pointer', lineHeight: 1 },
+
+  chooseWrap:  { padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 12 },
+  choiceCard:  { display: 'block', width: '100%', textAlign: 'left', background: '#fafafe', border: '1.5px solid #e5e7eb', borderRadius: 12, padding: '16px 18px', cursor: 'pointer', transition: 'border-color .15s, background .15s' },
+  choiceIcon:  { fontSize: 28, marginBottom: 6 },
+  choiceTitle: { fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 2 },
+  choiceSub:   { fontSize: 12.5, color: '#6b7280', lineHeight: 1.4 },
 
   dropZone: {
     margin: '20px 24px 0',

@@ -12,6 +12,12 @@ const ACCEPT_VIDEO = 'video/mp4,video/webm,video/ogg'
 const ACCEPT_IMAGE = 'image/jpeg,image/png,image/webp,image/svg+xml,image/gif'
 const ACCEPT_FILE  = 'application/pdf,application/zip,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png,image/webp'
 
+// Página en blanco: SVG data-URL blanco con proporción A4 retrato. Sirve como
+// image_url de fondo cuando el usuario crea una página desde cero (sin subir nada).
+export const BLANK_PAGE_URL = 'data:image/svg+xml,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1754"><rect width="1240" height="1754" fill="#ffffff"/></svg>',
+)
+
 // ─── Iconos SVG monocromáticos (estilo línea, 20px, stroke uniforme) ──────────
 // "stroke" = trazo. Todos comparten grosor 1.6 y currentColor para mantener
 // consistencia visual en toda la barra de herramientas.
@@ -711,6 +717,18 @@ export default function EditPublication() {
     })
   }
 
+  // Agrega una página en blanco (lienzo blanco) a la publicación actual.
+  // Usa un SVG data-URL blanco como image_url para no requerir subida a R2.
+  async function addBlankPage() {
+    setUploading(true)
+    try {
+      const res = await api.pages.add(id!, { image_url: BLANK_PAGE_URL })
+      setPages((prev) => { const next = [...prev, res.data]; setActivePage(res.data); return next })
+    } catch (e: any) {
+      alert(e.message ?? 'No se pudo agregar la página en blanco')
+    } finally { setUploading(false) }
+  }
+
   // Agrega las páginas de una plantilla a la publicación actual y recarga
   async function useTemplate(tpl: any) {
     if (!confirm(`¿Agregar las páginas de «${tpl.name}» a esta publicación?`)) return
@@ -868,6 +886,7 @@ export default function EditPublication() {
               onDragStart={onDragStart}
               onDropReorder={onDropReorder}
               handleDeletePage={handleDeletePage}
+              addBlankPage={addBlankPage}
               fileInputRef={fileInputRef}
               uploading={uploading}
               fileDrag={fileDrag}
@@ -1044,7 +1063,10 @@ function ContextPanel(p: any) {
             ))}
           </div>
           <button style={cp.primaryBtn} onClick={() => p.fileInputRef.current?.click()} disabled={p.uploading}>
-            {p.uploading ? 'Subiendo...' : '+ Agregar páginas'}
+            {p.uploading ? 'Subiendo...' : '+ Agregar páginas (imagen)'}
+          </button>
+          <button style={cp.secondaryBtn} onClick={p.addBlankPage} disabled={p.uploading}>
+            + Página en blanco
           </button>
         </>
       )
@@ -2156,6 +2178,7 @@ const cp: Record<string, React.CSSProperties> = {
   thumbNum:   { position: 'absolute', bottom: 4, left: 6, background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 3 },
   thumbDel:   { position: 'absolute', top: 4, right: 4, background: 'rgba(239,68,68,0.9)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 11, width: 20, height: 20, cursor: 'pointer', padding: 0 },
   primaryBtn: { width: '100%', background: '#4F46E5', color: '#fff', border: 'none', borderRadius: 8, padding: '10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
+  secondaryBtn: { width: '100%', background: '#fff', color: '#4F46E5', border: '1.5px solid #4F46E5', borderRadius: 8, padding: '10px', cursor: 'pointer', fontSize: 13, fontWeight: 600, marginTop: 8 },
   search:     { width: '100%', boxSizing: 'border-box' as const, border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontSize: 13, marginBottom: 12 },
   empty:      { fontSize: 12, color: '#9ca3af', textAlign: 'center' as const, padding: '20px 0' },
   hint:       { fontSize: 11, color: '#9ca3af', marginTop: 10, marginBottom: 4, lineHeight: 1.5 },
