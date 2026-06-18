@@ -43,6 +43,8 @@ admin.get('/users/:id', async (c) => {
   const user = await c.env.DB.prepare(`
     SELECT u.id, u.email, u.name, u.plan_id, u.is_admin, u.status,
       u.created_at, u.plan_expires_at, u.grace_period_days,
+      u.watermark_override,
+      u.custom_max_publications, u.custom_max_pages, u.custom_max_storage_mb,
       COUNT(DISTINCT p.id) as pub_count,
       COALESCE(SUM(pg.size_bytes), 0) as total_bytes
     FROM users u
