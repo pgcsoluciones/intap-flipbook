@@ -60,14 +60,10 @@ const ACTION_LABEL: Record<string, string> = {
 
 const DEVICE_ICON: Record<string, string> = { mobile: '📱', desktop: '💻', tablet: '📋' }
 
-function timeAgo(dateStr: string) {
-  const diff = Date.now() - new Date(dateStr).getTime()
-  const mins  = Math.floor(diff / 60000)
-  const hours = Math.floor(diff / 3600000)
-  const days  = Math.floor(diff / 86400000)
-  if (mins < 60) return `hace ${mins} min`
-  if (hours < 24) return `hace ${hours} h`
-  return `hace ${days} d`
+// Muestra fecha y hora absolutas (igual que el panel de admin), evitando
+// los "hace -240 min" que se daban por diferencia de zona horaria.
+function fmtDateTime(dateStr: string) {
+  return new Date(dateStr).toLocaleString('es-AR')
 }
 
 // Donut SVG nativo para breakdown de dispositivos.
@@ -334,7 +330,7 @@ export default function TenantStats() {
             <table style={s.table}>
               <thead>
                 <tr>
-                  {['Flipbook', 'Dispositivo', 'Hace'].map((h) => (
+                  {['Flipbook', 'Dispositivo', 'Fecha'].map((h) => (
                     <th key={h} style={s.th}>{h}</th>
                   ))}
                 </tr>
@@ -348,7 +344,7 @@ export default function TenantStats() {
                         {DEVICE_ICON[v.device] ?? '🖥️'} {v.device}
                       </span>
                     </td>
-                    <td style={{ ...s.td, color: '#9ca3af' }}>{timeAgo(v.viewed_at)}</td>
+                    <td style={{ ...s.td, color: '#9ca3af' }}>{fmtDateTime(v.viewed_at)}</td>
                   </tr>
                 ))}
               </tbody>

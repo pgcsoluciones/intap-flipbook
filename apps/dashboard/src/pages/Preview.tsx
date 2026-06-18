@@ -10,10 +10,10 @@ const DEVICES: { key: Device; label: string; icon: string; width: number; height
   { key: 'mobile',  label: 'Móvil',      icon: '📲', width: 390,  height: 844 },
 ]
 
-// QR generado via API pública de Google Charts (sin librerías extras)
+// QR generado vía API pública de qrserver.com (Google Charts fue dado de baja)
 function QRCode({ url }: { url: string }) {
   const encoded = encodeURIComponent(url)
-  const src = `https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encoded}&choe=UTF-8`
+  const src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encoded}`
   return (
     <div style={styles.qrWrap}>
       <img src={src} alt="QR" style={{ width: 160, height: 160, borderRadius: 8 }} />
