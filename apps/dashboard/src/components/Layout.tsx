@@ -68,6 +68,46 @@ interface Props {
   children: React.ReactNode
 }
 
+function NotifModal({ notif, onClose }: { notif: any; onClose: () => void }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff', borderRadius: 12, padding: '28px 28px 20px',
+          maxWidth: 420, width: '90%', boxShadow: '0 8px 40px rgba(0,0,0,.22)',
+          display: 'flex', flexDirection: 'column', gap: 12,
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: 16, color: '#111827', lineHeight: 1.3 }}>{notif.title}</div>
+        <div style={{ fontSize: 14, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{notif.message}</div>
+        {notif.created_at && (
+          <div style={{ fontSize: 11, color: '#9ca3af' }}>
+            {new Date(notif.created_at).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' })}
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+          <button
+            onClick={onClose}
+            style={{
+              background: '#4F46E5', color: '#fff', border: 'none', borderRadius: 8,
+              padding: '8px 20px', fontWeight: 600, fontSize: 14, cursor: 'pointer',
+            }}
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function NotifDropdown({
   notifications,
   onMarkRead,
@@ -79,44 +119,56 @@ function NotifDropdown({
   onClose: () => void
   placement?: 'up' | 'down'
 }) {
+  const [modalNotif, setModalNotif] = useState<any>(null)
   const visible = notifications.slice(0, 5)
+
+  function handleItemClick(n: any) {
+    if (!n.read) onMarkRead(n.id)
+    setModalNotif(n)
+  }
+
   return (
-    <div style={{
-      position: 'absolute',
-      ...(placement === 'down' ? { top: '110%' } : { bottom: '110%' }),
-      right: 0,
-      width: 280,
-      background: '#fff',
-      borderRadius: 10,
-      boxShadow: '0 4px 24px rgba(0,0,0,.18)',
-      zIndex: 200,
-      overflow: 'hidden',
-      border: '1px solid #e5e7eb',
-    }}>
-      <div style={{ padding: '10px 14px', fontWeight: 700, fontSize: 13, borderBottom: '1px solid #f3f4f6', color: '#111827' }}>
-        Notificaciones
-        <button onClick={onClose} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 16, lineHeight: 1 }}>×</button>
+    <>
+      <div style={{
+        position: 'absolute',
+        ...(placement === 'down' ? { top: '110%' } : { bottom: '110%' }),
+        right: 0,
+        width: 280,
+        background: '#fff',
+        borderRadius: 10,
+        boxShadow: '0 4px 24px rgba(0,0,0,.18)',
+        zIndex: 200,
+        overflow: 'hidden',
+        border: '1px solid #e5e7eb',
+      }}>
+        <div style={{ padding: '10px 14px', fontWeight: 700, fontSize: 13, borderBottom: '1px solid #f3f4f6', color: '#111827' }}>
+          Notificaciones
+          <button onClick={onClose} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 16, lineHeight: 1 }}>×</button>
+        </div>
+        {visible.length === 0 ? (
+          <div style={{ padding: '1.5rem', textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Sin notificaciones</div>
+        ) : (
+          visible.map((n) => (
+            <div
+              key={n.id}
+              onClick={() => handleItemClick(n)}
+              style={{
+                padding: '10px 14px',
+                borderBottom: '1px solid #f9fafb',
+                background: n.read ? '#fff' : '#f0f0ff',
+                cursor: 'pointer',
+              }}
+            >
+              <div style={{ fontWeight: n.read ? 400 : 600, fontSize: 13, color: '#111827', marginBottom: 2 }}>{n.title}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.message}</div>
+            </div>
+          ))
+        )}
       </div>
-      {visible.length === 0 ? (
-        <div style={{ padding: '1.5rem', textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Sin notificaciones</div>
-      ) : (
-        visible.map((n) => (
-          <div
-            key={n.id}
-            onClick={() => { if (!n.read) onMarkRead(n.id) }}
-            style={{
-              padding: '10px 14px',
-              borderBottom: '1px solid #f9fafb',
-              background: n.read ? '#fff' : '#f0f0ff',
-              cursor: n.read ? 'default' : 'pointer',
-            }}
-          >
-            <div style={{ fontWeight: n.read ? 400 : 600, fontSize: 13, color: '#111827', marginBottom: 2 }}>{n.title}</div>
-            <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.4 }}>{n.message}</div>
-          </div>
-        ))
+      {modalNotif && (
+        <NotifModal notif={modalNotif} onClose={() => setModalNotif(null)} />
       )}
-    </div>
+    </>
   )
 }
 

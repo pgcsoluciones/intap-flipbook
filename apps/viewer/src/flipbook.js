@@ -106,9 +106,9 @@ async function init() {
     pageWidth = Math.min(390, window.innerWidth - 8)
   } else {
     // En escritorio: llenar lo máximo posible sin que la altura desborde el viewport
-    const availW = Math.floor(window.innerWidth / 2) - 12  // menos margen lateral
+    const availW = Math.floor(window.innerWidth * 0.95 / 2)  // 95% del ancho, dividido por 2 hojas
     const availH = window.innerHeight - 64  // reservar solo lo justo para controles
-    const byW = Math.min(900, availW)       // tope más amplio (antes 680)
+    const byW = Math.min(1100, availW)       // tope más amplio (antes 900)
     const byH = Math.floor(availH / 1.414)
     pageWidth = Math.min(byW, byH)
   }
@@ -170,6 +170,49 @@ async function init() {
   })
 
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
+
+  // ── Flechas laterales de navegación (solo escritorio) ──────────────────────
+  if (!portrait) {
+    const arrowStyle = [
+      'position:absolute',
+      'top:50%',
+      'transform:translateY(-50%)',
+      'width:44px', 'height:44px',
+      'border-radius:50%',
+      'background:rgba(0,0,0,.45)',
+      'border:none',
+      'cursor:pointer',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'z-index:40',
+      'transition:background .2s',
+      'pointer-events:auto',
+    ].join(';')
+    const svgLeft = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`
+    const svgRight = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`
+
+    const btnLeft = document.createElement('button')
+    btnLeft.innerHTML = svgLeft
+    btnLeft.title = 'Página anterior'
+    btnLeft.style.cssText = arrowStyle + ';left:-54px'
+    btnLeft.addEventListener('click', () => document.getElementById('btn-prev').click())
+    btnLeft.addEventListener('mouseenter', () => { btnLeft.style.background = 'rgba(0,0,0,.72)' })
+    btnLeft.addEventListener('mouseleave', () => { btnLeft.style.background = 'rgba(0,0,0,.45)' })
+
+    const btnRight = document.createElement('button')
+    btnRight.innerHTML = svgRight
+    btnRight.title = 'Página siguiente'
+    btnRight.style.cssText = arrowStyle + ';right:-54px'
+    btnRight.addEventListener('click', () => document.getElementById('btn-next').click())
+    btnRight.addEventListener('mouseenter', () => { btnRight.style.background = 'rgba(0,0,0,.72)' })
+    btnRight.addEventListener('mouseleave', () => { btnRight.style.background = 'rgba(0,0,0,.45)' })
+
+    const flipbookContainer = document.getElementById('flipbook-container')
+    if (flipbookContainer.style.position !== 'relative') flipbookContainer.style.position = 'relative'
+    flipbookContainer.appendChild(btnLeft)
+    flipbookContainer.appendChild(btnRight)
+  }
 
   // ── Overlays de elementos del editor + acciones interactivas ──
   // El editor diseña a 580×820 px; aquí escalamos a la página real del viewer.
@@ -938,8 +981,13 @@ async function init() {
   })
 
   document.addEventListener('fullscreenchange', () => {
-    document.getElementById('btn-fullscreen').textContent = document.fullscreenElement ? '⛶' : '⛶'
-    document.getElementById('btn-fullscreen').title = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'
+    const btnFs = document.getElementById('btn-fullscreen')
+    btnFs.title = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'
+    if (document.fullscreenElement) {
+      btnFs.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/></svg>`
+    } else {
+      btnFs.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`
+    }
   })
 
   // Cerrar panel de miniaturas al hacer clic fuera
@@ -965,22 +1013,30 @@ async function init() {
     el.textContent = wm.text || 'Creado con Intap Flipbook'
 
     if (isMobile) {
-      // En móvil: barra fija propia JUSTO ENCIMA de los controles, siempre visible.
+      // En móvil: div absoluto sobre el flipbook-container, centrado horizontalmente,
+      // anclado en la parte inferior. No cubre los controles porque va dentro del contenedor.
+      const container = document.getElementById('flipbook-container')
       el.style.cssText = [
-        'position:fixed',
-        'left:0', 'right:0', 'bottom:56px',  // sobre la barra de navegación
-        'z-index:60',
+        'position:absolute',
+        'left:50%',
+        'transform:translateX(-50%)',
+        'bottom:6px',
+        'z-index:30',
         'text-align:center',
         'color:#fff',
-        'background:rgba(26,26,46,.85)',
-        'font-size:0.7rem',
+        'background:rgba(26,26,46,.75)',
+        'font-size:0.65rem',
         'text-decoration:none',
         'font-family:Inter,sans-serif',
         `opacity:${opacity}`,
-        'padding:5px 8px',
+        'padding:3px 10px',
+        'border-radius:4px',
         'pointer-events:auto',
+        'white-space:nowrap',
       ].join(';')
-      document.body.appendChild(el)
+      // El contenedor debe tener position:relative para que el absolute funcione
+      if (container.style.position !== 'relative') container.style.position = 'relative'
+      container.appendChild(el)
     } else {
       // En escritorio: dentro de la barra de controles, tras un separador.
       const controls = document.getElementById('controls')

@@ -373,6 +373,18 @@ admin.post('/payments', async (c) => {
   return c.json({ success: true, data: row })
 })
 
+// GET /admin/users/:id/payments — historial de pagos de un tenant específico
+admin.get('/users/:id/payments', async (c) => {
+  const id = c.req.param('id')
+  const { results } = await c.env.DB.prepare(`
+    SELECT p.*, u.email AS tenant_email, u.name AS tenant_name
+    FROM payments p JOIN users u ON u.id = p.user_id
+    WHERE p.user_id = ?
+    ORDER BY p.created_at DESC
+  `).bind(id).all()
+  return c.json({ success: true, data: results })
+})
+
 // ─── GATEWAYS ─────────────────────────────────────────────────────────────────
 // Las pasarelas son un conjunto fijo de 5 tipos. Se identifican por `type`
 // (no por id autoincremental) para que el frontend pueda crearlas/togglearlas
@@ -638,19 +650,39 @@ admin.get('/notifications', async (c) => {
 // POST /admin/notifications — send or schedule
 admin.post('/notifications', async (c) => {
   const body = await c.req.json<any>()
-  // If user_id is null or 'all', send to all users
-  if (!body.user_id || body.user_id === 'all') {
+  // Normalizar campos: 'subject' es alias de 'title'; 'in-app' → 'in_app'
+  const title = body.title ?? body.subject ?? ''
+  const channel = (body.channel ?? 'in_app').replace('in-app', 'in_app')
+  const scheduled = body.scheduled_at ?? null
+
+  // Determinar destinatario usando el campo 'recipient' o la lógica legacy (user_id)
+  const recipient = body.recipient  // 'all' | 'specific' | undefined
+  const sendToAll = recipient === 'all' || (!recipient && (!body.user_id || body.user_id === 'all'))
+
+  if (sendToAll) {
     const { results: users } = await c.env.DB.prepare('SELECT id FROM users WHERE is_admin = 0').all<{ id: string }>()
     for (const u of users) {
       await c.env.DB.prepare(
         'INSERT INTO notifications (user_id, title, message, channel, scheduled_at) VALUES (?,?,?,?,?)'
-      ).bind(u.id, body.title, body.message, body.channel ?? 'in_app', body.scheduled_at ?? null).run()
+      ).bind(u.id, title, body.message, channel, scheduled).run()
     }
     return c.json({ success: true, data: { sent: users.length } })
   }
+
+  // Destinatario específico: puede venir como user_id directo o como email en 'specific_tenant'
+  let targetUserId = body.user_id ?? null
+  if (!targetUserId && (recipient === 'specific' || body.specific_tenant)) {
+    const email = body.specific_tenant
+    if (!email) return c.json({ success: false, error: 'Falta specific_tenant (email del destinatario).' }, 400)
+    const found = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>()
+    if (!found) return c.json({ success: false, error: `No se encontró un usuario con email ${email}.` }, 404)
+    targetUserId = found.id
+  }
+  if (!targetUserId) return c.json({ success: false, error: 'Falta el destinatario (user_id o specific_tenant).' }, 400)
+
   await c.env.DB.prepare(
     'INSERT INTO notifications (user_id, title, message, channel, scheduled_at) VALUES (?,?,?,?,?)'
-  ).bind(body.user_id, body.title, body.message, body.channel ?? 'in_app', body.scheduled_at ?? null).run()
+  ).bind(targetUserId, title, body.message, channel, scheduled).run()
   return c.json({ success: true })
 })
 
