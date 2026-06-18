@@ -101,9 +101,17 @@ async function init() {
   soundEnabled = true
 
   const portrait = window.innerWidth < 700
-  const pageWidth = portrait
-    ? Math.min(340, window.innerWidth - 24)
-    : Math.min(440, Math.floor(window.innerWidth / 2) - 60)
+  let pageWidth
+  if (portrait) {
+    pageWidth = Math.min(390, window.innerWidth - 8)
+  } else {
+    // En escritorio: llenar lo máximo posible sin que la altura desborde el viewport
+    const availW = Math.floor(window.innerWidth / 2) - 24
+    const availH = window.innerHeight - 100  // reservar espacio para controles
+    const byW = Math.min(680, availW)
+    const byH = Math.floor(availH / 1.414)
+    pageWidth = Math.min(byW, byH)
+  }
   const pageHeight = Math.floor(pageWidth * 1.414)
   const realCount = data.pages.length
 
@@ -854,38 +862,37 @@ async function init() {
     }
   })
 
-  // ── Marca de agua ──────────────────────────────────────────────────────────
+  // ── Marca de agua — aparece en la barra de controles ─────────────────────
   if (data.watermark_enabled && data.watermark) {
     const wm = data.watermark
+    const controls = document.getElementById('controls')
+    const opacity = Math.min(100, Math.max(0, wm.opacity ?? 80)) / 100
+
+    // Separador
+    const sep = document.createElement('div')
+    sep.className = 'ctrl-sep'
+    controls.appendChild(sep)
+
+    // Enlace de marca de agua dentro de la barra de controles
     const el = document.createElement('a')
     el.id = 'flipbook-watermark'
     el.href = wm.link_url || 'https://intapflipbook.com'
     el.target = '_blank'
     el.rel = 'noopener noreferrer'
     el.textContent = wm.text || 'Creado con Intap Flipbook'
-
-    const pos = wm.position || 'bottom-right'
-    const opacity = Math.min(100, Math.max(0, wm.opacity ?? 80)) / 100
-    const isRight = pos.includes('right')
-    const isBottom = pos.includes('bottom')
-
     el.style.cssText = [
-      'position:fixed',
-      'z-index:2000',
-      'background:rgba(0,0,0,.55)',
-      'color:#fff',
+      'color:rgba(255,255,255,.75)',
       'font-size:0.7rem',
-      'padding:3px 10px',
-      'border-radius:20px',
       'text-decoration:none',
       'white-space:nowrap',
-      'pointer-events:auto',
+      'flex-shrink:0',
+      'font-family:Inter,sans-serif',
       `opacity:${opacity}`,
-      isBottom ? 'bottom:12px' : 'top:12px',
-      isRight ? 'right:12px' : 'left:12px',
+      'padding:2px 4px',
     ].join(';')
-
-    document.body.appendChild(el)
+    el.addEventListener('mouseenter', () => { el.style.opacity = '1'; el.style.color = '#fff' })
+    el.addEventListener('mouseleave', () => { el.style.opacity = String(opacity); el.style.color = 'rgba(255,255,255,.75)' })
+    controls.appendChild(el)
   }
 }
 

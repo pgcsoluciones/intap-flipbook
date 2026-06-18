@@ -201,14 +201,20 @@ app.post('/api/plan-requests', jwtMiddleware, async (c) => {
     .bind(body.requested_plan, 'active').first()
   if (!plan) return c.json({ success: false, error: 'Plan no encontrado' }, 404)
 
+  const currentUser = await c.env.DB.prepare('SELECT plan_id FROM users WHERE id = ?').bind(userId).first<{ plan_id: string }>()
+  const RANK: Record<string, number> = { free: 0, basic: 1, pro: 2 }
+  const currentRank = RANK[currentUser?.plan_id ?? 'free'] ?? 0
+  const requestedRank = RANK[body.requested_plan] ?? 0
+  const direction = requestedRank >= currentRank ? 'upgrade' : 'downgrade'
+
   // Cancelar solicitudes pendientes anteriores del mismo usuario
   await c.env.DB.prepare(
     `UPDATE plan_requests SET status = 'cancelled' WHERE user_id = ? AND status = 'pending'`
   ).bind(userId).run()
 
   const { meta } = await c.env.DB.prepare(
-    `INSERT INTO plan_requests (user_id, requested_plan, status, notes) VALUES (?, ?, 'pending', ?)`
-  ).bind(userId, body.requested_plan, body.notes ?? null).run()
+    `INSERT INTO plan_requests (user_id, requested_plan, direction, status, notes) VALUES (?, ?, ?, 'pending', ?)`
+  ).bind(userId, body.requested_plan, direction, body.notes ?? null).run()
 
   return c.json({ success: true, data: { id: meta.last_row_id } }, 201)
 })
