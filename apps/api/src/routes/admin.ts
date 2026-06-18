@@ -110,6 +110,17 @@ admin.put('/users/:id/limits', async (c) => {
   return c.json({ success: true })
 })
 
+// PUT /admin/users/:id/watermark — fuerza mostrar/ocultar la marca de agua por tenant
+// 'plan' = según el plan (free=muestra, pago=oculta); 'force_show' = siempre; 'force_hide' = nunca
+admin.put('/users/:id/watermark', async (c) => {
+  const id = c.req.param('id')
+  const body = await c.req.json<{ watermark_override?: string }>()
+  const allowed = ['plan', 'force_show', 'force_hide']
+  const value = allowed.includes(body.watermark_override ?? '') ? body.watermark_override : 'plan'
+  await c.env.DB.prepare('UPDATE users SET watermark_override = ? WHERE id = ?').bind(value, id).run()
+  return c.json({ success: true })
+})
+
 // PUT /admin/users/:id/admin — toggle admin flag
 admin.put('/users/:id/admin', async (c) => {
   const id = c.req.param('id')
@@ -443,12 +454,13 @@ admin.get('/promotions', async (c) => {
 admin.post('/promotions', async (c) => {
   const body = await c.req.json<any>()
   const { meta } = await c.env.DB.prepare(`
-    INSERT INTO promotions (title, description, benefit_type, benefit_value, target_plans, cta_text, cta_url, promo_code, starts_at, ends_at, status)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO promotions (title, description, benefit_type, benefit_value, target_plans, cta_text, cta_url, promo_code, image_url, starts_at, ends_at, status)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
   `).bind(
     body.title, body.description, body.benefit_type, String(body.benefit_value),
     typeof body.target_plans === 'string' ? body.target_plans : JSON.stringify(body.target_plans),
     body.cta_text ?? null, body.cta_url ?? null, body.promo_code ?? null,
+    body.image_url ?? null,
     body.starts_at, body.ends_at, body.status ?? 'active'
   ).run()
   return c.json({ success: true, data: { id: meta.last_row_id } })

@@ -17,7 +17,33 @@ function NavIcon({ name }: { name: string }) {
   if (name === 'diamond') return <svg {...props}><path d="M2.7 10.3l9.3 10 9.3-10L17.7 4H6.3L2.7 10.3z"/><path d="M2.7 10.3h18.6"/><path d="M8 4l4 6.3L16 4"/></svg>
   if (name === 'user') return <svg {...props}><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
   if (name === 'shield') return <svg {...props}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+  if (name === 'bell') return <svg {...props}><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+  if (name === 'logout') return <svg {...props}><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
   return null
+}
+
+// Botón de campana reutilizable con burbuja de conteo
+function BellButton({ count, onClick, color = '#fff' }: { count: number; onClick: () => void; color?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Notificaciones"
+      aria-label="Notificaciones"
+      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, borderRadius: 8, position: 'relative', color, display: 'flex', alignItems: 'center' }}
+    >
+      <NavIcon name="bell" />
+      {count > 0 && (
+        <span style={{
+          position: 'absolute', top: -2, right: -2, minWidth: 16, height: 16, padding: '0 4px',
+          borderRadius: 8, background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 700,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+          boxSizing: 'border-box',
+        }}>
+          {count > 9 ? '9+' : count}
+        </span>
+      )}
+    </button>
+  )
 }
 
 const NAV_ITEMS = [
@@ -46,16 +72,18 @@ function NotifDropdown({
   notifications,
   onMarkRead,
   onClose,
+  placement = 'up',
 }: {
   notifications: any[]
   onMarkRead: (id: number | string) => void
   onClose: () => void
+  placement?: 'up' | 'down'
 }) {
   const visible = notifications.slice(0, 5)
   return (
     <div style={{
       position: 'absolute',
-      bottom: '110%',
+      ...(placement === 'down' ? { top: '110%' } : { bottom: '110%' }),
       right: 0,
       width: 280,
       background: '#fff',
@@ -134,6 +162,8 @@ export default function Layout({ children }: Props) {
     navigate('/login')
   }
 
+  const unreadCount = notifications.filter((n) => !n.read).length
+
   // En móvil el sidebar es un cajón deslizable; en escritorio queda fijo.
   const sidebarStyle: React.CSSProperties = isMobile
     ? { ...s.sidebar, transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform .25s ease', boxShadow: drawerOpen ? '0 0 40px rgba(0,0,0,.4)' : 'none' }
@@ -153,16 +183,7 @@ export default function Layout({ children }: Props) {
           <button style={s.hamburger} onClick={() => setDrawerOpen(true)} aria-label="Abrir menú">☰</button>
           <span style={s.mobileLogo}>📖 Intap Flipbook</span>
           <div style={{ marginLeft: 'auto', position: 'relative' }}>
-            <button
-              style={{ ...s.hamburger, fontSize: 20, position: 'relative' }}
-              onClick={() => setNotifOpen((o) => !o)}
-              aria-label="Notificaciones"
-            >
-              🔔
-              {notifications.some((n) => !n.read) && (
-                <span style={s.notifDot} />
-              )}
-            </button>
+            <BellButton count={unreadCount} onClick={() => setNotifOpen((o) => !o)} />
             {notifOpen && (
               <NotifDropdown
                 notifications={notifications}
@@ -172,6 +193,23 @@ export default function Layout({ children }: Props) {
             )}
           </div>
         </header>
+      )}
+
+      {/* Barra superior derecha en escritorio: campana de notificaciones */}
+      {!isMobile && (
+        <div style={{ position: 'fixed', top: isImpersonating ? 36 : 0, right: 0, height: 52, display: 'flex', alignItems: 'center', paddingRight: 20, zIndex: 80 }}>
+          <div style={{ position: 'relative' }}>
+            <BellButton count={unreadCount} onClick={() => setNotifOpen((o) => !o)} color="#4f46e5" />
+            {notifOpen && (
+              <NotifDropdown
+                notifications={notifications}
+                onMarkRead={handleMarkRead}
+                onClose={() => setNotifOpen(false)}
+                placement="down"
+              />
+            )}
+          </div>
+        </div>
       )}
 
       {/* Fondo oscuro al abrir el cajón en móvil */}
@@ -228,26 +266,9 @@ export default function Layout({ children }: Props) {
                   <span style={s.userPlan}>{PLAN_LABELS[user.plan_id] ?? user.plan_id}</span>
                 </div>
               </div>
-              <div style={{ position: 'relative', flexShrink: 0 }}>
-                <button
-                  style={{ ...s.logoutBtn, fontSize: 16 }}
-                  onClick={() => setNotifOpen((o) => !o)}
-                  title="Notificaciones"
-                >
-                  🔔
-                  {notifications.some((n) => !n.read) && (
-                    <span style={s.notifDot} />
-                  )}
-                </button>
-                {notifOpen && (
-                  <NotifDropdown
-                    notifications={notifications}
-                    onMarkRead={handleMarkRead}
-                    onClose={() => setNotifOpen(false)}
-                  />
-                )}
-              </div>
-              <button style={s.logoutBtn} onClick={logout} title="Cerrar sesión">⇠</button>
+              <button style={{ ...s.logoutBtn, display: 'flex', alignItems: 'center' }} onClick={logout} title="Cerrar sesión">
+                <NavIcon name="logout" />
+              </button>
             </>
           )}
         </div>

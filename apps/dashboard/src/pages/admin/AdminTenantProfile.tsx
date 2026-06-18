@@ -280,6 +280,32 @@ export default function AdminTenantProfile() {
           >
             🕵️ Ver como tenant
           </button>
+
+          {/* Marca de agua: forzar mostrar/ocultar para este tenant */}
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #f3f4f6' }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>
+              Marca de agua
+            </label>
+            <select
+              value={(tenant as any).watermark_override ?? 'plan'}
+              onChange={async (e) => {
+                const value = e.target.value
+                try {
+                  await adminFetch(`/users/${id}/watermark`, { method: 'PUT', body: JSON.stringify({ watermark_override: value }) })
+                  setTenant((t) => t ? ({ ...t, watermark_override: value } as Tenant) : t)
+                  setMsg('Marca de agua actualizada'); setMsgType('ok')
+                } catch (err: any) { setMsg(err.message ?? 'Error'); setMsgType('err') }
+              }}
+              style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13 }}
+            >
+              <option value="plan">Según el plan (free: muestra · pago: oculta)</option>
+              <option value="force_show">Forzar mostrar siempre</option>
+              <option value="force_hide">Forzar ocultar siempre</option>
+            </select>
+            <p style={{ fontSize: 11, color: '#9ca3af', margin: '6px 0 0' }}>
+              Para verla en un plan Pro, elegí "Forzar mostrar siempre".
+            </p>
+          </div>
         </div>
 
         {/* ── Card: Estado ── */}
