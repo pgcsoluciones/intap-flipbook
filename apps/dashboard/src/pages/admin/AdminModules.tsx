@@ -22,15 +22,17 @@ type Module = {
 
 // Módulos iniciales (se muestran aunque la API no los tenga aún)
 const SEED_MODULES: Omit<Module, 'active' | 'plans'>[] = [
-  { key: 'editor_canvas',      name: 'Editor en línea',           description: 'Editor visual de páginas con canvas interactivo' },
-  { key: 'active_links',       name: 'Links activos',             description: 'Links clicables en páginas del flipbook' },
-  { key: 'contact_form',       name: 'Formulario de contacto',    description: 'Formulario de contacto embebido en el viewer' },
-  { key: 'qr_viewer',          name: 'QR en viewer',              description: 'Código QR generado automáticamente en el viewer' },
-  { key: 'share_buttons',      name: 'Botones de compartir',      description: 'Botones para compartir en redes sociales' },
-  { key: 'advanced_stats',     name: 'Estadísticas avanzadas',    description: 'Métricas detalladas de visualizaciones y clics' },
-  { key: 'custom_domain',      name: 'Dominio personalizado',     description: 'Permite usar un dominio propio para el viewer' },
-  { key: 'page_sound',         name: 'Sonido al voltear',         description: 'Efecto de sonido al pasar páginas del flipbook' },
-  { key: 'premium_templates',  name: 'Plantillas premium',        description: 'Acceso a plantillas de diseño premium' },
+  { key: 'sound',           name: 'Sonido al voltear',       description: 'Efecto de sonido al pasar páginas en el viewer' },
+  { key: 'editor',          name: 'Editor en línea',          description: 'Editor visual de páginas con canvas interactivo' },
+  { key: 'links',           name: 'Links activos',            description: 'Botones y enlaces clicables dentro del flipbook' },
+  { key: 'contact_form',    name: 'Formulario de contacto',   description: 'Formulario de contacto embebido en el viewer' },
+  { key: 'qr',              name: 'Código QR',                description: 'Código QR descargable generado automáticamente' },
+  { key: 'share_buttons',   name: 'Botones de compartir',     description: 'Botones para compartir en redes sociales' },
+  { key: 'stats_advanced',  name: 'Estadísticas avanzadas',   description: 'Métricas detalladas de visualizaciones y clics' },
+  { key: 'custom_domain',   name: 'Dominio personalizado',    description: 'URL propia para el viewer del flipbook' },
+  { key: 'watermark_hide',  name: 'Ocultar marca de agua',    description: 'Ocultar la marca de agua de Intap en el viewer' },
+  { key: 'templates_basic', name: 'Plantillas Basic',         description: 'Acceso a plantillas del plan Basic' },
+  { key: 'templates_pro',   name: 'Plantillas Pro',           description: 'Acceso a plantillas del plan Pro' },
 ]
 
 const PLANS = ['free', 'basic', 'pro'] as const
@@ -78,7 +80,7 @@ export default function AdminModules() {
     try {
       await adminFetch(`/modules/${m.key}/global`, {
         method: 'PUT',
-        body:   JSON.stringify({ active: newActive }),
+        body:   JSON.stringify({ active: newActive, name: m.name, description: m.description }),
       })
       setModules((prev) => prev.map((mod) => mod.key === m.key ? { ...mod, active: newActive } : mod))
       flash(`Módulo "${m.name}" ${newActive ? 'activado' : 'desactivado'} globalmente.`)
@@ -97,7 +99,7 @@ export default function AdminModules() {
     try {
       await adminFetch(`/modules/${m.key}/plans`, {
         method: 'PUT',
-        body:   JSON.stringify({ plans: newPlans }),
+        body:   JSON.stringify({ plans: newPlans, name: m.name, description: m.description }),
       })
       setModules((prev) => prev.map((mod) => mod.key === m.key ? { ...mod, plans: newPlans } : mod))
     } catch (e: any) {

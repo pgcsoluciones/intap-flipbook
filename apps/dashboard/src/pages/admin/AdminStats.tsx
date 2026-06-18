@@ -31,8 +31,8 @@ function buildStats(raw: any): StatsData {
 type TopPublication = {
   id: string
   title: string
-  tenant_email: string
-  total_views: number
+  email: string
+  views_count: number
 }
 
 type RecentView = {
@@ -72,23 +72,29 @@ export default function AdminStats() {
 
   async function load() {
     setLoading(true)
-    try {
-      const [sr, tr, vr] = await Promise.all([
-        fetch(`${API_BASE}/admin/stats`, { headers: authH() }),
-        fetch(`${API_BASE}/admin/stats/top-publications`, { headers: authH() }),
-        fetch(`${API_BASE}/admin/stats/recent-views`, { headers: authH() }),
-      ])
-      const sd = await sr.json()
-      const td = await tr.json()
-      const vd = await vr.json()
-      if (!sr.ok) throw new Error(sd.error ?? `HTTP ${sr.status}`)
-      if (!tr.ok) throw new Error(td.error ?? `HTTP ${tr.status}`)
-      if (!vr.ok) throw new Error(vd.error ?? `HTTP ${vr.status}`)
-      setStats(buildStats(sd.data))
-      setTopPubs(td.data ?? [])
-      setRecentViews(vd.data ?? [])
-    } catch (e: any) { setMsg(e.message) }
-    finally { setLoading(false) }
+    setMsg('')
+    const errors: string[] = []
+
+    async function safeFetch(url: string) {
+      try {
+        const r = await fetch(url, { headers: authH() })
+        const d = await r.json()
+        if (!r.ok) { errors.push(d.error ?? `HTTP ${r.status}`); return null }
+        return d
+      } catch (e: any) { errors.push(e.message); return null }
+    }
+
+    const [sd, td, vd] = await Promise.all([
+      safeFetch(`${API_BASE}/admin/stats`),
+      safeFetch(`${API_BASE}/admin/stats/top-publications`),
+      safeFetch(`${API_BASE}/admin/stats/recent-views`),
+    ])
+
+    if (sd?.data) setStats(buildStats(sd.data))
+    if (td?.data) setTopPubs(td.data)
+    if (vd?.data) setRecentViews(vd.data)
+    if (errors.length) setMsg(errors[0])
+    setLoading(false)
   }
 
   if (loading) return <div style={{ padding: '3rem', color: '#666' }}>Cargando estadísticas...</div>
@@ -195,11 +201,11 @@ export default function AdminStats() {
                     <span style={{ fontWeight: 600, fontSize: 13 }}>{pub.title}</span>
                   </td>
                   <td style={s.td}>
-                    <span style={{ fontSize: 12, color: '#6b7280' }}>{pub.tenant_email}</span>
+                    <span style={{ fontSize: 12, color: '#6b7280' }}>{pub.email}</span>
                   </td>
                   <td style={s.td}>
                     <span style={{ fontWeight: 700, fontSize: 14, color: '#4f46e5' }}>
-                      {pub.total_views.toLocaleString('es-AR')}
+                      {(pub.views_count ?? 0).toLocaleString('es-AR')}
                     </span>
                   </td>
                 </tr>

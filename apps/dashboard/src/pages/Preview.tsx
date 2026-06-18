@@ -10,10 +10,10 @@ const DEVICES: { key: Device; label: string; icon: string; width: number; height
   { key: 'mobile',  label: 'Móvil',      icon: '📲', width: 390,  height: 844 },
 ]
 
-// QR generado via API pública de Google Charts (sin librerías extras)
+// QR generado vía API pública de qrserver.com (Google Charts fue dado de baja)
 function QRCode({ url }: { url: string }) {
   const encoded = encodeURIComponent(url)
-  const src = `https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encoded}&choe=UTF-8`
+  const src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encoded}`
   return (
     <div style={styles.qrWrap}>
       <img src={src} alt="QR" style={{ width: 160, height: 160, borderRadius: 8 }} />
@@ -31,15 +31,21 @@ export default function Preview() {
   const [toggling, setToggling] = useState(false)
   const [msg, setMsg]         = useState('')
 
-  const VIEWER_BASE = import.meta.env.VITE_VIEWER_BASE_URL ?? 'https://intap-flipbook-viewer.pages.dev'
+  const VIEWER_BASE = import.meta.env.VITE_VIEWER_BASE_URL ?? 'https://flip.intaprd.com'
+  const [tenantSlug, setTenantSlug] = useState<string | null>(null)
 
   useEffect(() => {
     if (id) api.publications.get(id).then((r) => setPub(r.data))
+    api.auth.me().then((r) => setTenantSlug(r.data.slug ?? null)).catch(() => {})
   }, [id])
 
   if (!pub) return <div style={{ textAlign: 'center', padding: '4rem', color: '#666' }}>Cargando...</div>
 
-  const viewerUrl  = pub.public_slug ? `${VIEWER_BASE}/view/${pub.public_slug}` : null
+  // URL pública: flip.intaprd.com/{slug-tenant}/{slug-flipbook}.
+  // Si el usuario aún no tiene slug de tenant, usamos solo el del flipbook.
+  const viewerUrl = pub.public_slug
+    ? `${VIEWER_BASE}/${tenantSlug ? tenantSlug + '/' : ''}${pub.public_slug}`
+    : null
   const isPublished = pub.status === 'published'
   const dev = DEVICES.find((d) => d.key === device)!
 

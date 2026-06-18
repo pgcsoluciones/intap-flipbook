@@ -14,17 +14,31 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...(init.headers ?? {}),
     },
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+  const raw = await res.text()
+  let data: any = null
+  try {
+    data = raw ? JSON.parse(raw) : null
+  } catch {
+    // La respuesta no es JSON (p. ej. "404 Not Found" de una ruta no desplegada)
+    if (!res.ok) {
+      throw new Error(
+        res.status === 404
+          ? 'Esta función aún no está disponible en el servidor (falta desplegar la API).'
+          : `Error ${res.status}: ${raw.slice(0, 120)}`,
+      )
+    }
+    throw new Error('Respuesta inválida del servidor')
+  }
+  if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
   return data
 }
 
 export const api = {
   auth: {
-    register: (email: string, password: string, name?: string) =>
+    register: (email: string, password: string, name?: string, slug?: string) =>
       request<{ success: true; data: { token: string } }>('/auth/register', {
         method: 'POST',
-        body: JSON.stringify({ email, password, name }),
+        body: JSON.stringify({ email, password, name, slug }),
       }),
     login: (email: string, password: string) =>
       request<{ success: true; data: { token: string } }>('/auth/login', {
@@ -32,7 +46,11 @@ export const api = {
         body: JSON.stringify({ email, password }),
       }),
     me: () =>
-      request<{ success: true; data: { id: string; email: string; name: string; plan_id: string } }>('/auth/me'),
+      request<{ success: true; data: { id: string; email: string; name: string; slug: string | null; plan_id: string; is_admin?: number } }>('/auth/me'),
+    updateProfile: (body: { name?: string; slug?: string }) =>
+      request<{ success: true; data: any }>('/auth/me', { method: 'PUT', body: JSON.stringify(body) }),
+    impersonate: (userId: string) =>
+      request<{ success: true; data: { token: string; user: any } }>(`/admin/users/${userId}/impersonate`, { method: 'POST' }),
   },
 
   publications: {
@@ -69,6 +87,56 @@ export const api = {
 
   plan: {
     usage: () => request<{ success: true; data: any }>('/api/me/usage'),
+  },
+
+  templates: {
+    list: () => request<{ success: true; data: any[] }>('/api/templates'),
+    apply: (templateId: number | string, body: { publication_id?: string; title?: string }) =>
+      request<{ success: true; data: { publication_id: string; pages_added: number } }>(
+        `/api/templates/${templateId}/apply`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+  },
+
+  resources: {
+    list: () => request<{ success: true; data: any[] }>('/api/resources'),
+  },
+
+  folders: {
+    list: () => request<{ success: true; data: any[] }>('/api/folders'),
+    create: (name: string) => request<{ success: true; data: any }>('/api/folders', { method: 'POST', body: JSON.stringify({ name }) }),
+    rename: (id: string, name: string) => request<{ success: true }>(`/api/folders/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
+    remove: (id: string) => request<{ success: true }>(`/api/folders/${id}`, { method: 'DELETE' }),
+    move: (pubId: string, folder_id: string | null) =>
+      request<{ success: true }>(`/api/publications/${pubId}/folder`, { method: 'PATCH', body: JSON.stringify({ folder_id }) }),
+  },
+
+  modules: {
+    myModules: () => request<{ success: true; data: any[] }>('/api/me/modules'),
+    tenantModules: (userId: string) => request<{ success: true; data: any[] }>(`/admin/users/${userId}/modules`),
+    toggleTenantModule: (userId: string, key: string, enabled: boolean) =>
+      request<{ success: true }>(`/admin/users/${userId}/modules/${key}`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
+  },
+
+  planRequests: {
+    create: (requested_plan: string, notes?: string) =>
+      request<{ success: true; data: { id: number } }>('/api/plan-requests', {
+        method: 'POST',
+        body: JSON.stringify({ requested_plan, notes }),
+      }),
+    list: () => request<{ success: true; data: any[] }>('/api/plan-requests'),
+  },
+
+  notifications: {
+    list: () => request<{ success: true; data: any[] }>('/api/notifications'),
+    markRead: (id: number | string) => request<{ success: true }>(`/api/notifications/${id}/read`, { method: 'PATCH' }),
+  },
+
+  responses: {
+    list: () => request<{ success: true; data: any[] }>('/api/responses'),
+    unreadCount: () => request<{ success: true; data: { count: number } }>('/api/responses/unread-count'),
+    markRead: (id: number | string) => request<{ success: true }>(`/api/responses/${id}/read`, { method: 'PATCH' }),
+    remove: (id: number | string) => request<{ success: true }>(`/api/responses/${id}`, { method: 'DELETE' }),
   },
 
   upload: (file: File) => {

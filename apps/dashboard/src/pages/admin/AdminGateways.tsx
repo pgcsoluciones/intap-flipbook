@@ -119,7 +119,7 @@ export default function AdminGateways() {
   async function handleToggle(g: Gateway) {
     const newActive = !g.active
     try {
-      await adminFetch(`/gateways/${g.id}/toggle`, {
+      await adminFetch(`/gateways/${g.type}/toggle`, {
         method: 'PATCH',
         body:   JSON.stringify({ active: newActive }),
       })
@@ -146,11 +146,11 @@ export default function AdminGateways() {
     setError('')
     try {
       const draft = drafts[g.type] ?? { config_json: {}, instructions: '' }
-      const res = await adminFetch<{ data: Gateway }>(`/gateways/${g.id}`, {
+      const res = await adminFetch<{ data: Gateway }>(`/gateways/${g.type}`, {
         method: 'PUT',
-        body:   JSON.stringify({ config_json: draft.config_json, instructions: draft.instructions }),
+        body:   JSON.stringify({ name: GATEWAY_DEFS.find((d) => d.type === g.type)?.label, config_json: draft.config_json, instructions: draft.instructions }),
       })
-      setGateways((prev) => prev.map((gw) => gw.type === g.type ? res.data : gw))
+      setGateways((prev) => prev.map((gw) => gw.type === g.type ? { ...gw, ...res.data } : gw))
       flash('Configuración guardada.')
     } catch (e: any) {
       setError(e.message)

@@ -51,12 +51,77 @@ app.get('/api/me/usage', jwtMiddleware, async (c) => {
   return c.json({ success: true, data: usage })
 })
 
+// Módulos activos para este tenant
+app.get('/api/me/modules', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { results } = await c.env.DB.prepare(
+    `SELECT m.key, m.name, m.description,
+            COALESCE(tm.enabled, m.active_globally) as enabled
+     FROM modules m
+     LEFT JOIN tenant_modules tm ON tm.module_key = m.key AND tm.user_id = ?
+     WHERE m.active_globally = 1 OR tm.enabled = 1
+     ORDER BY m.key ASC`
+  ).bind(userId).all()
+  return c.json({ success: true, data: results })
+})
+
+// ── Carpetas ──────────────────────────────────────────────────────────────────
+app.get('/api/folders', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { results } = await c.env.DB.prepare(
+    `SELECT f.id, f.name, f.created_at, COUNT(p.id) as pub_count
+     FROM folders f
+     LEFT JOIN publications p ON p.folder_id = f.id
+     WHERE f.user_id = ?
+     GROUP BY f.id ORDER BY f.name ASC`
+  ).bind(userId).all()
+  return c.json({ success: true, data: results })
+})
+
+app.post('/api/folders', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const body = await c.req.json<{ name: string }>()
+  if (!body.name?.trim()) return c.json({ success: false, error: 'El nombre es requerido' }, 400)
+  const id = crypto.randomUUID()
+  await c.env.DB.prepare('INSERT INTO folders (id, user_id, name) VALUES (?,?,?)').bind(id, userId, body.name.trim()).run()
+  return c.json({ success: true, data: { id, name: body.name.trim(), pub_count: 0 } }, 201)
+})
+
+app.put('/api/folders/:id', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const fid = c.req.param('id')
+  const body = await c.req.json<{ name: string }>()
+  if (!body.name?.trim()) return c.json({ success: false, error: 'El nombre es requerido' }, 400)
+  await c.env.DB.prepare('UPDATE folders SET name = ? WHERE id = ? AND user_id = ?').bind(body.name.trim(), fid, userId).run()
+  return c.json({ success: true })
+})
+
+app.delete('/api/folders/:id', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const fid = c.req.param('id')
+  await c.env.DB.prepare('UPDATE publications SET folder_id = NULL WHERE folder_id = ? AND user_id = ?').bind(fid, userId).run()
+  await c.env.DB.prepare('DELETE FROM folders WHERE id = ? AND user_id = ?').bind(fid, userId).run()
+  return c.json({ success: true })
+})
+
+app.patch('/api/publications/:id/folder', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const pubId = c.req.param('id')
+  const body = await c.req.json<{ folder_id: string | null }>()
+  await c.env.DB.prepare('UPDATE publications SET folder_id = ? WHERE id = ? AND user_id = ?')
+    .bind(body.folder_id ?? null, pubId, userId).run()
+  return c.json({ success: true })
+})
+
 // Public viewer endpoint — no auth required
 app.get('/view/:slug', async (c) => {
   const slug = c.req.param('slug')
   const pub = await c.env.DB.prepare(
-    `SELECT id, title, description, cover_image_url, sound_enabled
-     FROM publications WHERE public_slug = ? AND status = 'published'`,
+    `SELECT p.id, p.title, p.description, p.cover_image_url, p.sound_enabled,
+            u.plan_id, u.watermark_override, u.watermark_tenant
+     FROM publications p
+     JOIN users u ON u.id = p.user_id
+     WHERE p.public_slug = ? AND p.status = 'published'`,
   )
     .bind(slug)
     .first<{
@@ -65,25 +130,206 @@ app.get('/view/:slug', async (c) => {
       description: string | null
       cover_image_url: string | null
       sound_enabled: number
+      plan_id: string
+      watermark_override: string
+      watermark_tenant: string | null
     }>()
 
   if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
 
-  const { results: pages } = await c.env.DB.prepare(
-    `SELECT id, page_number, image_url, title, description, price
-     FROM pages WHERE publication_id = ? ORDER BY page_number ASC`,
-  )
-    .bind(pub.id)
-    .all()
+  const [{ results: pages }, wmConfig] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id, page_number, image_url, title, description, price, canvas_json
+       FROM pages WHERE publication_id = ? ORDER BY page_number ASC`,
+    ).bind(pub.id).all(),
+    c.env.DB.prepare('SELECT text, link_url, position, opacity FROM watermark_config WHERE id = 1').first<{
+      text: string; link_url: string; position: string; opacity: number
+    }>(),
+  ])
+
+  // Prioridad: 1) free siempre activa, 2) elección del tenant, 3) override del admin, 4) default por plan
+  const planIsFree = pub.plan_id === 'free'
+  const tenantChoice = pub.watermark_tenant   // 'show' | 'hide' | null
+  const adminOverride = pub.watermark_override ?? 'plan'  // 'force_show' | 'force_hide' | 'plan'
+  const planDefault = pub.plan_id === 'basic'  // basic=true(activa), pro=false(oculta)
+  const watermarkEnabled =
+    planIsFree ? true :
+    tenantChoice === 'show' ? true :
+    tenantChoice === 'hide' ? false :
+    adminOverride === 'force_show' ? true :
+    adminOverride === 'force_hide' ? false :
+    planDefault
 
   return c.json({
     success: true,
     data: {
-      ...pub,
+      id: pub.id,
+      title: pub.title,
+      description: pub.description,
+      cover_image_url: pub.cover_image_url,
       sound_enabled: pub.sound_enabled === 1,
+      watermark_enabled: watermarkEnabled,
+      watermark: wmConfig ?? { text: 'Intap Flipbook', link_url: 'https://intapflipbook.com', position: 'bottom-right', opacity: 80 },
       pages,
     },
   })
 })
 
-export default app
+// Tenant: listar sus notificaciones (con auth)
+app.get('/api/notifications', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, title, message, read, created_at
+     FROM notifications
+     WHERE user_id = ? OR user_id IS NULL
+     ORDER BY created_at DESC LIMIT 30`
+  ).bind(userId).all()
+  return c.json({ success: true, data: results })
+})
+
+// Tenant: marcar notificación como leída
+app.patch('/api/notifications/:id/read', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const id = c.req.param('id')
+  await c.env.DB.prepare(
+    `UPDATE notifications SET read = 1 WHERE id = ? AND (user_id = ? OR user_id IS NULL)`
+  ).bind(id, userId).run()
+  return c.json({ success: true })
+})
+
+// Tenant: solicitar cambio de plan
+app.post('/api/plan-requests', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const body = await c.req.json<{ requested_plan: string; notes?: string }>().catch(() => ({}))
+  if (!body.requested_plan) return c.json({ success: false, error: 'requested_plan es requerido' }, 400)
+
+  const plan = await c.env.DB.prepare('SELECT id FROM plans WHERE id = ? AND status = ?')
+    .bind(body.requested_plan, 'active').first()
+  if (!plan) return c.json({ success: false, error: 'Plan no encontrado' }, 404)
+
+  const currentUser = await c.env.DB.prepare('SELECT plan_id FROM users WHERE id = ?').bind(userId).first<{ plan_id: string }>()
+  const RANK: Record<string, number> = { free: 0, basic: 1, pro: 2 }
+  const currentRank = RANK[currentUser?.plan_id ?? 'free'] ?? 0
+  const requestedRank = RANK[body.requested_plan] ?? 0
+  const direction = requestedRank >= currentRank ? 'upgrade' : 'downgrade'
+
+  // Cancelar solicitudes pendientes anteriores del mismo usuario
+  await c.env.DB.prepare(
+    `UPDATE plan_requests SET status = 'cancelled' WHERE user_id = ? AND status = 'pending'`
+  ).bind(userId).run()
+
+  const { meta } = await c.env.DB.prepare(
+    `INSERT INTO plan_requests (user_id, requested_plan, direction, status, notes) VALUES (?, ?, ?, 'pending', ?)`
+  ).bind(userId, body.requested_plan, direction, body.notes ?? null).run()
+
+  return c.json({ success: true, data: { id: meta.last_row_id } }, 201)
+})
+
+// Tenant: ver sus solicitudes de plan
+app.get('/api/plan-requests', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { results } = await c.env.DB.prepare(
+    `SELECT pr.*, p.name as plan_name FROM plan_requests pr
+     LEFT JOIN plans p ON p.id = pr.requested_plan
+     WHERE pr.user_id = ? ORDER BY pr.created_at DESC LIMIT 10`
+  ).bind(userId).all()
+  return c.json({ success: true, data: results })
+})
+
+// Registra una vista de publicación — público (sin auth), fire-and-forget
+app.post('/view/:slug/track', async (c) => {
+  const slug = c.req.param('slug')
+  const pub = await c.env.DB.prepare(
+    `SELECT id FROM publications WHERE public_slug = ? AND status = 'published'`
+  ).bind(slug).first<{ id: string }>()
+  if (!pub) return c.json({ success: false }, 404)
+
+  const device = c.req.header('user-agent')?.includes('Mobi') ? 'mobile' : 'desktop'
+  try {
+    await Promise.all([
+      c.env.DB.prepare(
+        `INSERT INTO publication_views (publication_id, device) VALUES (?, ?)`
+      ).bind(pub.id, device).run(),
+      c.env.DB.prepare(
+        `UPDATE publications SET views_count = views_count + 1 WHERE id = ?`
+      ).bind(pub.id).run(),
+    ])
+  } catch (_) {}
+
+  return c.json({ success: true }, 201)
+})
+
+// Registra un evento de analítica (tiempo en página o clic en botón) — público, fire-and-forget
+app.post('/view/:slug/event', async (c) => {
+  const slug = c.req.param('slug')
+  const pub = await c.env.DB.prepare(
+    `SELECT id FROM publications WHERE public_slug = ? AND status = 'published'`
+  ).bind(slug).first<{ id: string }>()
+  if (!pub) return c.json({ success: false }, 404)
+
+  let body: any = {}
+  try { body = await c.req.json() } catch (_) {}
+
+  const type = body.type === 'click' ? 'click' : 'page_time'
+  const pageNumber = Number.isFinite(Number(body.page_number)) ? Number(body.page_number) : null
+  const label = typeof body.label === 'string' ? body.label.slice(0, 120) : null
+  const actionType = typeof body.action_type === 'string' ? body.action_type.slice(0, 40) : null
+  const durationMs = Number.isFinite(Number(body.duration_ms)) ? Math.max(0, Math.round(Number(body.duration_ms))) : null
+  const device = c.req.header('user-agent')?.includes('Mobi') ? 'mobile' : 'desktop'
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO page_events (publication_id, type, page_number, label, action_type, duration_ms, device)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(pub.id, type, pageNumber, label, actionType, durationMs, device).run()
+  } catch (_) {}
+
+  return c.json({ success: true }, 201)
+})
+
+// Recibe respuestas de formularios / cuestionarios desde el viewer — público (sin auth)
+app.post('/view/:slug/response', async (c) => {
+  const slug = c.req.param('slug')
+  const pub = await c.env.DB.prepare(
+    `SELECT id, user_id FROM publications WHERE public_slug = ? AND status = 'published'`,
+  )
+    .bind(slug)
+    .first<{ id: string; user_id: string }>()
+  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+
+  const body = await c.req.json<{ kind?: string; widget_key?: string; payload?: any }>().catch(() => ({}))
+  const kind = body.kind === 'quiz' ? 'quiz' : 'contact'
+  const payload = typeof body.payload === 'string' ? body.payload : JSON.stringify(body.payload ?? {})
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO form_responses (publication_id, owner_id, kind, widget_key, payload)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+      .bind(pub.id, pub.user_id, kind, body.widget_key ?? null, payload)
+      .run()
+  } catch (e) {
+    // Si la tabla aún no existe, no romper el viewer
+    return c.json({ success: false, error: 'No se pudo guardar la respuesta' }, 500)
+  }
+
+  return c.json({ success: true }, 201)
+})
+
+// Cron: degradar planes expirados a free (corre 1x/día vía [triggers].crons en wrangler.toml)
+async function degradeExpiredTenants(db: D1Database) {
+  await db.prepare(
+    `UPDATE users
+     SET plan_id = 'free', plan_expires_at = NULL
+     WHERE plan_id != 'free'
+       AND plan_expires_at IS NOT NULL
+       AND plan_expires_at < datetime('now')`
+  ).run()
+}
+
+export default {
+  fetch: app.fetch,
+  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
+    await degradeExpiredTenants(env.DB)
+  },
+}

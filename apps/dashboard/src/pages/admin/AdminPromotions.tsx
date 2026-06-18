@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { API_BASE } from '../../lib/api'
+import FileField from '../../components/FileField'
 
 function authH() {
   const t = localStorage.getItem('token')
@@ -32,6 +33,7 @@ const EMPTY_FORM = {
   promo_code: '',
   start_date: '',
   end_date: '',
+  image_url: '',
   status: 'programada' as Promotion['status'],
 }
 
@@ -75,7 +77,16 @@ export default function AdminPromotions() {
       const r = await fetch(`${API_BASE}/admin/promotions`, { headers: authH() })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`)
-      setPromos(d.data ?? [])
+      // Normaliza los nombres de campo que devuelve la API (starts_at/ends_at, target_plans JSON)
+      const rows = (d.data ?? []).map((p: any) => ({
+        ...p,
+        start_date: p.start_date ?? p.starts_at,
+        end_date: p.end_date ?? p.ends_at,
+        target_plans: Array.isArray(p.target_plans)
+          ? p.target_plans
+          : (() => { try { return JSON.parse(p.target_plans ?? '[]') } catch { return [] } })(),
+      }))
+      setPromos(rows)
     } catch (e: any) { flash(e.message) }
     finally { setLoading(false) }
   }
@@ -84,10 +95,25 @@ export default function AdminPromotions() {
     e.preventDefault()
     setSaving(true)
     try {
+      // La API espera starts_at/ends_at (no start_date/end_date)
+      const payload = {
+        title: form.title,
+        description: form.description,
+        benefit_type: form.benefit_type,
+        benefit_value: form.benefit_value,
+        target_plans: form.target_plans,
+        cta_text: form.cta_text,
+        cta_url: form.cta_url,
+        promo_code: form.promo_code,
+        image_url: form.image_url,
+        starts_at: form.start_date,
+        ends_at: form.end_date,
+        status: form.status,
+      }
       const r = await fetch(`${API_BASE}/admin/promotions`, {
         method: 'POST',
         headers: authH(),
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`)
@@ -233,6 +259,15 @@ export default function AdminPromotions() {
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                 />
               </label>
+
+              <div style={s.label}>
+                Imagen / banner (opcional)
+                <FileField
+                  value={form.image_url}
+                  onChange={(url) => setForm({ ...form, image_url: url })}
+                  hint="JPG, PNG, WEBP o SVG · máx 10 MB"
+                />
+              </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <label style={s.label}>

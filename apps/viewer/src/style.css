@@ -1,79 +1,93 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+html, body {
+  height: 100%;
+}
+
 body {
   background: #1a1a2e;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  min-height: 100vh;
+  justify-content: flex-start;
+  min-height: 100dvh;           /* dvh = dynamic viewport height, más preciso en móvil */
   font-family: sans-serif;
   color: #fff;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
+/* ── Contenedor del flipbook ─────────────────────────────────────────────── */
 #flipbook-container {
   display: flex;
   justify-content: center;
   align-items: center;
   flex: 1;
   width: 100%;
-  padding: 24px 24px 0;
+  padding: 16px 12px 0;
+  min-height: 0;
 }
 
+/* ── Controles ───────────────────────────────────────────────────────────── */
 #controls {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin: 16px auto 20px;
-  padding: 10px 24px;
+  gap: 10px;
+  margin: 14px auto 16px;
+  padding: 9px 18px;
   background: rgba(255,255,255,.1);
   border-radius: 50px;
   backdrop-filter: blur(10px);
   width: fit-content;
+  max-width: 96vw;
   position: relative;
   z-index: 20;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 #controls button {
   background: none;
   border: none;
   color: #fff;
-  font-size: 1.1rem;
+  font-size: 1rem;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 4px 7px;
   border-radius: 4px;
   transition: background .2s;
   line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 #controls button:hover { background: rgba(255,255,255,.2); }
 #controls button:disabled { opacity: 0.3; cursor: default; }
 #controls button:disabled:hover { background: none; }
-
 #controls button#btn-autoplay.playing { color: #a78bfa; }
 
 .ctrl-sep {
   width: 1px;
-  height: 20px;
+  height: 18px;
   background: rgba(255,255,255,.25);
   margin: 0 2px;
+  flex-shrink: 0;
 }
 
 #page-info {
-  font-size: 0.85rem;
-  min-width: 64px;
+  font-size: 0.82rem;
+  min-width: 56px;
   text-align: center;
   background: rgba(255,255,255,.15);
   border-radius: 6px;
-  padding: 3px 8px;
+  padding: 3px 7px;
+  flex-shrink: 0;
 }
 
-/* Panel de miniaturas */
+/* ── Panel de miniaturas ─────────────────────────────────────────────────── */
 #thumbnail-panel {
   display: none;
   position: fixed;
-  bottom: 80px;
+  bottom: 76px;
   left: 50%;
   transform: translateX(-50%);
   background: rgba(10,10,30,.92);
@@ -81,7 +95,7 @@ body {
   border-radius: 12px;
   padding: 10px;
   z-index: 30;
-  max-width: 90vw;
+  max-width: 92vw;
   backdrop-filter: blur(12px);
 }
 
@@ -106,22 +120,12 @@ body {
   transition: border-color .15s, transform .15s;
   position: relative;
 }
-
 .thumb-item:hover { transform: scale(1.05); }
 .thumb-item.active { border-color: #6c63ff; }
-
-.thumb-item img {
-  display: block;
-  width: 60px;
-  height: 85px;
-  object-fit: cover;
-}
-
+.thumb-item img { display: block; width: 60px; height: 85px; object-fit: cover; }
 .thumb-item span {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  bottom: 0; left: 0; right: 0;
   background: rgba(0,0,0,.6);
   color: #fff;
   font-size: 0.55rem;
@@ -129,7 +133,143 @@ body {
   padding: 2px 0;
 }
 
+/* ── Banner cintillo lateral ─────────────────────────────────────────────── */
+/*
+  El banner ocupa el lateral de la pantalla como una pestaña fija.
+  En escritorio: visible permanentemente como un cintillo vertical.
+  En móvil: colapsado (solo se ve el tab/lengüeta) y se expande al tocarlo.
+  Siempre fuera del área de lectura — nunca tapa el flipbook.
+*/
+#flipbook-banner {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1500;
+  display: flex;
+  align-items: stretch;
+  filter: drop-shadow(0 4px 18px rgba(0,0,0,.45));
+}
+
+#flipbook-banner.side-left  { left: 0; flex-direction: row; }
+#flipbook-banner.side-right { right: 0; flex-direction: row-reverse; }
+
+/* La tarjeta principal */
+#flipbook-banner .fb-card {
+  display: flex;
+  flex-direction: row;
+  border-radius: 0 12px 12px 0;
+  overflow: hidden;
+  max-width: 340px;
+  width: 34vw;
+  min-width: 260px;
+  transition: transform .3s ease, opacity .3s ease;
+}
+#flipbook-banner.side-right .fb-card {
+  border-radius: 12px 0 0 12px;
+  flex-direction: row-reverse;
+}
+
+/* Imagen — 25 % del ancho */
+#flipbook-banner .fb-img {
+  width: 25%;
+  flex-shrink: 0;
+  object-fit: cover;
+  object-position: center;
+  align-self: stretch;
+  display: block;
+}
+
+/* Cuerpo de texto — 75 % */
+#flipbook-banner .fb-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 14px;
+}
+
+#flipbook-banner .fb-title {
+  font-family: Inter, sans-serif;
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+#flipbook-banner .fb-text {
+  font-family: Inter, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: .88;
+}
+
+#flipbook-banner .fb-btn {
+  align-self: flex-start;
+  font-family: Inter, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Tab / lengüeta — siempre visible; en escritorio cierra el banner */
+#flipbook-banner .fb-tab {
+  width: 28px;
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 0 8px 8px 0;
+  writing-mode: vertical-rl;
+  font-family: Inter, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  user-select: none;
+  transition: opacity .2s;
+  flex-shrink: 0;
+}
+#flipbook-banner.side-left  .fb-tab { border-radius: 0 8px 8px 0; }
+#flipbook-banner.side-right .fb-tab { border-radius: 8px 0 0 8px; order: -1; }
+
+#flipbook-banner .fb-tab:hover { opacity: .8; }
+
+/* Estado colapsado: la tarjeta se oculta deslizando fuera del viewport */
+#flipbook-banner.collapsed.side-left  .fb-card { transform: translateX(-100%); opacity: 0; pointer-events: none; position: absolute; }
+#flipbook-banner.collapsed.side-right .fb-card { transform: translateX(100%); opacity: 0; pointer-events: none; position: absolute; }
+
+/* ── Responsive móvil ────────────────────────────────────────────────────── */
 @media (max-width: 700px) {
-  #flipbook-container { padding: 12px 12px 0; }
-  #thumbnail-panel { bottom: 72px; }
+  #flipbook-container { padding: 8px 4px 0; }
+  #thumbnail-panel { bottom: 68px; }
+
+  /* Controles más compactos */
+  #controls {
+    gap: 6px;
+    padding: 7px 12px;
+    font-size: 0.9rem;
+    margin: 10px auto 12px;
+  }
+  #controls button { font-size: 0.9rem; padding: 3px 5px; }
+
+  /* Marca de agua: si está en la barra, que no ensanche demasiado */
+  #flipbook-watermark { font-size: 0.62rem !important; }
+
+  /* Banner: comienza colapsado en móvil, solo se ve la pestaña */
+  #flipbook-banner { top: auto; transform: none; bottom: 88px; }
+  #flipbook-banner.side-left  { left: 0; }
+  #flipbook-banner.side-right { right: 0; }
+
+  #flipbook-banner .fb-card {
+    width: 72vw;
+    min-width: 200px;
+    max-width: 280px;
+  }
+  #flipbook-banner .fb-title { font-size: 13px; }
+  #flipbook-banner .fb-text  { font-size: 11px; }
+  #flipbook-banner .fb-btn   { font-size: 11px; padding: 6px 11px; }
 }

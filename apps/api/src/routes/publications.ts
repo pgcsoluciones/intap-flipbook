@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
 import { getUserPlan, checkPublicationLimit, checkSoundAllowed } from '../lib/plans'
+import { slugify, uniqueSlug } from './auth'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
@@ -40,9 +41,9 @@ publications.post('/', async (c) => {
     return c.json({ success: false, error: 'El título es requerido' }, 400)
   }
 
-  const { plan } = await getUserPlan(c.env.DB, userId)
+  const { plan, customLimits } = await getUserPlan(c.env.DB, userId)
 
-  const pubLimitError = await checkPublicationLimit(c.env.DB, userId, plan)
+  const pubLimitError = await checkPublicationLimit(c.env.DB, userId, plan, customLimits)
   if (pubLimitError) return c.json({ success: false, error: pubLimitError }, 403)
 
   // If user explicitly requests sound and plan doesn't support it, silently disable
@@ -51,7 +52,8 @@ publications.post('/', async (c) => {
   const soundValue = wantsSound && soundAllowed ? 1 : 0
 
   const id = crypto.randomUUID()
-  const slug = generateSlug()
+  // Slug legible derivado del título (único; agrega -2, -3… si colisiona).
+  const slug = await uniqueSlug(c.env.DB, 'publications', slugify(body.title.trim()))
 
   await c.env.DB.prepare(
     `INSERT INTO publications (id, user_id, title, description, category, public_slug, sound_enabled)
@@ -186,76 +188,5 @@ publications.post('/:id/publish', async (c) => {
     .first()
   return c.json({ success: true, data: updated })
 })
-
-// GET /api/templates — lista de templates activas (para tenant)
-publications.get('/templates', async (c) => {
-  const { results } = await c.env.DB.prepare(
-    `SELECT * FROM templates WHERE active = 1 ORDER BY sort_order`,
-  ).all()
-  return c.json({ success: true, data: results })
-})
-
-// GET /api/resources — lista de editor_elements activos (para tenant)
-publications.get('/resources', async (c) => {
-  const { results } = await c.env.DB.prepare(
-    `SELECT * FROM editor_elements WHERE active = 1 ORDER BY sort_order`,
-  ).all()
-  return c.json({ success: true, data: results })
-})
-
-// GET /api/tutorials — lista de tutorials activos
-publications.get('/tutorials', async (c) => {
-  const { results } = await c.env.DB.prepare(
-    `SELECT * FROM tutorials WHERE active = 1 ORDER BY sort_order`,
-  ).all()
-  return c.json({ success: true, data: results })
-})
-
-// POST /api/tutorials/:id/view — marcar tutorial como visto
-publications.post('/tutorials/:id/view', async (c) => {
-  const userId = c.get('user').sub
-  const tutorialId = c.req.param('id')
-  await c.env.DB.prepare(
-    `INSERT OR IGNORE INTO tutorial_views (user_id, tutorial_id) VALUES (?, ?)`,
-  )
-    .bind(userId, tutorialId)
-    .run()
-  return c.json({ success: true })
-})
-
-// GET /api/promotions — promociones activas para el plan del tenant
-publications.get('/promotions', async (c) => {
-  const userId = c.get('user').sub
-
-  const user = await c.env.DB.prepare(
-    `SELECT plan_id FROM users WHERE id = ?`,
-  )
-    .bind(userId)
-    .first<{ plan_id: string }>()
-
-  const userPlan = user?.plan_id ?? 'free'
-
-  const { results } = await c.env.DB.prepare(
-    `SELECT * FROM promotions
-     WHERE status = 'active'
-       AND datetime('now') BETWEEN starts_at AND ends_at`,
-  ).all<{ target_plans: string; [key: string]: unknown }>()
-
-  const filtered = results.filter((promo) => {
-    if (promo.target_plans === 'all') return true
-    try {
-      const plans: string[] = JSON.parse(promo.target_plans as string)
-      return plans.includes(userPlan)
-    } catch {
-      return false
-    }
-  })
-
-  return c.json({ success: true, data: filtered })
-})
-
-function generateSlug(): string {
-  return crypto.randomUUID().replace(/-/g, '').slice(0, 10)
-}
 
 export default publications

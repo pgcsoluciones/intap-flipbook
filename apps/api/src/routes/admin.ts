@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
+import { signJwt } from '../lib/jwt'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
@@ -42,6 +43,8 @@ admin.get('/users/:id', async (c) => {
   const user = await c.env.DB.prepare(`
     SELECT u.id, u.email, u.name, u.plan_id, u.is_admin, u.status,
       u.created_at, u.plan_expires_at, u.grace_period_days,
+      u.watermark_override,
+      u.custom_max_publications, u.custom_max_pages, u.custom_max_storage_mb,
       COUNT(DISTINCT p.id) as pub_count,
       COALESCE(SUM(pg.size_bytes), 0) as total_bytes
     FROM users u
@@ -90,16 +93,33 @@ admin.put('/users/:id/status', async (c) => {
   return c.json({ success: true })
 })
 
-// PUT /admin/users/:id/limits — custom limits override (stored in plan or future column)
+// PUT /admin/users/:id/limits — custom limits override per-tenant
 admin.put('/users/:id/limits', async (c) => {
-  // Currently stored as a plan change note; full custom limits require additional columns
   const id = c.req.param('id')
   const body = await c.req.json<{ max_publications?: number | null; max_pages?: number | null; max_storage_mb?: number | null }>()
-  // For now we store as a note in plan_history
-  const adminId = c.get('user').sub
   await c.env.DB.prepare(
-    'INSERT INTO plan_history (user_id, from_plan, to_plan, changed_by, reason) VALUES (?,?,?,?,?)'
-  ).bind(id, null, 'custom', adminId, JSON.stringify(body)).run()
+    `UPDATE users SET
+      custom_max_publications = ?,
+      custom_max_pages = ?,
+      custom_max_storage_mb = ?
+     WHERE id = ?`
+  ).bind(
+    body.max_publications ?? null,
+    body.max_pages ?? null,
+    body.max_storage_mb ?? null,
+    id
+  ).run()
+  return c.json({ success: true })
+})
+
+// PUT /admin/users/:id/watermark — fuerza mostrar/ocultar la marca de agua por tenant
+// 'plan' = según el plan (free=muestra, pago=oculta); 'force_show' = siempre; 'force_hide' = nunca
+admin.put('/users/:id/watermark', async (c) => {
+  const id = c.req.param('id')
+  const body = await c.req.json<{ watermark_override?: string }>()
+  const allowed = ['plan', 'force_show', 'force_hide']
+  const value = allowed.includes(body.watermark_override ?? '') ? body.watermark_override : 'plan'
+  await c.env.DB.prepare('UPDATE users SET watermark_override = ? WHERE id = ?').bind(value, id).run()
   return c.json({ success: true })
 })
 
@@ -108,6 +128,45 @@ admin.put('/users/:id/admin', async (c) => {
   const id = c.req.param('id')
   const body = await c.req.json<{ is_admin: boolean }>()
   await c.env.DB.prepare('UPDATE users SET is_admin = ? WHERE id = ?').bind(body.is_admin ? 1 : 0, id).run()
+  return c.json({ success: true })
+})
+
+// POST /admin/users/:id/impersonate — emite JWT de corta duración para ese tenant
+admin.post('/users/:id/impersonate', async (c) => {
+  const id = c.req.param('id')
+  const user = await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?')
+    .bind(id).first<{ id: string; email: string }>()
+  if (!user) return c.json({ success: false, error: 'Usuario no encontrado' }, 404)
+  const token = await signJwt(
+    { sub: user.id, email: user.email, impersonated: true },
+    c.env.JWT_SECRET,
+    1,
+  )
+  return c.json({ success: true, data: { token, user } })
+})
+
+// GET /admin/users/:id/modules — módulos del tenant con estado enabled
+admin.get('/users/:id/modules', async (c) => {
+  const id = c.req.param('id')
+  const { results } = await c.env.DB.prepare(
+    `SELECT m.key, m.name, m.description, m.active_globally,
+            COALESCE(tm.enabled, m.active_globally) as enabled
+     FROM modules m
+     LEFT JOIN tenant_modules tm ON tm.module_key = m.key AND tm.user_id = ?
+     ORDER BY m.key ASC`
+  ).bind(id).all()
+  return c.json({ success: true, data: results })
+})
+
+// PUT /admin/users/:id/modules/:key — toggle módulo para un tenant específico
+admin.put('/users/:id/modules/:key', async (c) => {
+  const id = c.req.param('id')
+  const key = c.req.param('key')
+  const body = await c.req.json<{ enabled: boolean }>()
+  await c.env.DB.prepare(
+    `INSERT INTO tenant_modules (user_id, module_key, enabled) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, module_key) DO UPDATE SET enabled = excluded.enabled`
+  ).bind(id, key, body.enabled ? 1 : 0).run()
   return c.json({ success: true })
 })
 
@@ -157,11 +216,35 @@ admin.put('/plan-requests/:id', async (c) => {
   if (body.action === 'approve') {
     const current = await c.env.DB.prepare('SELECT plan_id FROM users WHERE id = ?')
       .bind(req.user_id).first<{ plan_id: string }>()
-    await c.env.DB.prepare('UPDATE users SET plan_id = ? WHERE id = ?')
-      .bind(req.requested_plan, req.user_id).run()
+    const planRow = await c.env.DB.prepare('SELECT period_days FROM plans WHERE id = ?')
+      .bind(req.requested_plan).first<{ period_days: number | null }>()
+    const periodDays = planRow?.period_days ?? 30
+    await c.env.DB.prepare(
+      `UPDATE users SET plan_id = ?,
+        plan_expires_at = datetime(COALESCE(
+          CASE WHEN plan_expires_at > datetime('now') THEN plan_expires_at ELSE NULL END,
+          datetime('now')
+        ), '+' || ? || ' days')
+       WHERE id = ?`
+    ).bind(req.requested_plan, periodDays, req.user_id).run()
     await c.env.DB.prepare(
       'INSERT INTO plan_history (user_id, from_plan, to_plan, changed_by, reason) VALUES (?,?,?,?,?)'
     ).bind(req.user_id, current?.plan_id ?? null, req.requested_plan, adminId, 'plan_request_approved').run()
+    await c.env.DB.prepare(
+      `INSERT INTO notifications (user_id, title, message, read) VALUES (?, ?, ?, 0)`
+    ).bind(
+      req.user_id,
+      `¡Tu plan ${req.requested_plan} está activo!`,
+      `Tu solicitud de cambio al plan ${req.requested_plan} fue aprobada y activada. ¡Gracias por tu confianza!`
+    ).run().catch(() => {})
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO notifications (user_id, title, message, read) VALUES (?, ?, ?, 0)`
+    ).bind(
+      req.user_id,
+      'Solicitud de plan rechazada',
+      `Tu solicitud de cambio al plan ${req.requested_plan} no pudo procesarse en este momento.${body.notes ? ' Motivo: ' + body.notes : ' Contactanos para más información.'}`
+    ).run().catch(() => {})
   }
 
   return c.json({ success: true })
@@ -245,8 +328,15 @@ admin.post('/payments', async (c) => {
   if (body.status === 'paid') {
     const current = await c.env.DB.prepare('SELECT plan_id FROM users WHERE id = ?')
       .bind(body.user_id).first<{ plan_id: string }>()
-    await c.env.DB.prepare('UPDATE users SET plan_id = ? WHERE id = ?')
-      .bind(body.plan_paid, body.user_id).run()
+    const periodDays = Number(body.period_days ?? 30)
+    await c.env.DB.prepare(
+      `UPDATE users SET plan_id = ?,
+        plan_expires_at = datetime(COALESCE(
+          CASE WHEN plan_expires_at > datetime('now') THEN plan_expires_at ELSE NULL END,
+          datetime('now')
+        ), '+' || ? || ' days')
+       WHERE id = ?`
+    ).bind(body.plan_paid, periodDays, body.user_id).run()
     await c.env.DB.prepare(
       'INSERT INTO plan_history (user_id, from_plan, to_plan, changed_by, reason) VALUES (?,?,?,?,?)'
     ).bind(body.user_id, current?.plan_id ?? null, body.plan_paid, adminId, 'manual_payment').run()
@@ -256,38 +346,68 @@ admin.post('/payments', async (c) => {
 })
 
 // ─── GATEWAYS ─────────────────────────────────────────────────────────────────
+// Las pasarelas son un conjunto fijo de 5 tipos. Se identifican por `type`
+// (no por id autoincremental) para que el frontend pueda crearlas/togglearlas
+// aunque todavía no existan en D1 (upsert por type).
+
+const GATEWAY_NAMES: Record<string, string> = {
+  transfer: 'Transferencia bancaria',
+  deposit:  'Depósito en efectivo',
+  paypal:   'PayPal',
+  readdy:   'Readdy (CardNet)',
+  custom:   'Otro / Custom',
+}
 
 // GET /admin/gateways
 admin.get('/gateways', async (c) => {
   const { results } = await c.env.DB.prepare('SELECT * FROM payment_gateways ORDER BY sort_order ASC').all()
-  return c.json({ success: true, data: results })
+  const data = (results as any[]).map((g) => ({
+    ...g,
+    active: !!g.active,
+    config_json: (() => { try { return JSON.parse(g.config_json ?? '{}') } catch { return {} } })(),
+  }))
+  return c.json({ success: true, data })
 })
 
-// PUT /admin/gateways/:id
-admin.put('/gateways/:id', async (c) => {
-  const id = c.req.param('id')
+// PUT /admin/gateways/:type — upsert config por type
+admin.put('/gateways/:type', async (c) => {
+  const type = c.req.param('type')
   const body = await c.req.json<any>()
-  const existing = await c.env.DB.prepare('SELECT id FROM payment_gateways WHERE id = ?').bind(id).first()
+  const name = body.name ?? GATEWAY_NAMES[type] ?? type
+  const configJson = JSON.stringify(body.config_json ?? body.config ?? {})
+  const existing = await c.env.DB.prepare('SELECT id FROM payment_gateways WHERE type = ?').bind(type).first()
   if (!existing) {
     await c.env.DB.prepare(
       'INSERT INTO payment_gateways (name, type, config_json, instructions, active, sort_order) VALUES (?,?,?,?,?,?)'
-    ).bind(body.name, body.type, JSON.stringify(body.config ?? {}), body.instructions ?? null, body.active ? 1 : 0, body.sort_order ?? 0).run()
+    ).bind(name, type, configJson, body.instructions ?? null, body.active ? 1 : 0, body.sort_order ?? 0).run()
   } else {
     await c.env.DB.prepare(
-      'UPDATE payment_gateways SET name = ?, config_json = ?, instructions = ?, sort_order = ? WHERE id = ?'
-    ).bind(body.name, JSON.stringify(body.config ?? {}), body.instructions ?? null, body.sort_order ?? 0, id).run()
+      'UPDATE payment_gateways SET config_json = ?, instructions = ? WHERE type = ?'
+    ).bind(configJson, body.instructions ?? null, type).run()
   }
-  return c.json({ success: true })
+  const row = await c.env.DB.prepare('SELECT * FROM payment_gateways WHERE type = ?').bind(type).first<any>()
+  const data = row ? { ...row, active: !!row.active, config_json: (() => { try { return JSON.parse(row.config_json ?? '{}') } catch { return {} } })() } : null
+  return c.json({ success: true, data })
 })
 
-// PATCH /admin/gateways/:id/toggle
-admin.patch('/gateways/:id/toggle', async (c) => {
-  const id = c.req.param('id')
-  const gw = await c.env.DB.prepare('SELECT active FROM payment_gateways WHERE id = ?')
-    .bind(id).first<{ active: number }>()
-  if (!gw) return c.json({ success: false, error: 'Pasarela no encontrada' }, 404)
-  await c.env.DB.prepare('UPDATE payment_gateways SET active = ? WHERE id = ?')
-    .bind(gw.active ? 0 : 1, id).run()
+// PATCH /admin/gateways/:type/toggle — upsert + flip active por type
+admin.patch('/gateways/:type/toggle', async (c) => {
+  const type = c.req.param('type')
+  const body = await c.req.json<{ active?: boolean }>().catch(() => ({} as { active?: boolean }))
+  const name = GATEWAY_NAMES[type] ?? type
+  const existing = await c.env.DB.prepare('SELECT id, active FROM payment_gateways WHERE type = ?')
+    .bind(type).first<{ id: number; active: number }>()
+  const newActive = body.active !== undefined
+    ? (body.active ? 1 : 0)
+    : (existing ? (existing.active ? 0 : 1) : 1)
+  if (!existing) {
+    await c.env.DB.prepare(
+      'INSERT INTO payment_gateways (name, type, config_json, instructions, active, sort_order) VALUES (?,?,?,?,?,?)'
+    ).bind(name, type, '{}', null, newActive, 0).run()
+  } else {
+    await c.env.DB.prepare('UPDATE payment_gateways SET active = ? WHERE type = ?')
+      .bind(newActive, type).run()
+  }
   return c.json({ success: true })
 })
 
@@ -302,23 +422,35 @@ admin.get('/modules', async (c) => {
     if (!planMap[r.module_key]) planMap[r.module_key] = []
     planMap[r.module_key].push(r.plan_id)
   }
-  const data = mods.map((m: any) => ({ ...m, plans: planMap[m.key] ?? [] }))
+  // El frontend lee `active`; la DB guarda `active_globally`. Exponer ambos.
+  const data = mods.map((m: any) => ({
+    ...m,
+    active: m.active_globally === 1,
+    plans: planMap[m.key] ?? [],
+  }))
   return c.json({ success: true, data })
 })
 
-// PUT /admin/modules/:key/global — toggle active_globally
+// PUT /admin/modules/:key/global — toggle active_globally (UPSERT: crea la fila si no existe)
 admin.put('/modules/:key/global', async (c) => {
   const key = c.req.param('key')
-  const body = await c.req.json<{ active_globally: boolean }>()
-  await c.env.DB.prepare('UPDATE modules SET active_globally = ? WHERE key = ?')
-    .bind(body.active_globally ? 1 : 0, key).run()
+  const body = await c.req.json<{ active?: boolean; active_globally?: boolean; name?: string; description?: string }>()
+  const isActive = body.active ?? body.active_globally ?? false
+  // INSERT OR REPLACE garantiza que la fila exista aunque la tabla esté vacía
+  await c.env.DB.prepare(`
+    INSERT INTO modules (key, name, description, active_globally) VALUES (?, ?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET active_globally = excluded.active_globally
+  `).bind(key, body.name ?? key, body.description ?? '', isActive ? 1 : 0).run()
   return c.json({ success: true })
 })
 
-// PUT /admin/modules/:key/plans — update which plans include this module
+// PUT /admin/modules/:key/plans — update which plans include this module (UPSERT primero la fila)
 admin.put('/modules/:key/plans', async (c) => {
   const key = c.req.param('key')
-  const body = await c.req.json<{ plans: string[] }>()
+  const body = await c.req.json<{ plans: string[]; name?: string; description?: string }>()
+  // Garantizar que la fila del módulo exista antes de insertar en plan_modules
+  await c.env.DB.prepare(`INSERT OR IGNORE INTO modules (key, name, description, active_globally) VALUES (?, ?, ?, 1)`)
+    .bind(key, body.name ?? key, body.description ?? '').run()
   await c.env.DB.prepare('DELETE FROM plan_modules WHERE module_key = ?').bind(key).run()
   for (const planId of body.plans) {
     await c.env.DB.prepare('INSERT OR IGNORE INTO plan_modules (plan_id, module_key) VALUES (?,?)')
@@ -339,12 +471,13 @@ admin.get('/promotions', async (c) => {
 admin.post('/promotions', async (c) => {
   const body = await c.req.json<any>()
   const { meta } = await c.env.DB.prepare(`
-    INSERT INTO promotions (title, description, benefit_type, benefit_value, target_plans, cta_text, cta_url, promo_code, starts_at, ends_at, status)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO promotions (title, description, benefit_type, benefit_value, target_plans, cta_text, cta_url, promo_code, image_url, starts_at, ends_at, status)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
   `).bind(
     body.title, body.description, body.benefit_type, String(body.benefit_value),
     typeof body.target_plans === 'string' ? body.target_plans : JSON.stringify(body.target_plans),
     body.cta_text ?? null, body.cta_url ?? null, body.promo_code ?? null,
+    body.image_url ?? null,
     body.starts_at, body.ends_at, body.status ?? 'active'
   ).run()
   return c.json({ success: true, data: { id: meta.last_row_id } })
@@ -407,10 +540,32 @@ admin.put('/referrals/:id', async (c) => {
   const body = await c.req.json<{ action: 'approve' | 'reject'; reason?: string }>()
   const adminId = c.get('user').sub
   const newStatus = body.action === 'approve' ? 'approved' : 'rejected'
+
+  const ref = await c.env.DB.prepare('SELECT * FROM referrals WHERE id = ?')
+    .bind(id).first<{ referrer_id: string; reward_applied: number }>()
+
   await c.env.DB.prepare(`
     UPDATE referrals SET status = ?, resolved_at = datetime('now'), resolved_by = ?, reject_reason = ?
     WHERE id = ?
   `).bind(newStatus, adminId, body.reason ?? null, id).run()
+
+  if (body.action === 'approve' && ref && !ref.reward_applied) {
+    const config = await c.env.DB.prepare('SELECT reward_type, reward_value FROM referral_config WHERE id = 1')
+      .first<{ reward_type: string; reward_value: number }>()
+    if (config?.reward_type === 'free_days') {
+      const days = config.reward_value ?? 15
+      await c.env.DB.prepare(
+        `UPDATE users SET
+          plan_expires_at = datetime(COALESCE(
+            CASE WHEN plan_expires_at > datetime('now') THEN plan_expires_at ELSE NULL END,
+            datetime('now')
+          ), '+' || ? || ' days')
+         WHERE id = ?`
+      ).bind(days, ref.referrer_id).run()
+    }
+    await c.env.DB.prepare('UPDATE referrals SET reward_applied = 1 WHERE id = ?').bind(id).run()
+  }
+
   return c.json({ success: true })
 })
 

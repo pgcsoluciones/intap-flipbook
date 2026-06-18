@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { API_BASE } from '../../lib/api'
+import FileField from '../../components/FileField'
 
 function authH() {
   const t = localStorage.getItem('token')
@@ -184,8 +185,12 @@ export default function AdminResourcesElements() {
               {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
 
-            <label style={s.label}>URL del archivo (R2 o externa)</label>
-            <input style={s.input} value={form.file_url} onChange={(e) => setForm({ ...form, file_url: e.target.value })} placeholder="https://..." />
+            <label style={s.label}>Archivo del recurso</label>
+            <FileField
+              value={form.file_url}
+              onChange={(url) => setForm({ ...form, file_url: url })}
+              hint="Imagen o SVG · máx 10 MB"
+            />
 
             <label style={s.label}>Plan requerido</label>
             <select style={s.input} value={form.plan_required} onChange={(e) => setForm({ ...form, plan_required: e.target.value })}>

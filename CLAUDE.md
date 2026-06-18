@@ -19,7 +19,7 @@
 - **GitHub:** `pgcsoluciones/intap-flipbook`
 - **Rama de trabajo:** `claude/kind-shannon-udb4qo`
 - **Rama principal:** `main`
-- **CI/CD:** Cloudflare Pages conectado a GitHub — deploy automático al hacer push a `main`
+- **CI/CD:** Cloudflare Pages conectado a GitHub — deploy automático al hacer push a `claude/kind-shannon-udb4qo` (rama de producción configurada en Pages)
 
 ---
 
@@ -28,7 +28,7 @@
 | Componente | Tecnología | URL de producción |
 |-----------|-----------|-------------------|
 | API | Cloudflare Workers + Hono.js | `intap-flipbook-api.fliaprince.workers.dev` |
-| Dashboard | React/Vite → Cloudflare Pages | `intap-flipbook-dashboard.pages.dev` |
+| Dashboard | React/Vite → Cloudflare Pages | `studio.flip.intaprd.com` / `intap-flipbook-dashboard.pages.dev` |
 | Viewer | HTML/JS estático → Cloudflare Pages | `intap-flipbook-viewer.pages.dev` |
 | Base de datos | Cloudflare D1 (SQLite serverless) | `intap-flipbook-db` |
 | Archivos/imágenes | Cloudflare R2 | `intap-flipbook-media` |
@@ -42,15 +42,20 @@ intap-flipbook/
 │   ├── api/              # Cloudflare Worker con Hono.js
 │   │   ├── src/
 │   │   │   ├── index.ts
-│   │   │   ├── routes/   # auth.ts, publications.ts, pages.ts, upload.ts
+│   │   │   ├── routes/   # auth.ts, publications.ts, pages.ts, upload.ts, admin.ts
 │   │   │   ├── middleware/jwt.ts
 │   │   │   ├── lib/      # r2.ts, jwt.ts, plans.ts
-│   │   │   └── db/schema.sql
+│   │   │   └── db/
+│   │   │       ├── schema.sql             # schema completo con seeds
+│   │   │       ├── migration_fase8a.sql   # tablas fase 8A (modules, publication_views, etc.)
+│   │   │       └── migration_fase8b.sql   # columna status en users y plans
 │   │   └── wrangler.toml
-│   ├── dashboard/        # React/Vite (panel del cliente)
+│   ├── dashboard/        # React/Vite (panel del cliente y admin)
 │   │   └── src/
-│   │       ├── pages/    # Login, Register, Dashboard, Editor, Preview
-│   │       └── components/ # ImageUploader, PageGrid, PlanBadge, UsageBar
+│   │       ├── pages/    # Login, Register, Dashboard, Publications, EditPublication, Preview...
+│   │       │             # + páginas tenant: TenantStats, TenantTemplates, TenantTutorials...
+│   │       │             # + páginas admin: AdminDashboard, AdminTenants, AdminPlans, AdminModules...
+│   │       └── components/ # AdminLayout, Layout, PlanBadge, PageGrid, ImageUploader, UsageBar
 │   └── viewer/           # HTML/JS estático con StPageFlip
 │       └── src/index.html + flipbook.js
 └── packages/
@@ -65,7 +70,7 @@ intap-flipbook/
 |---------|--------|-----|
 | D1 Database | `intap-flipbook-db` | `f5e1ca62-8487-4250-a9d4-851d4880dcb3` |
 | KV Namespace | `SESSIONS` | `8a0d51a9b1334c0c9c65e04109731ded` |
-| R2 Bucket | `intap-flipbook-media` | (sin ID asignado aún) |
+| R2 Bucket | `intap-flipbook-media` | URL pública: `https://pub-b720f233e0f84125b246181d82f993da.r2.dev` |
 | Secret | `JWT_SECRET` | configurado via wrangler secrets |
 
 ---
@@ -74,9 +79,9 @@ intap-flipbook/
 
 ### Worker — `apps/api/wrangler.toml`
 ```toml
-CORS_ORIGIN = "https://intap-flipbook-dashboard.pages.dev,https://f9ade95a.intap-flipbook-dashboard.pages.dev"
+CORS_ORIGIN = "https://flip.intaprd.com,https://studio.flip.intaprd.com,https://intap-flipbook-dashboard.pages.dev"
 JWT_EXPIRY_DAYS = "7"
-R2_PUBLIC_BASE_URL = "https://pub-XXX.r2.dev"   # ⚠️ ACTUALIZAR con URL real del bucket público
+R2_PUBLIC_BASE_URL = "https://pub-b720f233e0f84125b246181d82f993da.r2.dev"
 ```
 
 ### Dashboard — Cloudflare Pages Settings (Variables de entorno en el panel web)
@@ -87,7 +92,7 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 
 ---
 
-## ✅ Estado actual — 7 fases completadas
+## ✅ Estado actual — Fases 1–10 completadas y en producción
 
 | Commit | Contenido |
 |--------|-----------|
@@ -96,6 +101,15 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 | `ad9a39b` | Fase 3+4 — CRUD publicaciones/páginas, upload R2, viewer público |
 | `8ccc59d` | Fase 5+6 — Viewer flipbook (StPageFlip + sonido), dashboard React |
 | `3518790` | Fase 7 — Límites por plan centralizados en `lib/plans.ts` |
+| `d886178` | Fase 8 — Super Admin panel completo (13 páginas + API expandida) |
+| `0c0f7b8` | Fase 9 — Rediseño Publications (modal drag&drop) + Editor profesional |
+| `d6cf15d` | Fix — null guard páginas ilimitadas, toggle módulos, AdminStats resiliente |
+| `666705a` | Fase 10a — Tipografías, galería de iconos SVG, widgets interactivos (11 tipos) |
+| `915de4a` | Fase 10b — Banco de imágenes del proyecto en panel Imagen |
+| `beb23b0` | Fase 10c — Navegador de páginas en editor, viewer: quiz/embed/popup_banner/hotspots/audio/video completos |
+| `e93f1fd` | Fase 10d — Recursos admin: subida con Examinar + arrastrar/soltar (FileField) |
+| `dc3278d` | Fix — Fabric.js via CDN en dashboard (bundle −310 KB, build sin npm install) |
+| `cb79b47` | Fix — quitar `--remote` de `wrangler r2 object put` en import_templates.py |
 
 ### Qué está implementado
 
@@ -104,22 +118,29 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 - CRUD completo `/api/publications` con límites por plan
 - CRUD páginas + reordenamiento por batch (`PUT /api/publications/:id/pages/reorder`)
 - `POST /api/upload` → R2 (valida JPG/PNG/WEBP, máx. 10 MB, tracking de `size_bytes`)
-- `GET /view/:slug` → endpoint público sin auth (para el viewer)
+- `GET /view/:slug` → endpoint público, devuelve `canvas_json` por página
 - `GET /api/me/usage` → estadísticas de uso del usuario autenticado
+- **Admin routes** `/admin/*`: users, plans, payments, gateways, modules, stats, notifications, promotions, referrals, branding, resources (templates, elements, tutorials)
 
 **Viewer (`apps/viewer`):**
-- StPageFlip via CDN — efecto de voltear páginas
-- Toggle de sonido 🔊/🔇
-- Responsive: portrait en móvil, landscape en desktop
+- StPageFlip via CDN — efecto de voltear páginas + sonido
+- Fabric.js 5.3 via CDN — renderiza `canvas_json` como overlay escalado sobre cada página
+- Acciones al clic: `link`, `page`, `call`, `email`, `whatsapp`, `popup_text`, `popup_image`, `popup_video`, `download`
+- **Widgets completos** (11 tipos): mapa (dirección o URL directa), video (YouTube/Vimeo/MP4 con autoplay/controls/muted/loop/poster), audio (con color de reproductor), QR, tabla CSV, like (localStorage), formulario de contacto (nombre/email/teléfono/comentario/campos obligatorios), cuestionario interactivo, embed HTML, popup cintillo (posición/delay/colores/imagen/botón/auto-dismiss)
+- **Hotspots animados**: div CSS con clases `hs-pulse`, `hs-blink`, `hs-ring`
+- Responsive: portrait móvil, landscape desktop
 
 **Dashboard React (`apps/dashboard`):**
 - Login / Register con JWT guardado en localStorage
-- Lista de publicaciones con estado (borrador / publicado)
-- Editor: subida de imágenes drag & drop con barra de progreso
-- PageGrid con reordenamiento ↑↓ y eliminación
-- Vista previa con iframe + link público copiable
-- PlanBadge coloreado (Free / Basic / Pro)
-- UsageBar: barra de uso de publicaciones, storage (MB), páginas
+- **Publications**: file manager, modal drag & drop multi-imagen
+- **Editor** (`EditPublication.tsx`): Fabric.js canvas, autoguardado 1.2s
+  - Rail izquierdo: Páginas, Plantillas, Texto (14 fuentes Google), Imagen (+ banco de imágenes del proyecto), Formas, Botones, Elementos (galería SVG categorizada + hotspots animados), Enlace (10 tipos de acción), Widgets (11 tipos), Subidas
+  - **Navegador de páginas** bajo el canvas: ⟸ Primera / ◀ Anterior / Pág N/Total / ▶ Siguiente / ⟹ Última
+  - Panel derecho: propiedades por tipo (texto/forma/botón/enlace/hotspot/widget), selector de tipografía, control de color
+  - Tecla Delete/Backspace elimina el elemento seleccionado
+  - Fix: `rightPanelRef` evita que el selector de color nativo cierre el panel
+- **Recursos Admin**: Templates/Elements/Tutorials con `FileField` (Examinar + arrastar/soltar + URL)
+- **Páginas tenant y Super Admin (13 páginas)** sin cambios
 
 **Límites por plan (`lib/plans.ts`):**
 
@@ -131,32 +152,82 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 
 ---
 
-## 🐛 Problema activo — Vista previa y URL pública de R2
+## 🚨 Estado de bugs / pendientes
 
-### Diagnóstico
+### ✅ Resueltos
+- `checkPageLimit()` retorna null para planes ilimitados (Pro)
+- AdminStats resiliente (cada fetch independiente)
+- Toggle módulos acepta `active` y `active_globally`
+- Selector de color nativo no cierra el panel de propiedades
+- Tecla Delete elimina elemento del canvas
+- `fabric` externalizado en Vite → build sin `npm install` previo
+- Tabla `publication_views` creada en D1 ✅
+- Script `import_templates.py`: flag `--remote` eliminado de `wrangler r2 object put` (solo es necesario en `d1 execute`) ✅
+- **8 plantillas importadas a R2 + D1** (catalogo-ferreteria, herramientas-y-herrajes, perfil-comercial-nfc, regalos-personalizados, campamento-creativo-verano, servicios-para-eventos, velas-y-accesorios, seguridad-electronica) — 48 imágenes en R2, 82 queries en D1 ✅
 
-El viewer y la vista previa del dashboard muestran imágenes rotas porque **R2 no tiene URL pública activada aún**.
-
-El Worker construye las URLs de imágenes con la variable `R2_PUBLIC_BASE_URL`, que actualmente contiene un valor placeholder (`https://media.intapflipbook.com`) en lugar de la URL real del bucket.
-
-### Pasos para resolverlo
-
-1. Ir a **Cloudflare Dashboard → R2 → `intap-flipbook-media` → Settings → Public Development URL → Enable**
-2. Copiar la URL generada (formato: `https://pub-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX.r2.dev`)
-3. Actualizar `wrangler.toml` en `apps/api`:
-   ```toml
-   R2_PUBLIC_BASE_URL = "https://pub-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX.r2.dev"
-   ```
-4. Hacer deploy del Worker: `wrangler deploy` desde `apps/api/`
-5. Verificar que las imágenes ya sucias en R2 tengan acceso público (pueden requerir re-upload)
-
-### Cómo se usa R2_PUBLIC_BASE_URL en el código
-
-En `apps/api/src/lib/r2.ts`, la URL pública se construye así:
-```typescript
-const publicUrl = `${env.R2_PUBLIC_BASE_URL}/${key}`;
+### 🔄 Script import_templates.py — cómo usarlo
+```bash
+# Desde Mac de Juan, en la carpeta apps/api:
+cd ~/intap-flipbook/apps/api
+git pull origin claude/kind-shannon-udb4qo   # obtener el fix
+# Dry-run primero (no sube nada, muestra lo que haría):
+python3 scripts/import_templates.py ~/Downloads/intap_flip_generic_templates_v3.zip --dry-run
+# Ejecución real:
+python3 scripts/import_templates.py ~/Downloads/intap_flip_generic_templates_v3.zip
 ```
-Donde `key` es la ruta del archivo dentro del bucket (ej. `users/123/publications/456/page-1.jpg`).
+El script es **idempotente** (se puede volver a correr sin duplicar datos — borra y re-inserta por nombre de plantilla).
+
+### ⚠️ Pendiente verificar
+- **AdminModules toggle**: claves en D1 (`sound`, `editor`, `links`...) no coinciden con frontend (`editor_canvas`, `active_links`, `page_sound`...). El toggle no persiste.
+- **Tablas `modules` y `plan_modules`**: ejecutar si aún no existen:
+```bash
+cd ~/intap-flipbook/apps/api
+npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NOT EXISTS modules (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE NOT NULL, name TEXT NOT NULL, description TEXT, active_globally INTEGER DEFAULT 1)"
+npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NOT EXISTS plan_modules (plan_id TEXT NOT NULL, module_key TEXT NOT NULL, PRIMARY KEY (plan_id, module_key))"
+```
+
+---
+
+## 🔧 Deploy workflow
+
+### Dashboard (automático)
+Push a `claude/kind-shannon-udb4qo` → Cloudflare Pages hace build automático → `studio.flip.intaprd.com`
+
+### Worker (manual, desde Mac de Juan)
+```bash
+cd ~/intap-flipbook/apps/api && npx wrangler deploy
+```
+
+### D1 migrations (manual, desde Mac de Juan)
+```bash
+cd ~/intap-flipbook/apps/api
+npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase8a.sql --remote
+npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase8b.sql --remote
+```
+
+---
+
+## 🆕 Editor FlipHTML5 + Viewer interactivo (commits 91b57b4 → f68f692)
+
+- **Editor reescrito** (`EditPublication.tsx`): iconos SVG de línea consistentes, **autoguardado** (1.2s tras cada cambio + al cambiar de página + al cerrar pestaña), barra de herramientas (eliminar, duplicar, traer al frente/fondo).
+- **Acciones por tipo de botón**: cada botón/zona de enlace guarda `data.action` con tipo: `link`, `page`, `call`, `email`, `popup_text`, `popup_image`, `show_hide`. Panel de propiedades cambia según el tipo de elemento (texto/forma/botón/enlace/imagen).
+- **Responsive móvil**: `Layout` ahora usa sidebar tipo cajón con hamburguesa (`hooks/useIsMobile.ts`); catálogo (`Publications`) con header apilado, grid 150px y botones táctiles Editar/Vista previa.
+- **Viewer** (`apps/viewer/flipbook.js`): carga Fabric.js 5.3 por CDN, renderiza `canvas_json` como overlay escalado sobre cada página y ejecuta las acciones al hacer clic. `show_hide` queda como no-op (requiere elementos nombrados, fase futura).
+- **API** (`index.ts`): el endpoint público `/view/:slug` ahora devuelve `canvas_json` por página.
+
+> ⚠️ **REQUIERE DEPLOY MANUAL DEL WORKER**: `cd ~/intap-flipbook/apps/api && npx wrangler deploy` — sin esto, el viewer no recibe `canvas_json` y los elementos/acciones no aparecen en publicaciones.
+
+---
+
+## 🆕 Tipografías + galería de iconos + widgets interactivos
+
+- **Texto — librería de tipografías**: panel "Texto" con 14 fuentes (Inter, Poppins, Montserrat, Oswald, Bebas Neue, Roboto Slab, Merriweather, Playfair, Lobster, Pacifico, Dancing Script, Caveat, Georgia, Courier). Se elige una fuente y el texto nuevo la usa; el panel derecho tiene un selector "Tipografía" para cambiar la fuente del texto seleccionado. Las fuentes se cargan por Google Fonts en `apps/dashboard/index.html` **y** en `apps/viewer/src/index.html` (para que el visor las renderice igual).
+- **Elementos — galería vectorial**: `ICON_LIBRARY` categorizada (Flechas, Negocio, Señales, Decorativos, Redes). Cada icono es SVG insertado con `fabric.loadSVGFromString` → objeto editable (`data.kind='icon'`), con control de color en el panel derecho.
+- **Widgets interactivos**: Mapa, WhatsApp, Formulario de contacto, Video (YouTube/Vimeo/MP4), Audio, Código QR, Tabla, Me gusta (+ Incrustar/Cuestionario premium). En el editor se insertan como placeholder (`data.kind='widget'`, `data.widget={type,config}`) y se configuran en el panel derecho (`WidgetProps`). El visor (`flipbook.js → buildWidget`) reemplaza el placeholder por el componente real (iframe de mapa/video, form con `mailto`, enlace `wa.me`, QR vía `api.qrserver.com`, tabla HTML, contador de likes en localStorage).
+
+> ⚠️ **REQUIERE REDEPLOY DEL VISOR** para que los widgets y las tipografías se vean en publicaciones:
+> `cd ~/intap-flipbook/apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer`
+> El Worker no necesita cambios (los widgets viajan dentro de `canvas_json`).
 
 ---
 
@@ -164,18 +235,59 @@ Donde `key` es la ruta del archivo dentro del bucket (ej. `users/123/publication
 
 | Tarea | Estado |
 |-------|--------|
-| ⚠️ Activar R2 Public URL y actualizar Worker | **EN PROGRESO** |
-| Verificar vista previa en dashboard tras fix de R2 | Pendiente |
-| Verificar viewer público (`/view/:slug`) tras fix | Pendiente |
-| Super Admin panel | No iniciado |
+| Deploy Worker para `/view` con canvas_json | **Pendiente (Juan)** |
+| Importar plantillas ZIP a R2 + D1 (re-correr script) | ✅ **Hecho** — 8 plantillas (48 imgs en R2, 82 queries en D1) |
+| Acción `show_hide` en viewer (elementos nombrados) | Pendiente |
+| Alinear claves de módulos (frontend ↔ DB) | Pendiente |
+| Migración D1 tablas nuevas (modules, publication_views) | `publication_views` ✅, `modules`/`plan_modules` pendiente verificar |
+| Editor: mejorar visual al estilo FlipHTML5 (puntos activos, biblioteca elementos) | Planificado |
 | Dominios personalizados (`*.intapflipbook.com`) | No configurado |
 | Pagos / Stripe | No iniciado |
+| Banners tenant: alerta >80% uso, período de gracia | No iniciado |
+
+---
+
+## 🆕 Sesión jun-2026 — Fixes editor/viewer + uploads + respuestas (commits 6a81c82 → 0fb780d)
+
+### Fixes críticos del editor (`035fa6a`)
+- **Foco saltaba al escribir** (texto y selector de color): el `onChange` del `PropsPanel` llamaba a `refreshSelected()` que incrementaba `key={selectVersion}`, remontando todo el panel en cada tecla. Fix: quitar `refreshSelected()` del `onChange`.
+- **Autoguardado sobreescribía con canvas vacío**: los eventos `object:added` se disparaban durante `loadFromJSON`. Fix: guardia `isLoading` que bloquea `onChange` hasta que termina la carga.
+- **Viewer no ejecutaba clics**: StPageFlip inyecta su canvas encima e intercepta eventos. Fix: `pointer-events:none` en el `wrap` del overlay + `pointer-events:auto` en cada `<a>`/hotspot/widget.
+
+### Uploads en todo el editor (`2dc2bea`)
+- `upload.ts`: ahora acepta audio (mp3/ogg/wav/m4a/aac), video (mp4/webm/ogv), documentos (pdf/zip/doc/docx/xls/xlsx) e imágenes (incluye svg/gif). Límite 10 MB imágenes / **50 MB medios**. Mapa `EXT_BY_TYPE`.
+- `FileField` (Examinar + arrastrar/soltar + URL) integrado en: widget Audio, Video (+ portada), Popup banner (imagen), acción popup_image, acción download.
+- **Nuevo widget `download`** (título + archivo + botón + color) renderizado en viewer.
+- Fixes de desajuste editor↔viewer: hotspot lee `data.hotspot.{style,color}`; formulario usa `nameRequired/emailRequired/phoneRequired/showComment`; cuestionario lee `q.text` y `q.type==='multi'`.
+
+### Popup emergente mejorado (`2dc2bea`)
+- Centrado y compacto (~40% del ancho del flipbook). Animaciones de entrada: saltos/latidos/zoom/deslizar (`pb-anim-*`). Auto-cierre configurable (`autoClose` segundos).
+
+### Prioridad de clic sobre volteo (`2dc2bea`)
+- `blockFlipDrag()` detiene `mousedown/touchstart/pointerdown` en widgets, hotspots y zonas de acción → un clic dentro (responder cuestionario/formulario) no pasa la página; solo clics fuera voltean.
+
+### Panel derecho estilo FlipHTML5 (`091eeed`)
+- **Mapa** (`MapWidgetProps`): buscador de ubicación con **vista previa embebida en vivo** + link embebido + zoom.
+- **QR** (`QrWidgetProps`): vista previa del código en tiempo real.
+- Propiedades comunes: ahora se ve/edita **Tamaño (ancho/alto)** y **Rotación (0–360)** además de Posición/Opacidad. Formas rect: redondeo de esquinas.
+
+### Repositorio de respuestas (`0fb780d`) — Fase 11
+- **D1**: tabla `form_responses` (`migration_fase11.sql`) — ✅ migrada en remoto.
+- **API**: `POST /view/:slug/response` (público), `GET /api/responses`, `GET /api/responses/unread-count`, `PATCH /api/responses/:id/read`, `DELETE /api/responses/:id`.
+- **Viewer**: formulario de contacto y cuestionario guardan la respuesta vía `saveResponse()` (contacto además abre mailto si hay `toEmail`).
+- **Dashboard**: página `/responses` (`TenantResponses.tsx`) con filtros (todas/sin leer/formularios/cuestionarios), marcar leída y eliminar. Item "📨 Respuestas" en el menú.
+
+> **Estado de deploys (sesión jun-2026):** Worker `5a8f04bc`, viewer desplegado, D1 migrada, dashboard auto-deploy. Todo en producción.
+
+### "Usar plantilla" — Opción C (`6a81c82`)
+- `POST /api/templates/:id/apply` (en `pages.ts`): crea publicación nueva con `title` o agrega páginas a una existente (`publication_id`). Copia `template_pages` → `pages`.
+- Frontend: `api.templates.apply()`, modal en `TenantTemplates`, `useTemplate()` en el editor.
 
 ---
 
 ## 🚫 Reglas obligatorias
 
-- No cambiar el stack (Workers, D1, R2, KV, Hono, React/Vite, StPageFlip)
+- No cambiar el stack (Workers, D1, R2, KV, Hono, React/Vite, StPageFlip, Fabric.js)
 - No usar librerías externas para JWT — solo Web Crypto API nativa
 - No hacer `wrangler deploy` ni push a `main` sin aprobación de Juan
 - No instalar dependencias nuevas sin explicar para qué sirven

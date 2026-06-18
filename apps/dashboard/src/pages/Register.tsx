@@ -6,6 +6,8 @@ export default function Register() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const [slugEdited, setSlugEdited] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -17,6 +19,21 @@ export default function Register() {
     const ref = searchParams.get('ref')
     if (ref) setReferralCode(ref)
   }, [searchParams])
+
+  // Normaliza un texto a slug URL-safe (minúsculas, sin acentos, guiones).
+  function toSlug(text: string) {
+    return text
+      .replace(/ñ/gi, 'n')
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .toLowerCase().trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60)
+  }
+  // Sugiere el slug a partir del nombre mientras el usuario no lo edite a mano.
+  useEffect(() => {
+    if (!slugEdited) setSlug(toSlug(name))
+  }, [name, slugEdited])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -38,6 +55,7 @@ export default function Register() {
     setLoading(true)
     try {
       const body: Record<string, string> = { name: name.trim(), email, password }
+      if (slug.trim()) body.slug = slug.trim()
       if (referralCode) body.referral_code = referralCode
 
       const res = await fetch(`${API_BASE}/auth/register`, {
@@ -71,6 +89,17 @@ export default function Register() {
             onChange={(e) => setName(e.target.value)}
             required
           />
+          <div>
+            <input
+              style={styles.input}
+              placeholder="Tu dirección pública (ej: mi-negocio)"
+              value={slug}
+              onChange={(e) => { setSlugEdited(true); setSlug(toSlug(e.target.value)) }}
+            />
+            <p style={styles.slugHint}>
+              flip.intaprd.com/<strong>{slug || 'tu-slug'}</strong>
+            </p>
+          </div>
           <input
             style={styles.input}
             type="email"
@@ -130,6 +159,7 @@ const styles: Record<string, React.CSSProperties> = {
   form: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
   input: { padding: '0.75rem 1rem', borderRadius: 8, border: '1px solid #ddd', fontSize: '1rem', outline: 'none' },
   inputReadonly: { background: '#f1f5f9', color: '#64748b', cursor: 'default' },
+  slugHint: { fontSize: '0.72rem', color: '#94a3b8', margin: '4px 2px 0' },
   error: { color: '#e53e3e', fontSize: '0.875rem', margin: 0 },
   btn: { padding: '0.75rem', borderRadius: 8, background: '#4f46e5', color: '#fff', border: 'none', fontWeight: 600, fontSize: '1rem', cursor: 'pointer' },
   toggle: { textAlign: 'center', marginTop: '1rem', fontSize: '0.875rem', color: '#666' },

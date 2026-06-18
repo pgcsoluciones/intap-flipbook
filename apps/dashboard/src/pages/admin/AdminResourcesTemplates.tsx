@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { API_BASE } from '../../lib/api'
+import FileField from '../../components/FileField'
 
 function authH() {
   const t = localStorage.getItem('token')
@@ -19,6 +20,40 @@ const PLAN_COLORS: Record<string, { bg: string; text: string }> = {
   free:  { bg: '#f3f4f6', text: '#374151' },
   basic: { bg: '#dbeafe', text: '#1e40af' },
   pro:   { bg: '#ede9fe', text: '#5b21b6' },
+  all:   { bg: '#dcfce7', text: '#15803d' },
+}
+
+// `plan_required` se guarda como texto: un plan, varios separados por coma
+// ("basic,pro"), o "all" para todos. Estas funciones traducen entre el texto
+// guardado y la lista de planes seleccionados en el formulario.
+function parsePlans(raw: string | null | undefined): string[] {
+  if (!raw) return ['free']
+  const v = raw.trim().toLowerCase()
+  if (v === 'all' || v === 'todos') return [...PLANS]
+  const list = v.split(',').map((p) => p.trim()).filter((p) => PLANS.includes(p))
+  return list.length ? list : ['free']
+}
+
+function plansToString(plans: string[]): string {
+  // Si están los 3 → "all"; si no, lista ordenada separada por coma
+  if (PLANS.every((p) => plans.includes(p))) return 'all'
+  return PLANS.filter((p) => plans.includes(p)).join(',')
+}
+
+// Clasificación → planes por defecto:
+//   Básica  = disponible en todos los planes (free, basic, pro)
+//   Premium = solo planes de pago (basic, pro)
+const CLASSIFICATIONS = {
+  basica:  ['free', 'basic', 'pro'],
+  premium: ['basic', 'pro'],
+}
+
+// Deduce la clasificación a partir de los planes seleccionados (o 'personalizada')
+function classOf(plans: string[]): 'basica' | 'premium' | 'custom' {
+  const set = [...plans].sort().join(',')
+  if (set === [...CLASSIFICATIONS.basica].sort().join(',')) return 'basica'
+  if (set === [...CLASSIFICATIONS.premium].sort().join(',')) return 'premium'
+  return 'custom'
 }
 
 interface Template {
@@ -35,12 +70,12 @@ interface Template {
 interface FormData {
   name: string
   category: string
-  plan_required: string
+  plans: string[]        // planes seleccionados (uno o varios)
   cover_url: string
   active: boolean
 }
 
-const EMPTY_FORM: FormData = { name: '', category: 'catalogo', plan_required: 'free', cover_url: '', active: true }
+const EMPTY_FORM: FormData = { name: '', category: 'catalogo', plans: ['free'], cover_url: '', active: true }
 
 export default function AdminResourcesTemplates() {
   const [templates, setTemplates] = useState<Template[]>([])
@@ -63,7 +98,7 @@ export default function AdminResourcesTemplates() {
     setForm({
       name: t.name,
       category: t.category_id ? String(t.category_id) : 'catalogo',
-      plan_required: t.plan_required,
+      plans: parsePlans(t.plan_required),
       cover_url: t.cover_url ?? '',
       active: t.active === 1,
     })
@@ -71,12 +106,20 @@ export default function AdminResourcesTemplates() {
   }
 
   async function save() {
+    if (form.plans.length === 0) { flash('Selecciona al menos un plan.', true); return }
     try {
-      const payload = { ...form, cover_url: form.cover_url || null }
+      const plan_required = plansToString(form.plans)
+      const payload = {
+        name: form.name,
+        category: form.category,
+        plan_required,
+        cover_url: form.cover_url || null,
+        active: form.active,
+      }
       if (editing) {
         await adminFetch(`/templates/${editing.id}`, { method: 'PUT', body: JSON.stringify(payload) })
         setTemplates((prev) => prev.map((t) =>
-          t.id === editing.id ? { ...t, ...payload, active: payload.active ? 1 : 0 } : t
+          t.id === editing.id ? { ...t, plan_required, cover_url: payload.cover_url, name: form.name, active: form.active ? 1 : 0 } : t
         ))
         flash('Plantilla actualizada.')
       } else {
@@ -85,7 +128,7 @@ export default function AdminResourcesTemplates() {
           id: res.data.id,
           name: form.name,
           category_id: null,
-          plan_required: form.plan_required,
+          plan_required,
           cover_url: form.cover_url || null,
           active: form.active ? 1 : 0,
           sort_order: 0,
@@ -144,7 +187,8 @@ export default function AdminResourcesTemplates() {
           </thead>
           <tbody>
             {templates.map((t) => {
-              const planColor = PLAN_COLORS[t.plan_required] ?? PLAN_COLORS.free
+              const isAll = (t.plan_required ?? '').trim().toLowerCase() === 'all' || parsePlans(t.plan_required).length === PLANS.length
+              const planList = parsePlans(t.plan_required)
               return (
                 <tr key={t.id} style={{ ...s.row, opacity: t.active ? 1 : 0.55 }}>
                   <td style={s.td}>
@@ -157,7 +201,16 @@ export default function AdminResourcesTemplates() {
                   <td style={{ ...s.td, fontWeight: 600, color: '#111827' }}>{t.name}</td>
                   <td style={s.td}><span style={s.catBadge}>{t.category_id ?? '—'}</span></td>
                   <td style={s.td}>
-                    <span style={{ ...s.badge, background: planColor.bg, color: planColor.text }}>{t.plan_required}</span>
+                    {isAll ? (
+                      <span style={{ ...s.badge, background: PLAN_COLORS.all.bg, color: PLAN_COLORS.all.text }}>todos</span>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {planList.map((p) => {
+                          const c = PLAN_COLORS[p] ?? PLAN_COLORS.free
+                          return <span key={p} style={{ ...s.badge, background: c.bg, color: c.text }}>{p}</span>
+                        })}
+                      </div>
+                    )}
                   </td>
                   <td style={s.td}>
                     <span style={{ ...s.badge, background: t.active ? '#dcfce7' : '#fee2e2', color: t.active ? '#15803d' : '#991b1b' }}>
@@ -200,13 +253,49 @@ export default function AdminResourcesTemplates() {
               {CATEGORIES.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
             </select>
 
-            <label style={s.label}>Plan requerido</label>
-            <select style={s.input} value={form.plan_required} onChange={(e) => setForm({ ...form, plan_required: e.target.value })}>
-              {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <label style={s.label}>Clasificación</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, plans: CLASSIFICATIONS.basica })}
+                style={{ ...s.classBtn, ...(classOf(form.plans) === 'basica' ? s.classBtnActive : {}) }}
+              >Básica <span style={s.classHint}>(todos los planes)</span></button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, plans: CLASSIFICATIONS.premium })}
+                style={{ ...s.classBtn, ...(classOf(form.plans) === 'premium' ? s.classBtnActive : {}) }}
+              >Premium <span style={s.classHint}>(Basic y Pro)</span></button>
+            </div>
 
-            <label style={s.label}>URL de portada (cover_url)</label>
-            <input style={s.input} value={form.cover_url} onChange={(e) => setForm({ ...form, cover_url: e.target.value })} placeholder="https://..." />
+            <label style={s.label}>Planes con acceso</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, plans: [...PLANS] })}
+                style={{ ...s.planChip, ...(form.plans.length === PLANS.length ? s.planChipAll : {}) }}
+              >✓ Todos</button>
+              {PLANS.map((p) => {
+                const checked = form.plans.includes(p)
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => {
+                      const next = checked ? form.plans.filter((x) => x !== p) : [...form.plans, p]
+                      setForm({ ...form, plans: next })
+                    }}
+                    style={{ ...s.planChip, ...(checked ? s.planChipOn : {}) }}
+                  >{checked ? '✓ ' : ''}{p}</button>
+                )
+              })}
+            </div>
+
+            <label style={s.label}>Portada</label>
+            <FileField
+              value={form.cover_url}
+              onChange={(url) => setForm({ ...form, cover_url: url })}
+              hint="JPG, PNG, WEBP · máx 10 MB"
+            />
 
             <label style={{ ...s.label, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
               <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
@@ -246,4 +335,10 @@ const s: Record<string, React.CSSProperties> = {
   label:      { fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4, marginTop: 12 },
   input:      { width: '100%', border: '1px solid #d1d5db', borderRadius: 8, padding: '8px 10px', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const },
   btnCancel:  { background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontSize: 13 },
+  classBtn:       { flex: 1, background: '#fff', border: '1px solid #d1d5db', borderRadius: 8, padding: '8px 10px', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#374151', textAlign: 'center' as const },
+  classBtnActive: { borderColor: '#4f46e5', background: '#eef2ff', color: '#4338ca' },
+  classHint:      { display: 'block', fontSize: 10, fontWeight: 400, color: '#9ca3af', marginTop: 2 },
+  planChip:       { background: '#fff', border: '1px solid #d1d5db', borderRadius: 999, padding: '5px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#6b7280' },
+  planChipOn:     { borderColor: '#4f46e5', background: '#eef2ff', color: '#4338ca' },
+  planChipAll:    { borderColor: '#15803d', background: '#dcfce7', color: '#15803d' },
 }
