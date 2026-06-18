@@ -48,7 +48,7 @@ export default function Publications() {
 
   // Modal de creación
   // mode: 'choose' (elegir cómo empezar) | 'upload' (cargar imágenes) | 'scratch' (lienzo en blanco)
-  const [mode, setMode]               = useState<'choose' | 'upload' | 'scratch'>('choose')
+  const [mode, setMode]               = useState<'choose' | 'upload' | 'scratch' | 'pdf'>('choose')
   const [showModal, setShowModal]     = useState(false)
   const [modalFiles, setModalFiles]   = useState<File[]>([])
   const [previews, setPreviews]       = useState<string[]>([])
@@ -58,6 +58,9 @@ export default function Publications() {
   const [creating, setCreating]       = useState(false)
   const [progress, setProgress]       = useState('')
   const [modalError, setModalError]   = useState('')
+  const [pdfProgress, setPdfProgress] = useState('')
+  const [pdfFile, setPdfFile]         = useState<File | null>(null)
+  const pdfInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!localStorage.getItem('token')) { navigate('/login'); return }
@@ -131,6 +134,42 @@ export default function Publications() {
     }
   }
 
+  async function handleCreateFromPDF(e: React.FormEvent) {
+    e.preventDefault()
+    if (!title.trim()) { setModalError('El nombre es requerido.'); return }
+    if (!pdfFile) { setModalError('Seleccioná un archivo PDF.'); return }
+    const pdfjsLib = (window as any).pdfjsLib
+    if (!pdfjsLib) { setModalError('pdf.js no está disponible. Recargá la página.'); return }
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+    setCreating(true); setModalError('')
+    try {
+      const pubRes = await api.publications.create({ title: title.trim(), description: '', category })
+      const pubId: string = pubRes.data.id
+      const arrayBuffer = await pdfFile.arrayBuffer()
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+      const total = pdf.numPages
+      for (let pageNum = 1; pageNum <= total; pageNum++) {
+        setPdfProgress(`Procesando página ${pageNum} de ${total}...`)
+        const page = await pdf.getPage(pageNum)
+        const viewport = page.getViewport({ scale: 1.8 })
+        const canvas = document.createElement('canvas')
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise
+        const blob = await new Promise<Blob>((res) => canvas.toBlob((b) => res(b!), 'image/png'))
+        const pngFile = new File([blob], `pdf-page-${pageNum}.png`, { type: 'image/png' })
+        const up = await api.upload(pngFile)
+        if (!up.success) throw new Error(`Error al subir página ${pageNum}`)
+        await api.pages.add(pubId, { image_url: up.data.url })
+      }
+      navigate(`/publications/${pubId}/editor`)
+    } catch (err: any) {
+      setModalError(err.message ?? 'Error al importar el PDF.')
+      setCreating(false); setPdfProgress('')
+    }
+  }
+
   // ── Acciones sobre publicaciones ──────────────────────────
   async function handleDelete(id: string) {
     if (!confirm('¿Mover a papelera?')) return
@@ -194,6 +233,7 @@ export default function Publications() {
               <h2 style={s.modalTitle}>
                 {mode === 'choose' ? 'Nuevo flipbook'
                   : mode === 'scratch' ? 'Empezar desde cero'
+                  : mode === 'pdf' ? 'Importar PDF'
                   : 'Cargar imágenes'}
               </h2>
               <button style={s.closeBtn} onClick={closeModal} disabled={creating}>✕</button>
@@ -216,6 +256,11 @@ export default function Publications() {
                   <div style={s.choiceIcon}>🗂️</div>
                   <div style={s.choiceTitle}>Usar una plantilla</div>
                   <div style={s.choiceSub}>Partí de un diseño prearmado y personalizalo.</div>
+                </button>
+                <button style={s.choiceCard} onClick={() => setMode('pdf')}>
+                  <div style={s.choiceIcon}>📄</div>
+                  <div style={s.choiceTitle}>Importar PDF</div>
+                  <div style={s.choiceSub}>Cada página del PDF se convierte en una página del flipbook, lista para editar.</div>
                 </button>
               </div>
             )}
@@ -245,6 +290,59 @@ export default function Publications() {
                   <button type="button" style={s.btnCancel} onClick={() => setMode('choose')} disabled={creating}>← Volver</button>
                   <button type="submit" style={{ ...s.btnCreate, opacity: creating ? 0.7 : 1 }} disabled={creating || !title.trim()}>
                     {creating ? 'Creando...' : 'Abrir constructor →'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* ── Paso 2c: importar PDF ── */}
+            {mode === 'pdf' && (
+              <form onSubmit={handleCreateFromPDF} style={s.modalForm}>
+                <div style={s.formField}>
+                  <label style={s.formLabel}>Nombre del flipbook *</label>
+                  <input
+                    style={s.formInput}
+                    required autoFocus
+                    placeholder="Ej: Presentación Empresa 2025"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    disabled={creating}
+                  />
+                </div>
+                <div style={s.formField}>
+                  <label style={s.formLabel}>Categoría</label>
+                  <select style={s.formInput} value={category} onChange={(e) => setCategory(e.target.value)} disabled={creating}>
+                    {CAT_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  </select>
+                </div>
+                <div style={s.formField}>
+                  <label style={s.formLabel}>Archivo PDF *</label>
+                  <div
+                    style={{
+                      border: '2px dashed #c7d2fe', borderRadius: 10, padding: '20px', textAlign: 'center',
+                      cursor: 'pointer', background: pdfFile ? '#f0fdf4' : '#fafafe',
+                    }}
+                    onClick={() => pdfInputRef.current?.click()}
+                  >
+                    {pdfFile
+                      ? <span style={{ color: '#059669', fontWeight: 600 }}>📄 {pdfFile.name} ({(pdfFile.size / 1024 / 1024).toFixed(1)} MB)</span>
+                      : <span style={{ color: '#9ca3af' }}>Hacé clic para seleccionar un PDF (máx. 50 MB)</span>
+                    }
+                  </div>
+                  <input
+                    ref={pdfInputRef}
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    style={{ display: 'none' }}
+                    onChange={(e) => { setPdfFile(e.target.files?.[0] ?? null); e.target.value = '' }}
+                  />
+                </div>
+                {pdfProgress && <div style={{ color: '#6366f1', fontSize: 13, margin: '8px 0' }}>{pdfProgress}</div>}
+                {modalError && <div style={s.errorText}>{modalError}</div>}
+                <div style={s.modalFooter}>
+                  <button type="button" style={s.btnCancel} onClick={() => setMode('choose')} disabled={creating}>← Volver</button>
+                  <button type="submit" style={{ ...s.btnCreate, opacity: creating ? 0.7 : 1 }} disabled={creating || !title.trim() || !pdfFile}>
+                    {creating ? (pdfProgress || 'Procesando...') : 'Importar PDF →'}
                   </button>
                 </div>
               </form>

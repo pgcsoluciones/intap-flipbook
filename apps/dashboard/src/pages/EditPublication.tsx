@@ -307,6 +307,8 @@ export default function EditPublication() {
   const pageIdRef = useRef<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imgInputRef  = useRef<HTMLInputElement>(null)
+  const svgInputRef = useRef<HTMLInputElement>(null)
+  const pdfPagesInputRef = useRef<HTMLInputElement>(null)
   const rightPanelRef = useRef<HTMLDivElement>(null)
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
@@ -625,6 +627,63 @@ export default function EditPublication() {
     for (const file of files) await addImageElement(file)
   }
 
+  function insertSvgAsElements(file: File) {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const svgText = e.target?.result as string
+      if (!svgText || !fabricRef.current) return
+      fabric.loadSVGFromString(svgText, (objects: any[], options: any) => {
+        if (!objects.length) return
+        const group = fabric.util.groupSVGElements(objects, options)
+        const c = fabricRef.current!
+        const maxW = c.getWidth() * 0.7
+        if ((group.width ?? 0) > maxW) group.scaleToWidth(maxW)
+        group.set({ left: 50, top: 50, data: { kind: 'svg_group' } })
+        c.add(group); c.setActiveObject(group); c.requestRenderAll()
+        scheduleAutosave()
+      })
+    }
+    reader.readAsText(file)
+  }
+
+  async function importPdfPages(file: File) {
+    const pdfjsLib = (window as any).pdfjsLib
+    if (!pdfjsLib) { alert('pdf.js no está disponible. Recargá la página.'); return }
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+    setUploading(true)
+    try {
+      const arrayBuffer = await file.arrayBuffer()
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+      const total = pdf.numPages
+      for (let pageNum = 1; pageNum <= total; pageNum++) {
+        const page = await pdf.getPage(pageNum)
+        const viewport = page.getViewport({ scale: 1.8 })
+        const canvas = document.createElement('canvas')
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        const ctx = canvas.getContext('2d')!
+        await page.render({ canvasContext: ctx, viewport }).promise
+        const blob = await new Promise<Blob>((res) =>
+          canvas.toBlob((b) => res(b!), 'image/png'),
+        )
+        const pngFile = new File([blob], `pdf-page-${pageNum}.png`, { type: 'image/png' })
+        const up = await api.upload(pngFile)
+        if (!up.success) throw new Error(`Error al subir página ${pageNum}`)
+        const res = await api.pages.add(id!, { image_url: up.data.url })
+        setPages((prev) => {
+          const next = [...prev, res.data]
+          if (pageNum === total) setActivePage(res.data)
+          return next
+        })
+      }
+    } catch (err: any) {
+      alert(err.message ?? 'Error al importar el PDF')
+    } finally {
+      setUploading(false)
+    }
+  }
+
   function addLinkZone() {
     const c = fabricRef.current; if (!c) return
     const zone = new fabric.Rect({
@@ -910,6 +969,8 @@ export default function EditPublication() {
               setDefaultFont={setDefaultFont}
               imageBank={imageBank}
               addImageFromUrl={addImageFromUrl}
+              svgInputRef={svgInputRef}
+              pdfPagesInputRef={pdfPagesInputRef}
             />
           </aside>
         )}
@@ -1023,6 +1084,28 @@ export default function EditPublication() {
         style={{ display: 'none' }}
         onChange={handleFileInputChange}
       />
+      <input
+        ref={svgInputRef}
+        type="file"
+        accept=".svg,image/svg+xml"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          e.target.value = ''
+          if (f) insertSvgAsElements(f)
+        }}
+      />
+      <input
+        ref={pdfPagesInputRef}
+        type="file"
+        accept=".pdf,application/pdf"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          e.target.value = ''
+          if (f) importPdfPages(f)
+        }}
+      />
     </div>
   )
 }
@@ -1067,6 +1150,9 @@ function ContextPanel(p: any) {
           </button>
           <button style={cp.secondaryBtn} onClick={p.addBlankPage} disabled={p.uploading}>
             + Página en blanco
+          </button>
+          <button style={cp.secondaryBtn} onClick={() => p.pdfPagesInputRef?.current?.click()} disabled={p.uploading}>
+            📄 Importar PDF como páginas
           </button>
         </>
       )
@@ -1148,6 +1234,11 @@ function ContextPanel(p: any) {
             {p.uploadingImg ? 'Subiendo...' : 'Insertar imagen en la página'}
           </button>
           <p style={cp.hint}>La imagen se agrega como elemento editable sobre la página actual. Podés moverla, escalarla y asignarle una acción.</p>
+          <div style={{ height: 1, background: '#f3f4f6', margin: '14px 0' }} />
+          <button style={cp.primaryBtn} onClick={() => p.svgInputRef?.current?.click()} disabled={p.uploadingImg}>
+            🎨 Insertar SVG editable
+          </button>
+          <p style={cp.hint}>Importá un archivo .svg — cada forma se convierte en un elemento independiente que podés mover, colorear y escalar.</p>
           <div style={{ height: 1, background: '#f3f4f6', margin: '14px 0' }} />
           {/* Agregar como nueva página del flipbook */}
           <button style={{ ...cp.primaryBtn, background: '#64748b' }} onClick={() => p.fileInputRef.current?.click()} disabled={p.uploading}>
