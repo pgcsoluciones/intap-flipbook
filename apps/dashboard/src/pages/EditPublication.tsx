@@ -658,16 +658,16 @@ export default function EditPublication() {
       const total = pdf.numPages
       for (let pageNum = 1; pageNum <= total; pageNum++) {
         const page = await pdf.getPage(pageNum)
-        const viewport = page.getViewport({ scale: 1.8 })
+        const viewport = page.getViewport({ scale: 1.5 })
         const canvas = document.createElement('canvas')
         canvas.width = viewport.width
         canvas.height = viewport.height
         const ctx = canvas.getContext('2d')!
         await page.render({ canvasContext: ctx, viewport }).promise
         const blob = await new Promise<Blob>((res) =>
-          canvas.toBlob((b) => res(b!), 'image/png'),
+          canvas.toBlob((b) => res(b!), 'image/jpeg', 0.82),
         )
-        const pngFile = new File([blob], `pdf-page-${pageNum}.png`, { type: 'image/png' })
+        const pngFile = new File([blob], `pdf-page-${pageNum}.jpg`, { type: 'image/jpeg' })
         const up = await api.upload(pngFile)
         if (!up.success) throw new Error(`Error al subir página ${pageNum}`)
         const res = await api.pages.add(id!, { image_url: up.data.url })

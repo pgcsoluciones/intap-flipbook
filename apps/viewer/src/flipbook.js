@@ -127,7 +127,7 @@ async function init() {
 
   // índices lead..lead+realCount-1: páginas reales
   const pageDivs = []
-  data.pages.forEach((page) => {
+  data.pages.forEach((page, idx) => {
     const div = document.createElement('div')
     div.className = 'page'
     div.style.cssText = `width:${pageWidth}px;height:${pageHeight}px;overflow:hidden;background:#fff;position:relative;`
@@ -135,6 +135,8 @@ async function init() {
     img.src = page.image_url
     img.alt = page.title ?? `Página ${page.page_number}`
     img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;'
+    // Las primeras 2 páginas cargan inmediatamente (portada visible); el resto en diferido
+    if (idx >= 2) img.loading = 'lazy'
     div.appendChild(img)
     pageDivs.push(div)
     if (page.title || page.price) {

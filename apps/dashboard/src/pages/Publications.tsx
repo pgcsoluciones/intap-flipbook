@@ -159,13 +159,13 @@ export default function Publications() {
       for (let pageNum = 1; pageNum <= total; pageNum++) {
         setPdfProgress(`Procesando página ${pageNum} de ${total}...`)
         const page = await pdf.getPage(pageNum)
-        const viewport = page.getViewport({ scale: 1.8 })
+        const viewport = page.getViewport({ scale: 1.5 })
         const canvas = document.createElement('canvas')
         canvas.width = viewport.width
         canvas.height = viewport.height
         await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise
-        const blob = await new Promise<Blob>((res) => canvas.toBlob((b) => res(b!), 'image/png'))
-        const pngFile = new File([blob], `pdf-page-${pageNum}.png`, { type: 'image/png' })
+        const blob = await new Promise<Blob>((res) => canvas.toBlob((b) => res(b!), 'image/jpeg', 0.82))
+        const pngFile = new File([blob], `pdf-page-${pageNum}.jpg`, { type: 'image/jpeg' })
         const up = await api.upload(pngFile)
         if (!up.success) throw new Error(`Error al subir página ${pageNum}`)
         await api.pages.add(pubId, { image_url: up.data.url })
