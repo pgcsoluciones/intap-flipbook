@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
+import UnitsPanel from './UnitsPanel'
 
 const CATEGORIES = [
   { value: 'catalogo',   label: 'Catálogo de productos' },
@@ -207,6 +208,16 @@ export default function Settings() {
               {saving ? 'Guardando...' : 'Guardar cambios'}
             </button>
           )}
+        </section>
+
+        {/* Gestión de Unidades — disponible para cualquier publicación */}
+        <section style={styles.card}>
+          <h2 style={styles.sectionTitle}>Gestión de Unidades</h2>
+          <p style={{ color: '#6b7280', fontSize: '0.8rem', marginBottom: '1rem', marginTop: 0 }}>
+            Registrá los departamentos, locales u otras unidades de este proyecto. Podés cambiar
+            su estado (Disponible / Reservada / Vendida) con un solo clic.
+          </p>
+          <UnitsPanel publicationId={id!} />
         </section>
 
         {/* Zona peligrosa */}
