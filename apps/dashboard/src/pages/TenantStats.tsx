@@ -49,13 +49,14 @@ type Stats = {
 type PubDetail = {
   publication: { id: string; title: string; status: string; views_count: number; public_slug: string | null }
   total_views: number
+  total_clicks?: number
   recent_views: { id: number; viewed_at: string; device: string }[]
   device_breakdown: { device: string; count: number }[]
   page_times: { page_number: number; visits: number; avg_ms: number }[]
   button_clicks: { label: string; action_type: string; page_number: number; clicks: number }[]
   views_by_day: { day: string; views: number }[]
   country_breakdown?: { country: string; count: number }[]
-  top_links?: { action_type: string; label: string | null; url_destination: string | null; count: number }[]
+  top_links?: { action_type: string; label: string | null; url_destination: string | null; count: number; page_number?: number }[]
   page_visits?: { page_number: number; visits: number; avg_ms: number }[]
 }
 
@@ -230,11 +231,72 @@ function PubDetailPanel({
   const buttonClicks = detail.button_clicks ?? []
   const recentViews = detail.recent_views ?? []
   const viewsByDay = detail.views_by_day ?? []
-  const maxAvgMs = Math.max(...pageTimes.map((p) => p.avg_ms ?? 0), 1)
-  const maxClicks = Math.max(...buttonClicks.map((b) => b.clicks ?? 0), 1)
+  const topLinks = detail.top_links ?? []
+  const countryBreakdown = detail.country_breakdown ?? []
+
+  // Total de clics: calculado desde button_clicks si no viene del servidor
+  const totalClicks = detail.total_clicks ?? buttonClicks.reduce((sum, b) => sum + (b.clicks ?? 0), 0)
 
   // Barra de vistas por día — sparkline simple con barras SVG
   const maxDayViews = Math.max(...viewsByDay.map((d) => d.views ?? 0), 1)
+
+  // Agrupar button_clicks por página para la tabla unificada
+  const clicksByPage: Record<number, { label: string; action_type: string; clicks: number }[]> = {}
+  for (const bc of buttonClicks) {
+    if (!clicksByPage[bc.page_number]) clicksByPage[bc.page_number] = []
+    clicksByPage[bc.page_number].push(bc)
+  }
+
+  // Construir filas de la tabla unificada por página
+  // Unión de páginas con datos de page_times y páginas con clics (puede haber páginas con clics pero sin tiempo registrado)
+  const allPageNumbers = Array.from(
+    new Set([
+      ...pageTimes.map((p) => p.page_number),
+      ...buttonClicks.map((b) => b.page_number),
+    ])
+  ).sort((a, b) => a - b)
+
+  // Para la tabla de interacciones: preferir top_links (tiene url_destination), si está vacío usar button_clicks
+  type InteractionRow = {
+    action_type: string
+    label: string | null
+    url_destination: string | null
+    page_number: number | null
+    clicks: number
+  }
+  const interactionRows: InteractionRow[] = topLinks.length > 0
+    ? topLinks.map((link) => ({
+        action_type: link.action_type,
+        label: link.label ?? null,
+        url_destination: link.url_destination ?? null,
+        page_number: (link as any).page_number ?? null,
+        clicks: link.count,
+      }))
+    : buttonClicks.map((bc) => ({
+        action_type: bc.action_type,
+        label: bc.label ?? null,
+        url_destination: null,
+        page_number: bc.page_number,
+        clicks: bc.clicks,
+      }))
+
+  const maxInteractionClicks = Math.max(...interactionRows.map((r) => r.clicks), 1)
+
+  // Colores por tipo de acción para badges
+  function actionBadgeColor(type: string): { bg: string; color: string } {
+    switch (type) {
+      case 'whatsapp': return { bg: '#dcfce7', color: '#16a34a' }
+      case 'link':     return { bg: '#dbeafe', color: '#2563eb' }
+      case 'call':     return { bg: '#ffedd5', color: '#ea580c' }
+      case 'email':    return { bg: '#ede9fe', color: '#7c3aed' }
+      case 'download': return { bg: '#f3f4f6', color: '#6b7280' }
+      case 'popup_text':
+      case 'popup_image':
+      case 'popup_video':
+      case 'popup_banner': return { bg: '#fef3c7', color: '#d97706' }
+      default: return { bg: '#f3f4f6', color: '#6b7280' }
+    }
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -249,206 +311,183 @@ function PubDetailPanel({
         </div>
       </div>
 
-      {/* Métricas principales */}
+      {/* SECCION 1 — Métricas principales */}
       <div style={s.summaryRow}>
-        <SummaryCard label="Vistas totales"    value={detail.total_views}     icon="👁️" color="#4f46e5" />
-        <SummaryCard label="Vistas recientes"  value={recentViews.length}     icon="📅" color="#059669" />
-        <SummaryCard label="Paginas con datos" value={pageTimes.length}       icon="📄" color="#d97706" />
+        <SummaryCard label="Vistas totales"         value={detail.total_views} icon="👁️" color="#4f46e5" />
+        <SummaryCard label="Paginas con actividad"  value={pageTimes.length}   icon="📄" color="#059669" />
+        <SummaryCard label="Total clics registrados" value={totalClicks}        icon="🖱️" color="#d97706" />
       </div>
 
-      {/* Gráfico de vistas por día + donut dispositivos */}
-      {(viewsByDay.length > 0 || recentViews.length > 0) && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '1.25rem', alignItems: 'start' }}>
-          {viewsByDay.length > 0 ? (
-            <div style={s.card}>
-              <h2 style={s.cardTitle}>Vistas por dia (ultimos 30 dias)</h2>
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 80, padding: '0 4px' }}>
-                {viewsByDay.map((d) => {
-                  const pct = Math.round(((d.views ?? 0) / maxDayViews) * 100)
-                  return (
-                    <div key={d.day} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, gap: 4, minWidth: 0 }}>
-                      <div
-                        title={`${d.day}: ${d.views} vistas`}
-                        style={{
-                          width: '100%',
-                          height: `${Math.max(4, pct * 0.76)}px`,
-                          background: '#4f46e5',
-                          borderRadius: '3px 3px 0 0',
-                          cursor: 'default',
-                          transition: 'opacity .2s',
-                        }}
-                      />
-                    </div>
-                  )
-                })}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 10, color: '#9ca3af' }}>
-                <span>{viewsByDay[0]?.day ?? ''}</span>
-                <span>{viewsByDay[viewsByDay.length - 1]?.day ?? ''}</span>
-              </div>
-            </div>
-          ) : (
-            <div style={{ ...s.card, color: '#9ca3af', fontSize: 13, textAlign: 'center', padding: '2rem' }}>
-              Sin datos de vistas por dia.
-            </div>
-          )}
-
-          <div style={{ ...s.card, minWidth: 180 }}>
-            <h2 style={s.cardTitle}>Dispositivos</h2>
-            <DeviceDonut views={recentViews} breakdown={detail.device_breakdown} />
-          </div>
-        </div>
-      )}
-
-      {/* Tiempo promedio por página */}
-      {pageTimes.length > 0 ? (
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>Tiempo promedio por pagina</h2>
-          <div style={s.barList}>
-            {pageTimes
-              .slice()
-              .sort((a, b) => (b.avg_ms ?? 0) - (a.avg_ms ?? 0))
-              .map((pt) => {
-                const pct = Math.round(((pt.avg_ms ?? 0) / maxAvgMs) * 100)
+      {/* SECCION 2 — Gráfico de vistas por día + donut dispositivos */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '1.25rem', alignItems: 'start' }}>
+        {viewsByDay.length > 0 ? (
+          <div style={s.card}>
+            <h2 style={s.cardTitle}>Vistas por dia (ultimos 30 dias)</h2>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 80, padding: '0 4px' }}>
+              {viewsByDay.map((d) => {
+                const pct = Math.round(((d.views ?? 0) / maxDayViews) * 100)
                 return (
-                  <div key={pt.page_number} style={s.barRow}>
-                    <div style={s.barLabel}>
-                      <span style={s.barTitle}>Pagina {pt.page_number}</span>
-                      <span style={s.barCount}>{fmtDuration(pt.avg_ms)} · {pt.visits} visita{pt.visits === 1 ? '' : 's'}</span>
-                    </div>
-                    <div style={s.barTrack}>
-                      <div style={{ ...s.barFill, width: `${pct}%`, background: '#059669' }} />
-                    </div>
+                  <div key={d.day} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, gap: 4, minWidth: 0 }}>
+                    <div
+                      title={`${d.day}: ${d.views} vistas`}
+                      style={{
+                        width: '100%',
+                        height: `${Math.max(4, pct * 0.76)}px`,
+                        background: '#4f46e5',
+                        borderRadius: '3px 3px 0 0',
+                        cursor: 'default',
+                        transition: 'opacity .2s',
+                      }}
+                    />
                   </div>
                 )
               })}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 10, color: '#9ca3af' }}>
+              <span>{viewsByDay[0]?.day ?? ''}</span>
+              <span>{viewsByDay[viewsByDay.length - 1]?.day ?? ''}</span>
+            </div>
           </div>
-        </div>
-      ) : (
-        <div style={{ ...s.card, textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>📊</div>
-          <p style={{ margin: 0, fontSize: 14 }}>Aun no hay estadisticas detalladas de paginas para este flipbook.</p>
-          <p style={{ margin: '8px 0 0', fontSize: 12 }}>Los datos aparecen cuando los lectores visitan el flipbook publicado.</p>
-        </div>
-      )}
-
-      {/* Botones mas clickeados */}
-      {buttonClicks.length > 0 && (
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>Botones mas clickeados</h2>
-          <div style={s.barList}>
-            {buttonClicks.map((bc, i) => {
-              const pct = Math.round(((bc.clicks ?? 0) / maxClicks) * 100)
-              const kind = ACTION_LABEL[bc.action_type] ?? bc.action_type
-              return (
-                <div key={i} style={s.barRow}>
-                  <div style={s.barLabel}>
-                    <span style={s.barTitle}>
-                      {bc.label || kind}
-                      <span style={{ color: '#9ca3af', fontWeight: 400 }}> · {kind} · pag {bc.page_number}</span>
-                    </span>
-                    <span style={s.barCount}>{bc.clicks} clic{bc.clicks === 1 ? '' : 's'}</span>
-                  </div>
-                  <div style={s.barTrack}>
-                    <div style={{ ...s.barFill, width: `${pct}%`, background: '#d97706' }} />
-                  </div>
-                </div>
-              )
-            })}
+        ) : (
+          <div style={{ ...s.card, color: '#9ca3af', fontSize: 13, textAlign: 'center', padding: '2rem' }}>
+            Sin datos de vistas por dia.
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Páginas más visitadas */}
-      {(detail.page_visits ?? []).length > 0 && (
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>Paginas mas visitadas</h2>
+        <div style={{ ...s.card, minWidth: 180 }}>
+          <h2 style={s.cardTitle}>Dispositivos</h2>
+          <DeviceDonut views={recentViews} breakdown={detail.device_breakdown} />
+        </div>
+      </div>
+
+      {/* SECCION 3 — Tabla unificada "Estadísticas por página" */}
+      <div style={s.card}>
+        <h2 style={s.cardTitle}>Estadisticas por pagina</h2>
+        {allPageNumbers.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '1.5rem 0', color: '#9ca3af', fontSize: 13 }}>
+            Aun no hay datos de paginas. Los datos aparecen cuando los lectores visitan el flipbook publicado.
+          </div>
+        ) : (
           <table style={s.table}>
             <thead>
               <tr>
-                {['Pagina', 'Visitas', 'Tiempo promedio'].map((h) => (
+                {['Pagina', 'Visitas', 'Tiempo promedio', 'Clics', 'Interacciones'].map((h) => (
                   <th key={h} style={s.th}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {(detail.page_visits ?? []).map((pv) => (
-                <tr key={pv.page_number} style={s.tr}>
-                  <td style={s.td}>Pagina {pv.page_number}</td>
-                  <td style={s.td}>{pv.visits}</td>
-                  <td style={{ ...s.td, color: '#6b7280' }}>{fmtDuration(pv.avg_ms)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Links mas clickeados con URL destino */}
-      {(detail.top_links ?? []).length > 0 && (
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>Links mas clickeados</h2>
-          <table style={s.table}>
-            <thead>
-              <tr>
-                {['Tipo', 'Etiqueta', 'URL destino', 'Clics'].map((h) => (
-                  <th key={h} style={s.th}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {(detail.top_links ?? []).map((link, i) => {
-                const dest = link.url_destination ?? ''
-                const destTrunc = dest.length > 40 ? dest.slice(0, 40) + '…' : dest
-                const kind = ACTION_LABEL[link.action_type] ?? link.action_type
+              {allPageNumbers.map((pageNum) => {
+                const pt = pageTimes.find((p) => p.page_number === pageNum)
+                const pageClicks = clicksByPage[pageNum] ?? []
+                const totalPageClicks = pageClicks.reduce((sum, bc) => sum + (bc.clicks ?? 0), 0)
+                const interactionLabel = pageClicks
+                  .slice()
+                  .sort((a, b) => (b.clicks ?? 0) - (a.clicks ?? 0))
+                  .map((bc) => `${ACTION_LABEL[bc.action_type] ?? bc.action_type} (${bc.clicks})`)
+                  .join(' · ')
                 return (
-                  <tr key={i} style={s.tr}>
-                    <td style={s.td}>{kind}</td>
-                    <td style={{ ...s.td, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {link.label ?? '—'}
+                  <tr key={pageNum} style={s.tr}>
+                    <td style={{ ...s.td, fontWeight: 600, color: '#374151' }}>Pag. {pageNum}</td>
+                    <td style={s.td}>{pt ? pt.visits : '—'}</td>
+                    <td style={{ ...s.td, color: '#6b7280' }}>{pt ? fmtDuration(pt.avg_ms) : '—'}</td>
+                    <td style={{ ...s.td, fontWeight: 600 }}>{totalPageClicks > 0 ? totalPageClicks : '—'}</td>
+                    <td style={{ ...s.td, fontSize: 12, color: '#6b7280', maxWidth: 240 }}>
+                      {interactionLabel || '—'}
                     </td>
-                    <td style={{ ...s.td, color: '#6b7280', maxWidth: 200 }}>
-                      <span title={dest}>{destTrunc || '—'}</span>
-                    </td>
-                    <td style={{ ...s.td, fontWeight: 700 }}>{link.count}</td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Top Paises */}
-      {(detail.country_breakdown ?? []).length > 0 && (
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>Top Paises</h2>
-          {(() => {
-            const items = detail.country_breakdown ?? []
-            const maxCount = Math.max(...items.map((c) => c.count), 1)
-            return (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {items.map((item) => {
-                  const pct = Math.round((item.count / maxCount) * 100)
-                  const flag = countryFlag(item.country)
-                  return (
-                    <div key={item.country} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 20, width: 28, textAlign: 'center', flexShrink: 0 }}>{flag}</span>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: '#374151', width: 36, flexShrink: 0 }}>{item.country}</span>
-                      <div style={{ flex: 1, height: 10, background: '#f3f4f6', borderRadius: 6, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${pct}%`, background: '#4f46e5', borderRadius: 6, transition: 'width .4s' }} />
+      {/* SECCION 4 — Registro de interacciones con URL destino */}
+      <div style={s.card}>
+        <h2 style={s.cardTitle}>Registro de interacciones</h2>
+        {interactionRows.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '1.5rem 0', color: '#9ca3af', fontSize: 13 }}>
+            Aun no hay clics registrados.
+          </div>
+        ) : (
+          <table style={s.table}>
+            <thead>
+              <tr>
+                {['Tipo', 'Etiqueta', 'URL / Destino', 'Pagina', 'Clics'].map((h) => (
+                  <th key={h} style={s.th}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {interactionRows.map((row, i) => {
+                const { bg, color } = actionBadgeColor(row.action_type)
+                const kindLabel = ACTION_LABEL[row.action_type] ?? row.action_type
+                const labelTrunc = (row.label ?? '').length > 30 ? (row.label ?? '').slice(0, 30) + '…' : (row.label ?? '—')
+                const dest = row.url_destination ?? ''
+                const destTrunc = dest.length > 40 ? dest.slice(0, 40) + '…' : dest
+                const pct = Math.round((row.clicks / maxInteractionClicks) * 100)
+                return (
+                  <tr key={i} style={s.tr}>
+                    <td style={s.td}>
+                      <span style={{ display: 'inline-block', background: bg, color, borderRadius: 5, padding: '2px 8px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        {kindLabel}
+                      </span>
+                    </td>
+                    <td style={{ ...s.td, maxWidth: 160 }}>{labelTrunc || '—'}</td>
+                    <td style={{ ...s.td, color: '#6b7280', maxWidth: 220 }}>
+                      <span title={dest || undefined}>{destTrunc || '—'}</span>
+                    </td>
+                    <td style={{ ...s.td, color: '#9ca3af' }}>
+                      {row.page_number != null ? `Pag. ${row.page_number}` : '—'}
+                    </td>
+                    <td style={{ ...s.td, minWidth: 80 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 700, fontSize: 13 }}>{row.clicks}</span>
+                        <div style={{ flex: 1, height: 6, background: '#f3f4f6', borderRadius: 4, overflow: 'hidden', minWidth: 40 }}>
+                          <div style={{ height: '100%', width: `${pct}%`, background: '#d97706', borderRadius: 4, transition: 'width .4s' }} />
+                        </div>
                       </div>
-                      <span style={{ fontSize: 12, color: '#6b7280', width: 36, textAlign: 'right', flexShrink: 0 }}>{item.count}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            )
-          })()}
-        </div>
-      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
 
-      {/* Ultimas vistas */}
+      {/* SECCION 5 — Top Países (siempre visible) */}
+      <div style={s.card}>
+        <h2 style={s.cardTitle}>Top Paises</h2>
+        {countryBreakdown.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '1.5rem 0', color: '#9ca3af', fontSize: 13 }}>
+            Aun no hay datos de ubicacion. Los datos de pais se acumulan con las nuevas visitas.
+          </div>
+        ) : (() => {
+          const maxCount = Math.max(...countryBreakdown.map((c) => c.count), 1)
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {countryBreakdown.map((item) => {
+                const pct = Math.round((item.count / maxCount) * 100)
+                const flag = countryFlag(item.country)
+                return (
+                  <div key={item.country} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 20, width: 28, textAlign: 'center', flexShrink: 0 }}>{flag}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#374151', width: 36, flexShrink: 0 }}>{item.country}</span>
+                    <div style={{ flex: 1, height: 10, background: '#f3f4f6', borderRadius: 6, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: '#4f46e5', borderRadius: 6, transition: 'width .4s' }} />
+                    </div>
+                    <span style={{ fontSize: 12, color: '#6b7280', width: 36, textAlign: 'right', flexShrink: 0 }}>{item.count}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
+      </div>
+
+      {/* SECCION 6 — Últimas vistas */}
       {recentViews.length > 0 && (
         <div style={s.card}>
           <h2 style={s.cardTitle}>Ultimas vistas</h2>
