@@ -46,8 +46,8 @@ export const api = {
         body: JSON.stringify({ email, password }),
       }),
     me: () =>
-      request<{ success: true; data: { id: string; email: string; name: string; slug: string | null; plan_id: string; is_admin?: number; watermark_tenant?: string | null } }>('/auth/me'),
-    updateProfile: (body: { name?: string; slug?: string }) =>
+      request<{ success: true; data: { id: string; email: string; name: string; slug: string | null; plan_id: string; is_admin?: number; watermark_tenant?: string | null; logo_url?: string | null; contact_phone?: string | null; contact_whatsapp?: string | null; contact_email?: string | null; contact_address?: string | null } }>('/auth/me'),
+    updateProfile: (body: { name?: string; slug?: string; logo_url?: string | null; contact_phone?: string | null; contact_whatsapp?: string | null; contact_email?: string | null; contact_address?: string | null }) =>
       request<{ success: true; data: any }>('/auth/me', { method: 'PUT', body: JSON.stringify(body) }),
     impersonate: (userId: string) =>
       request<{ success: true; data: { token: string; user: any } }>(`/admin/users/${userId}/impersonate`, { method: 'POST' }),
@@ -133,6 +133,19 @@ export const api = {
   notifications: {
     list: () => request<{ success: true; data: any[] }>('/api/notifications'),
     markRead: (id: number | string) => request<{ success: true }>(`/api/notifications/${id}/read`, { method: 'PATCH' }),
+  },
+
+  stats: {
+    publication: (id: string) =>
+      request<{ success: true; data: {
+        publication: { id: string; title: string; status: string; views_count: number; public_slug: string | null }
+        total_views: number
+        recent_views: { id: number; viewed_at: string; device: string }[]
+        device_breakdown: { device: string; count: number }[]
+        page_times: { page_number: number; visits: number; avg_ms: number }[]
+        button_clicks: { label: string; action_type: string; page_number: number; clicks: number }[]
+        views_by_day: { day: string; views: number }[]
+      } }>(`/auth/stats/pub/${id}`),
   },
 
   responses: {

@@ -46,6 +46,9 @@ export default function Publications() {
   const [showFolderInput, setShowFolderInput] = useState(false)
   const [newFolderName, setNewFolderName]     = useState('')
 
+  // Datos de contacto del usuario (para aviso en modal)
+  const [meData, setMeData] = useState<{ contact_whatsapp?: string | null; contact_phone?: string | null } | null>(null)
+
   // Modal de creación
   // mode: 'choose' (elegir cómo empezar) | 'upload' (cargar imágenes) | 'scratch' (lienzo en blanco)
   const [mode, setMode]               = useState<'choose' | 'upload' | 'scratch' | 'pdf' | 'template'>('choose')
@@ -71,6 +74,7 @@ export default function Publications() {
       .finally(() => setLoading(false))
     api.folders.list().then((r) => setFolders(r.data ?? [])).catch(() => {})
     api.templates.list().then((r) => setTemplates(r.data ?? [])).catch(() => {})
+    api.auth.me().then((r) => setMeData({ contact_whatsapp: r.data.contact_whatsapp, contact_phone: r.data.contact_phone })).catch(() => {})
   }, [])
 
   // Carpeta destino actual: solo si hay una carpeta real seleccionada (no 'Todas'/'Sin carpeta')
@@ -282,6 +286,7 @@ export default function Publications() {
 
             {/* ── Paso 1: elegir cómo empezar ── */}
             {mode === 'choose' && (
+              <>
               <div style={s.chooseWrap}>
                 <button style={s.choiceCard} onClick={() => setMode('scratch')}>
                   <div style={s.choiceIcon}>🎨</div>
@@ -307,6 +312,12 @@ export default function Publications() {
                   <div style={s.choiceSub}>Cada página del PDF se convierte en una página del flipbook, lista para editar.</div>
                 </button>
               </div>
+              {(meData?.contact_whatsapp || meData?.contact_phone) && (
+                <div style={{ marginTop: '1rem', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#92400e' }}>
+                  💡 Tus datos de contacto del perfil se usarán como valores por defecto en los widgets de WhatsApp y contacto.
+                </div>
+              )}
+              </>
             )}
 
             {/* ── Paso 2a: desde cero (solo nombre + categoría) ── */}

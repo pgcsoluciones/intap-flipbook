@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, API_BASE } from '../lib/api'
 
 const FEED_BASE = 'https://studio.flip.intaprd.com'
@@ -71,6 +71,17 @@ export default function ProfilePage() {
   const [savingWm, setSavingWm]               = useState(false)
   const [msgWm, setMsgWm]                     = useState<{ text: string; ok: boolean } | null>(null)
 
+  // Branding y contacto
+  const [logoUrl, setLogoUrl]             = useState('')
+  const [contactPhone, setContactPhone]   = useState('')
+  const [contactWa, setContactWa]         = useState('')
+  const [contactEmail, setContactEmail]   = useState('')
+  const [contactAddress, setContactAddr]  = useState('')
+  const [savingBranding, setSavingBranding] = useState(false)
+  const [uploadingLogo, setUploadingLogo]   = useState(false)
+  const [msgBranding, setMsgBranding]       = useState<{ text: string; ok: boolean } | null>(null)
+  const logoInputRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     api.auth.me().then((r) => {
       setUser(r.data)
@@ -78,6 +89,11 @@ export default function ProfilePage() {
       setSlug(r.data.slug ?? '')
       setEmail(r.data.email ?? '')
       setWatermarkTenant(r.data.watermark_tenant ?? null)
+      setLogoUrl(r.data.logo_url ?? '')
+      setContactPhone(r.data.contact_phone ?? '')
+      setContactWa(r.data.contact_whatsapp ?? '')
+      setContactEmail(r.data.contact_email ?? '')
+      setContactAddr(r.data.contact_address ?? '')
     })
   }, [])
 
@@ -151,6 +167,41 @@ export default function ProfilePage() {
     } finally {
       setSavingPw(false)
       setTimeout(() => setMsgPw(null), 4000)
+    }
+  }
+
+  async function handleUploadLogo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingLogo(true)
+    try {
+      const res = await api.upload(file)
+      setLogoUrl(res.data.url)
+    } catch (err: any) {
+      setMsgBranding({ text: err.message ?? 'Error al subir imagen', ok: false })
+      setTimeout(() => setMsgBranding(null), 4000)
+    } finally {
+      setUploadingLogo(false)
+    }
+  }
+
+  async function handleSaveBranding(e: React.FormEvent) {
+    e.preventDefault()
+    setSavingBranding(true)
+    try {
+      await api.auth.updateProfile({
+        logo_url: logoUrl || null,
+        contact_phone: contactPhone || null,
+        contact_whatsapp: contactWa || null,
+        contact_email: contactEmail || null,
+        contact_address: contactAddress || null,
+      })
+      setMsgBranding({ text: 'Datos de contacto actualizados correctamente.', ok: true })
+    } catch (err: any) {
+      setMsgBranding({ text: err.message ?? 'Error al guardar', ok: false })
+    } finally {
+      setSavingBranding(false)
+      setTimeout(() => setMsgBranding(null), 4000)
     }
   }
 
@@ -266,6 +317,103 @@ export default function ProfilePage() {
           </label>
           <button type="submit" disabled={savingPw} style={styles.btnPrimary}>
             {savingPw ? 'Cambiando...' : 'Cambiar contraseña'}
+          </button>
+        </form>
+      </section>
+
+      {/* Branding y contacto */}
+      <section style={styles.card}>
+        <h2 style={styles.sectionTitle}>Branding y contacto</h2>
+        <p style={{ color: '#6b7280', fontSize: '0.85rem', marginBottom: '1rem' }}>
+          Tu logo y datos de contacto se usarán como valores por defecto en los widgets de WhatsApp, contacto y otros elementos de tus flipbooks.
+        </p>
+        {msgBranding && (
+          <div style={{ ...styles.alert, background: msgBranding.ok ? '#d1fae5' : '#fee2e2', color: msgBranding.ok ? '#065f46' : '#991b1b' }}>
+            {msgBranding.text}
+          </div>
+        )}
+        <form onSubmit={handleSaveBranding} style={styles.form}>
+          {/* Logo */}
+          <label style={styles.label}>
+            Logo (URL de imagen)
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                style={{ ...styles.input, flex: 1 }}
+                value={logoUrl}
+                onChange={(e) => setLogoUrl(e.target.value)}
+                placeholder="https://... o subí una imagen"
+              />
+              <button
+                type="button"
+                disabled={uploadingLogo}
+                onClick={() => logoInputRef.current?.click()}
+                style={{ ...styles.btnSecondary, whiteSpace: 'nowrap', padding: '0.5rem 0.9rem', fontSize: '0.8rem' }}
+              >
+                {uploadingLogo ? 'Subiendo...' : 'Subir imagen'}
+              </button>
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                style={{ display: 'none' }}
+                onChange={handleUploadLogo}
+              />
+            </div>
+            {logoUrl && (
+              <img
+                src={logoUrl}
+                alt="Preview logo"
+                style={{ marginTop: '0.5rem', maxHeight: 80, maxWidth: 240, objectFit: 'contain', borderRadius: 6, border: '1px solid #e5e7eb' }}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+              />
+            )}
+          </label>
+
+          <label style={styles.label}>
+            Teléfono de contacto
+            <input
+              style={styles.input}
+              value={contactPhone}
+              onChange={(e) => setContactPhone(e.target.value)}
+              placeholder="+54 9 11 1234-5678"
+              type="tel"
+            />
+          </label>
+
+          <label style={styles.label}>
+            WhatsApp (con código de país)
+            <input
+              style={styles.input}
+              value={contactWa}
+              onChange={(e) => setContactWa(e.target.value)}
+              placeholder="+54911..."
+              type="tel"
+            />
+          </label>
+
+          <label style={styles.label}>
+            Email de contacto
+            <input
+              style={styles.input}
+              value={contactEmail}
+              onChange={(e) => setContactEmail(e.target.value)}
+              placeholder="contacto@tuempresa.com"
+              type="email"
+            />
+          </label>
+
+          <label style={styles.label}>
+            Dirección
+            <input
+              style={styles.input}
+              value={contactAddress}
+              onChange={(e) => setContactAddr(e.target.value)}
+              placeholder="Av. Corrientes 1234, Buenos Aires"
+            />
+          </label>
+
+          <button type="submit" disabled={savingBranding || uploadingLogo} style={styles.btnPrimary}>
+            {savingBranding ? 'Guardando...' : 'Guardar'}
           </button>
         </form>
       </section>
