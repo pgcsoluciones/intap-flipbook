@@ -185,23 +185,26 @@ publications.patch('/:id/restore', async (c) => {
 
 // DELETE /api/publications/:id/permanent — borrado físico definitivo e irreversible
 publications.delete('/:id/permanent', async (c) => {
-  const userId = c.get('user').sub
-  const pub = await c.env.DB.prepare(
-    'SELECT id FROM publications WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL',
-  )
-    .bind(c.req.param('id'), userId)
-    .first()
-  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada en la papelera' }, 404)
-
-  const pubId = c.req.param('id')
   try {
+    const userId = c.get('user').sub
+    const pubId = c.req.param('id')
+
+    const pub = await c.env.DB.prepare(
+      'SELECT id FROM publications WHERE id = ? AND user_id = ?',
+    )
+      .bind(pubId, userId)
+      .first()
+
+    if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
     await c.env.DB.prepare('DELETE FROM pages WHERE publication_id = ?').bind(pubId).run()
     await c.env.DB.prepare('DELETE FROM publications WHERE id = ?').bind(pubId).run()
-  } catch (err: any) {
-    return c.json({ success: false, error: 'Error al eliminar: ' + (err?.message ?? String(err)) }, 500)
-  }
 
-  return c.json({ success: true, data: { deleted: true } })
+    return c.json({ success: true, data: { deleted: true } })
+  } catch (err: any) {
+    const msg = err?.message ?? String(err)
+    return c.json({ success: false, error: 'Error interno al eliminar: ' + msg }, 500)
+  }
 })
 
 // DELETE /api/publications/:id — soft delete: mueve a papelera (no borra datos)
