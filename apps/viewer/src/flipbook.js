@@ -100,6 +100,8 @@ async function init() {
     flushPageTime()
     trackedPage = pageNumber
     pageEnterTime = Date.now()
+    // Registrar que el visitante llegó a esta página (independiente del tiempo)
+    sendEvent({ type: 'page_view', page_number: pageNumber })
   }
   // Al ocultar/cerrar la pestaña, mandar el tiempo de la página actual
   document.addEventListener('visibilitychange', () => { if (document.hidden) flushPageTime() })
@@ -1129,6 +1131,9 @@ async function init() {
   applyCenter()
   updatePageInfo()
   updateNavButtons()
+
+  // Registrar vista de la página 1 al inicializar el flipbook
+  sendEvent({ type: 'page_view', page_number: 1 })
 
   // Construir panel de miniaturas
   const thumbList = document.getElementById('thumbnail-list')

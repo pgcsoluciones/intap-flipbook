@@ -330,7 +330,8 @@ app.post('/view/:slug/event', async (c) => {
   let body: any = {}
   try { body = await c.req.json() } catch (_) {}
 
-  const type = body.type === 'click' ? 'click' : 'page_time'
+  const validTypes = ['click', 'page_time', 'page_view']
+  const type = validTypes.includes(body.type) ? body.type : 'page_time'
   const pageNumber = Number.isFinite(Number(body.page_number)) ? Number(body.page_number) : null
   const label = typeof body.label === 'string' ? body.label.slice(0, 120) : null
   const actionType = typeof body.action_type === 'string' ? body.action_type.slice(0, 40) : null
@@ -347,7 +348,10 @@ app.post('/view/:slug/event', async (c) => {
       `INSERT INTO page_events (publication_id, type, page_number, label, action_type, duration_ms, device, country, city, referrer, url_destination)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(pub.id, type, pageNumber, label, actionType, durationMs, device, country, city, referrer, urlDestination).run()
-  } catch (_) {}
+  } catch (e) {
+    console.error('[page_events] INSERT error:', e)
+    return c.json({ success: false, error: 'DB error' }, 500)
+  }
 
   return c.json({ success: true }, 201)
 })

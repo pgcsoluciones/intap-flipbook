@@ -362,13 +362,13 @@ auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
      GROUP BY device`
   ).bind(pubId).all()
 
-  // Tiempo promedio y visitas por página
+  // Tiempo promedio por página (eventos page_time con duración registrada)
   const { results: pageTimes } = await c.env.DB.prepare(
-    `SELECT page_number, COUNT(*) as visits, AVG(duration_ms) as avg_ms
+    `SELECT page_number, COUNT(*) as time_events, AVG(duration_ms) as avg_ms
      FROM page_events
      WHERE type = 'page_time' AND duration_ms IS NOT NULL AND publication_id = ?
      GROUP BY page_number
-     ORDER BY visits DESC`
+     ORDER BY page_number ASC`
   ).bind(pubId).all()
 
   // Ranking de botones clickeados
@@ -410,13 +410,16 @@ auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
      LIMIT 20`
   ).bind(pubId).all()
 
-  // Páginas más visitadas (por cantidad de eventos page_time)
+  // Páginas visitadas — usa page_view (se envía al llegar a cada página) para contar correctamente
+  // page_time solo llega si el usuario permaneció ≥0.5s, page_view llega siempre
   const { results: pageVisits } = await c.env.DB.prepare(
-    `SELECT page_number, COUNT(*) as visits, AVG(duration_ms) as avg_ms
+    `SELECT page_number,
+            COUNT(*) as visits,
+            AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END) as avg_ms
      FROM page_events
-     WHERE publication_id = ? AND type = 'page_time'
+     WHERE publication_id = ? AND type IN ('page_view', 'page_time')
      GROUP BY page_number
-     ORDER BY visits DESC`
+     ORDER BY page_number ASC`
   ).bind(pubId).all()
 
   return c.json({ success: true, data: {

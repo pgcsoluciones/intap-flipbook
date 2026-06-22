@@ -228,6 +228,7 @@ function PubDetailPanel({
   }
 
   const pageTimes = detail.page_times ?? []
+  const pageVisits = detail.page_visits ?? pageTimes  // page_visits usa page_view+page_time, más completo
   const buttonClicks = detail.button_clicks ?? []
   const recentViews = detail.recent_views ?? []
   const viewsByDay = detail.views_by_day ?? []
@@ -248,9 +249,10 @@ function PubDetailPanel({
   }
 
   // Construir filas de la tabla unificada por página
-  // Unión de páginas con datos de page_times y páginas con clics (puede haber páginas con clics pero sin tiempo registrado)
+  // Usa page_visits (incluye page_view + page_time) y clicks por página
   const allPageNumbers = Array.from(
     new Set([
+      ...pageVisits.map((p) => p.page_number),
       ...pageTimes.map((p) => p.page_number),
       ...buttonClicks.map((b) => b.page_number),
     ])
@@ -314,7 +316,7 @@ function PubDetailPanel({
       {/* SECCION 1 — Métricas principales */}
       <div style={s.summaryRow}>
         <SummaryCard label="Vistas totales"         value={detail.total_views} icon="👁️" color="#4f46e5" />
-        <SummaryCard label="Paginas con actividad"  value={pageTimes.length}   icon="📄" color="#059669" />
+        <SummaryCard label="Paginas con actividad"  value={allPageNumbers.length}   icon="📄" color="#059669" />
         <SummaryCard label="Total clics registrados" value={totalClicks}        icon="🖱️" color="#d97706" />
       </div>
 
@@ -378,6 +380,7 @@ function PubDetailPanel({
             </thead>
             <tbody>
               {allPageNumbers.map((pageNum) => {
+                const pv = pageVisits.find((p) => p.page_number === pageNum)
                 const pt = pageTimes.find((p) => p.page_number === pageNum)
                 const pageClicks = clicksByPage[pageNum] ?? []
                 const totalPageClicks = pageClicks.reduce((sum, bc) => sum + (bc.clicks ?? 0), 0)
@@ -389,8 +392,8 @@ function PubDetailPanel({
                 return (
                   <tr key={pageNum} style={s.tr}>
                     <td style={{ ...s.td, fontWeight: 600, color: '#374151' }}>Pag. {pageNum}</td>
-                    <td style={s.td}>{pt ? pt.visits : '—'}</td>
-                    <td style={{ ...s.td, color: '#6b7280' }}>{pt ? fmtDuration(pt.avg_ms) : '—'}</td>
+                    <td style={s.td}>{pv ? pv.visits : '—'}</td>
+                    <td style={{ ...s.td, color: '#6b7280' }}>{pt?.avg_ms ? fmtDuration(pt.avg_ms) : '—'}</td>
                     <td style={{ ...s.td, fontWeight: 600 }}>{totalPageClicks > 0 ? totalPageClicks : '—'}</td>
                     <td style={{ ...s.td, fontSize: 12, color: '#6b7280', maxWidth: 240 }}>
                       {interactionLabel || '—'}
