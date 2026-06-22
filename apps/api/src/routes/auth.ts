@@ -87,10 +87,10 @@ auth.get('/me', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
 
   const user = await c.env.DB.prepare(
-    'SELECT id, email, name, slug, plan_id, is_admin, created_at, watermark_tenant FROM users WHERE id = ?',
+    'SELECT id, email, name, slug, plan_id, is_admin, created_at, watermark_tenant, logo_url, contact_phone, contact_whatsapp, contact_email, contact_address FROM users WHERE id = ?',
   )
     .bind(sub)
-    .first<{ id: string; email: string; name: string | null; slug: string | null; plan_id: string; is_admin: number; created_at: string }>()
+    .first<{ id: string; email: string; name: string | null; slug: string | null; plan_id: string; is_admin: number; created_at: string; logo_url: string | null; contact_phone: string | null; contact_whatsapp: string | null; contact_email: string | null; contact_address: string | null }>()
 
   if (!user) return c.json({ success: false, error: 'User not found' }, 404)
 
@@ -333,5 +333,71 @@ async function verifyPassword(password: string, stored: string): Promise<boolean
   const candidate = Array.from(new Uint8Array(bits)).map((b) => b.toString(16).padStart(2, '0')).join('')
   return candidate === hashHex
 }
+
+// GET /auth/stats/pub/:id — estadísticas detalladas de una publicación específica
+auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
+  const { sub } = c.get('user')
+  const pubId = c.req.param('id')
+
+  // Verificar que la publicación pertenece al usuario
+  const pub = await c.env.DB.prepare(
+    `SELECT id, title, status, views_count, public_slug FROM publications WHERE id = ? AND user_id = ?`
+  ).bind(pubId, sub).first<{ id: string; title: string; status: string; views_count: number; public_slug: string | null }>()
+
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  // Vistas recientes para esta publicación
+  const { results: recentViews } = await c.env.DB.prepare(
+    `SELECT id, viewed_at, device FROM publication_views
+     WHERE publication_id = ?
+     ORDER BY viewed_at DESC LIMIT 200`
+  ).bind(pubId).all()
+
+  // Conteo de dispositivos
+  const { results: deviceBreakdown } = await c.env.DB.prepare(
+    `SELECT device, COUNT(*) as count
+     FROM publication_views
+     WHERE publication_id = ?
+     GROUP BY device`
+  ).bind(pubId).all()
+
+  // Tiempo promedio y visitas por página
+  const { results: pageTimes } = await c.env.DB.prepare(
+    `SELECT page_number, COUNT(*) as visits, AVG(duration_ms) as avg_ms
+     FROM page_events
+     WHERE type = 'page_time' AND duration_ms IS NOT NULL AND publication_id = ?
+     GROUP BY page_number
+     ORDER BY visits DESC`
+  ).bind(pubId).all()
+
+  // Ranking de botones clickeados
+  const { results: buttonClicks } = await c.env.DB.prepare(
+    `SELECT label, action_type, page_number, COUNT(*) as clicks
+     FROM page_events
+     WHERE type = 'click' AND publication_id = ?
+     GROUP BY label, action_type, page_number
+     ORDER BY clicks DESC LIMIT 20`
+  ).bind(pubId).all()
+
+  // Vistas por día (últimos 30 días)
+  const { results: viewsByDay } = await c.env.DB.prepare(
+    `SELECT date(viewed_at) as day, COUNT(*) as views
+     FROM publication_views
+     WHERE publication_id = ?
+       AND viewed_at >= datetime('now', '-30 days')
+     GROUP BY day
+     ORDER BY day ASC`
+  ).bind(pubId).all()
+
+  return c.json({ success: true, data: {
+    publication: pub,
+    total_views: pub.views_count ?? 0,
+    recent_views: recentViews,
+    device_breakdown: deviceBreakdown,
+    page_times: pageTimes,
+    button_clicks: buttonClicks,
+    views_by_day: viewsByDay,
+  }})
+})
 
 export default auth
