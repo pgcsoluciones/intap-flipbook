@@ -12,7 +12,8 @@ const NAV = [
   { to: '/admin/referrals',     icon: '🤝', label: 'Referidos' },
   { to: '/admin/branding',      icon: '🎨', label: 'Marca de agua' },
   { to: '/admin/notifications', icon: '🔔', label: 'Notificaciones' },
-  { to: '/admin/stats',         icon: '📈', label: 'Estadísticas' },
+  { to: '/admin/stats',              icon: '📈', label: 'Estadísticas' },
+  { to: '/admin/template-proposals', icon: '⭐', label: 'Propuestas de Plantillas' },
 ]
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

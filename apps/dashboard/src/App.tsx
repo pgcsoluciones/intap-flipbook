@@ -34,6 +34,7 @@ import AdminReferrals     from './pages/admin/AdminReferrals'
 import AdminBranding      from './pages/admin/AdminBranding'
 import AdminNotifications from './pages/admin/AdminNotifications'
 import AdminStats         from './pages/admin/AdminStats'
+import AdminTemplateProposals from './pages/admin/AdminTemplateProposals'
 
 function LegacyRedirect({ pattern }: { pattern: string }) {
   const { id } = useParams()
@@ -82,6 +83,7 @@ export default function App() {
         <Route path="/admin/branding"      element={<AdminLayout><AdminBranding /></AdminLayout>} />
         <Route path="/admin/notifications" element={<AdminLayout><AdminNotifications /></AdminLayout>} />
         <Route path="/admin/stats"         element={<AdminLayout><AdminStats /></AdminLayout>} />
+        <Route path="/admin/template-proposals" element={<AdminLayout><AdminTemplateProposals /></AdminLayout>} />
 
         {/* Rutas legacy */}
         <Route path="/new"         element={<Navigate to="/publications/new" replace />} />

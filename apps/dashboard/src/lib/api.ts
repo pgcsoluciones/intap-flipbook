@@ -142,6 +142,17 @@ export const api = {
     remove: (id: number | string) => request<{ success: true }>(`/api/responses/${id}`, { method: 'DELETE' }),
   },
 
+  proposals: {
+    create: (data: { publication_id: string; title: string; description?: string; category?: string; cover_url?: string }) =>
+      request<{ success: true; data: { id: number } }>('/api/template-proposals', { method: 'POST', body: JSON.stringify(data) }),
+    list: () => request<{ success: true; data: any[] }>('/api/template-proposals'),
+    listAll: () => request<{ success: true; data: any[] }>('/admin/template-proposals'),
+    approve: (id: number | string) =>
+      request<{ success: true; data: { template_id: number } }>(`/admin/template-proposals/${id}/approve`, { method: 'PATCH' }),
+    reject: (id: number | string, adminNotes?: string) =>
+      request<{ success: true }>(`/admin/template-proposals/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ admin_notes: adminNotes }) }),
+  },
+
   public: {
     feed: (tenantSlug: string) =>
       fetch(`${API_BASE}/public/${encodeURIComponent(tenantSlug)}`)

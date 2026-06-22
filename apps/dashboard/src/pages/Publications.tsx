@@ -625,11 +625,97 @@ export default function Publications() {
   )
 }
 
+function ProposeModal({ pub, onClose }: { pub: any; onClose: () => void }) {
+  const [title, setTitle] = useState(pub.title ?? '')
+  const [description, setDescription] = useState('')
+  const [category, setCategory] = useState(pub.category ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!title.trim()) { setError('El título es requerido.'); return }
+    setSaving(true); setError('')
+    try {
+      await api.proposals.create({ publication_id: pub.id, title: title.trim(), description: description.trim() || undefined, category: category.trim() || undefined })
+      setSuccess(true)
+    } catch (err: any) {
+      setError(err.message ?? 'Error al enviar la propuesta.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={s.overlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div style={s.modal}>
+        <div style={s.modalHeader}>
+          <h2 style={s.modalTitle}>Proponer como plantilla</h2>
+          <button style={s.closeBtn} onClick={onClose}>✕</button>
+        </div>
+        {success ? (
+          <div style={{ padding: '32px 24px', textAlign: 'center' as const }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
+            <div style={{ fontWeight: 700, fontSize: 16, color: '#111827', marginBottom: 8 }}>¡Propuesta enviada!</div>
+            <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 24 }}>El equipo de administración revisará tu publicación. Si es aprobada, aparecerá en el catálogo de plantillas para todos los usuarios.</div>
+            <button style={s.btnCreate} onClick={onClose}>Cerrar</button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} style={s.modalForm}>
+            <div style={s.formField}>
+              <label style={s.formLabel}>Nombre de la plantilla *</label>
+              <input
+                style={s.formInput}
+                autoFocus
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                disabled={saving}
+                placeholder="Ej: Catálogo de ferretería"
+              />
+            </div>
+            <div style={s.formField}>
+              <label style={s.formLabel}>Descripción (opcional)</label>
+              <textarea
+                style={{ ...s.formInput, minHeight: 80, resize: 'vertical' as const }}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                disabled={saving}
+                placeholder="Describí brevemente para qué sirve esta plantilla..."
+              />
+            </div>
+            <div style={s.formField}>
+              <label style={s.formLabel}>Categoría (opcional)</label>
+              <input
+                style={s.formInput}
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                disabled={saving}
+                placeholder="Ej: Catálogo, Menú, Portafolio..."
+              />
+            </div>
+            {error && <div style={s.errorText}>{error}</div>}
+            <div style={s.modalFooter}>
+              <button type="button" style={s.btnCancel} onClick={onClose} disabled={saving}>Cancelar</button>
+              <button type="submit" style={{ ...s.btnCreate, opacity: saving ? 0.7 : 1 }} disabled={saving}>
+                {saving ? 'Enviando...' : 'Enviar propuesta'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function PubCard({ pub, isMobile, onDelete, onPublish, onMoveFolder, folders }: { pub: any; isMobile?: boolean; onDelete: () => void; onPublish: () => void; onMoveFolder: (folderId: string | null) => void; folders: any[] }) {
   const [hover, setHover] = useState(false)
+  const [showPropose, setShowPropose] = useState(false)
   const isPublished = pub.status === 'published'
 
   return (
+    <>
+    {showPropose && <ProposeModal pub={pub} onClose={() => setShowPropose(false)} />}
     <div
       style={{ ...s.card, boxShadow: hover ? '0 4px 20px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.07)' }}
       onMouseEnter={() => setHover(true)}
@@ -686,10 +772,18 @@ function PubCard({ pub, isMobile, onDelete, onPublish, onMoveFolder, folders }: 
             <option value="">— Sin carpeta</option>
             {folders.map((f: any) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
+          {isPublished && (
+            <button
+              title="Proponer como plantilla"
+              style={{ ...s.actionBtn, color: '#f59e0b', fontWeight: 600 }}
+              onClick={() => setShowPropose(true)}
+            >⭐</button>
+          )}
           <button style={{ ...s.actionBtn, color: '#ef4444', marginLeft: 'auto' }} onClick={onDelete}>🗑️</button>
         </div>
       </div>
     </div>
+    </>
   )
 }
 
