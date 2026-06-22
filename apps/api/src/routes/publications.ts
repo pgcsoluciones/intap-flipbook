@@ -197,10 +197,13 @@ publications.delete('/:id/permanent', async (c) => {
 
     if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
 
-    // Borrar en orden: primero tablas hijas con FK a publications, luego la publicación
-    await c.env.DB.prepare('DELETE FROM page_events WHERE publication_id = ?').bind(pubId).run()
-    await c.env.DB.prepare('DELETE FROM publication_views WHERE publication_id = ?').bind(pubId).run()
-    await c.env.DB.prepare('DELETE FROM form_responses WHERE publication_id = ?').bind(pubId).run()
+    // Borrar tablas hijas (ignorar si la tabla aún no existe en esta instancia de D1)
+    const safeDelete = async (sql: string) => {
+      try { await c.env.DB.prepare(sql).bind(pubId).run() } catch { /* tabla opcional */ }
+    }
+    await safeDelete('DELETE FROM page_events WHERE publication_id = ?')
+    await safeDelete('DELETE FROM publication_views WHERE publication_id = ?')
+    await safeDelete('DELETE FROM form_responses WHERE publication_id = ?')
     await c.env.DB.prepare('DELETE FROM pages WHERE publication_id = ?').bind(pubId).run()
     await c.env.DB.prepare('DELETE FROM publications WHERE id = ?').bind(pubId).run()
 
