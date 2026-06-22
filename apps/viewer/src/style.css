@@ -10,12 +10,44 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  min-height: 100dvh;           /* dvh = dynamic viewport height, más preciso en móvil */
+  height: 100svh;            /* svh = small viewport height — excluye la barra de URL del browser en móvil */
+  max-height: 100svh;
   font-family: sans-serif;
   color: #fff;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;          /* sin scroll — todo cabe en la pantalla */
 }
+
+/* Pantalla de carga — se oculta cuando el flipbook está listo */
+#flipbook-loader {
+  position: fixed;
+  inset: 0;
+  background: #1a1a2e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  transition: opacity 0.35s ease;
+}
+#flipbook-loader.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.loader-spinner {
+  width: 42px;
+  height: 42px;
+  border: 3px solid rgba(255,255,255,.15);
+  border-top-color: #6c63ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 14px;
+}
+.loader-text {
+  color: rgba(255,255,255,.5);
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Contenedor del flipbook ─────────────────────────────────────────────── */
 #flipbook-container {
@@ -25,7 +57,8 @@ body {
   flex: 1;
   width: 100%;
   padding: 16px 12px 0;
-  min-height: 0;
+  min-height: 0;             /* necesario para que flex: 1 funcione en columna */
+  overflow: hidden;
 }
 
 /* ── Controles ───────────────────────────────────────────────────────────── */
