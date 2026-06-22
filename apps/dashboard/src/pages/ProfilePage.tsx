@@ -1,6 +1,50 @@
 import { useEffect, useState } from 'react'
 import { api, API_BASE } from '../lib/api'
 
+const FEED_BASE = 'https://studio.flip.intaprd.com'
+
+function PublicFeedLink({ slug }: { slug: string }) {
+  const [copied, setCopied] = useState(false)
+  const url = `${FEED_BASE}/p/${slug}`
+
+  function handleCopy() {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ fontSize: '0.875rem', color: '#4f46e5', wordBreak: 'break-all', flex: 1 }}
+      >
+        {url}
+      </a>
+      <button
+        onClick={handleCopy}
+        style={{
+          background: copied ? '#059669' : '#4f46e5',
+          color: '#fff',
+          border: 'none',
+          borderRadius: 8,
+          padding: '0.45rem 1rem',
+          fontWeight: 600,
+          fontSize: '0.8rem',
+          cursor: 'pointer',
+          whiteSpace: 'nowrap',
+          transition: 'background .2s',
+        }}
+      >
+        {copied ? 'Copiado!' : 'Copiar'}
+      </button>
+    </div>
+  )
+}
+
 function toSlug(text: string) {
   return text
     .replace(/ñ/gi, 'n')
@@ -269,6 +313,17 @@ export default function ProfilePage() {
               )
             })}
           </div>
+        </section>
+      )}
+
+      {/* Feed público */}
+      {slug?.trim() && (
+        <section style={styles.card}>
+          <h2 style={styles.sectionTitle}>Tu feed público</h2>
+          <p style={{ color: '#6b7280', fontSize: '0.85rem', marginBottom: '1rem' }}>
+            Compartí este enlace para que cualquier persona pueda ver tus flipbooks publicados.
+          </p>
+          <PublicFeedLink slug={slug.trim()} />
         </section>
       )}
 

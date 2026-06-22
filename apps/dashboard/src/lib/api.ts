@@ -142,6 +142,12 @@ export const api = {
     remove: (id: number | string) => request<{ success: true }>(`/api/responses/${id}`, { method: 'DELETE' }),
   },
 
+  public: {
+    feed: (tenantSlug: string) =>
+      fetch(`${API_BASE}/public/${encodeURIComponent(tenantSlug)}`)
+        .then((r) => r.json()) as Promise<{ success: true; data: any[] }>,
+  },
+
   upload: (file: File) => {
     const token = getToken()
     const form = new FormData()

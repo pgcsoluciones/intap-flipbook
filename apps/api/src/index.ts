@@ -113,6 +113,25 @@ app.patch('/api/publications/:id/folder', jwtMiddleware, async (c) => {
   return c.json({ success: true })
 })
 
+// Public feed — publicaciones publicadas de un tenant por slug — sin auth
+app.get('/public/:tenantSlug', async (c) => {
+  const tenantSlug = c.req.param('tenantSlug')
+  const tenant = await c.env.DB.prepare(
+    `SELECT id FROM users WHERE slug = ?`
+  ).bind(tenantSlug).first<{ id: string }>()
+
+  if (!tenant) return c.json({ success: true, data: [] })
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, title, description, category, cover_image_url, public_slug, views_count, updated_at
+     FROM publications
+     WHERE user_id = ? AND status = 'published' AND deleted_at IS NULL
+     ORDER BY updated_at DESC`
+  ).bind(tenant.id).all()
+
+  return c.json({ success: true, data: results ?? [] })
+})
+
 // Public viewer endpoint — no auth required
 app.get('/view/:slug', async (c) => {
   const slug = c.req.param('slug')

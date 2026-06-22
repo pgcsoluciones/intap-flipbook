@@ -18,6 +18,7 @@ import TenantTutorials  from './pages/TenantTutorials'
 import TenantStats      from './pages/TenantStats'
 import TenantPromotions from './pages/TenantPromotions'
 import TenantReferrals  from './pages/TenantReferrals'
+import PublicFeed       from './pages/PublicFeed'
 
 // Admin pages
 import AdminDashboard     from './pages/admin/AdminDashboard'
@@ -86,6 +87,9 @@ export default function App() {
         <Route path="/new"         element={<Navigate to="/publications/new" replace />} />
         <Route path="/edit/:id"    element={<LegacyRedirect pattern="/publications/{id}/editor" />} />
         <Route path="/preview/:id" element={<LegacyRedirect pattern="/publications/{id}/preview" />} />
+
+        {/* Feed público — sin auth */}
+        <Route path="/p/:tenantSlug" element={<PublicFeed />} />
 
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
       </Routes>
