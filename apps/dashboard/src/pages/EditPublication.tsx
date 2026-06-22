@@ -202,7 +202,7 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
 ]
 
 // Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
-type WidgetType = 'map' | 'whatsapp' | 'contact' | 'video' | 'audio' | 'qr' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download'
+type WidgetType = 'map' | 'whatsapp' | 'contact' | 'video' | 'audio' | 'qr' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download' | 'units_table'
 const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean }[] = [
   { type: 'map',          label: 'Mapa',                  icon: 'map',      premium: false },
   { type: 'whatsapp',     label: 'WhatsApp',              icon: 'whatsapp', premium: false },
@@ -216,6 +216,7 @@ const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean
   { type: 'popup_banner', label: 'Pop-up emergente',      icon: 'badge',    premium: false },
   { type: 'embed',        label: 'Incrustar / HTML',      icon: 'embed',    premium: false },
   { type: 'quiz',         label: 'Cuestionario',          icon: 'quiz',     premium: false },
+  { type: 'units_table',  label: 'Tabla de Unidades',     icon: 'table',    premium: false },
 ]
 
 // Configuración inicial de cada widget (la edita el usuario en el panel derecho).
@@ -231,6 +232,7 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   download: { url: '', filename: '', title: 'Descarga aquí', button: 'Descargar', buttonColor: '#4F46E5' },
   embed:    { html: '' },
   quiz:     { title: 'Cuestionario', questions: [{ text: '¿Tu pregunta?', options: ['Opción A', 'Opción B'], type: 'single' }] },
+  units_table: { publication_id: '', show_price: true, show_area: true, filter_status: 'all' },
   popup_banner: {
     template: 'offer',
     position: 'left',
@@ -743,9 +745,11 @@ export default function EditPublication() {
       fontSize: 11, fontFamily: 'Inter, sans-serif', fill: '#6b7280',
       originX: 'center', originY: 'center', top: 14,
     })
+    const defaultCfg = { ...(WIDGET_DEFAULTS[w.type] ?? {}) }
+    if (w.type === 'units_table' && id) defaultCfg.publication_id = id
     const group = new fabric.Group([rect, title, hint], {
       left: 100, top: 120,
-      data: { kind: 'widget', widget: { type: w.type, config: { ...(WIDGET_DEFAULTS[w.type] ?? {}) } } },
+      data: { kind: 'widget', widget: { type: w.type, config: defaultCfg } },
     })
     c.add(group); c.setActiveObject(group); c.requestRenderAll()
     setActiveTool('widgets')
@@ -1765,7 +1769,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
     map: 'Mapa', whatsapp: 'WhatsApp', contact: 'Formulario', video: 'Video',
     audio: 'Audio', qr: 'Código QR', table: 'Tabla', like: 'Me gusta',
     embed: 'Incrustar / HTML', quiz: 'Cuestionario', popup_banner: 'Pop-up emergente',
-    download: 'Descargar archivo',
+    download: 'Descargar archivo', units_table: 'Tabla de Unidades',
   }
 
   return (
@@ -2025,6 +2029,28 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
           <Field label="Opciones">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <Check k="showOnce" label="Mostrar una sola vez por visitante" />
+            </div>
+          </Field>
+        </>
+      )}
+
+      {type === 'units_table' && (
+        <>
+          <Field label="ID de publicación (se completa automáticamente)">
+            <input style={s.propInput} value={cfg.publication_id ?? ''} readOnly />
+          </Field>
+          <Field label="Filtrar estado">
+            <select style={s.propInput} defaultValue={cfg.filter_status ?? 'all'} onChange={(e) => setCfg({ filter_status: e.target.value })}>
+              <option value="all">Todos</option>
+              <option value="available">Solo disponibles</option>
+              <option value="reserved">Solo reservadas</option>
+              <option value="sold">Solo vendidas</option>
+            </select>
+          </Field>
+          <Field label="Columnas visibles">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Check k="show_price" label="Mostrar precio" />
+              <Check k="show_area"  label="Mostrar m²" />
             </div>
           </Field>
         </>

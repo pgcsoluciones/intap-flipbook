@@ -774,6 +774,106 @@ async function init() {
         scheduleBanner(cfg, key)
         return null
       }
+      case 'units_table': {
+        // Tabla de unidades inmobiliarias — carga datos desde el endpoint público /view/units
+        const wrap = document.createElement('div')
+        wrap.style.cssText = 'width:100%;height:100%;overflow-y:auto;background:rgba(15,23,42,0.92);border-radius:10px;padding:10px;box-sizing:border-box;font-family:Inter,sans-serif;color:#fff;'
+
+        const filterStatus = widget.filter_status || cfg.filter_status || 'all'
+        const showPrice    = widget.show_price    !== undefined ? widget.show_price    : (cfg.show_price    !== false)
+        const showArea     = widget.show_area     !== undefined ? widget.show_area     : (cfg.show_area     !== false)
+        const pubId        = widget.publication_id || cfg.publication_id || ''
+
+        if (!pubId) { wrap.appendChild(placeholderBox('Tabla de Unidades (sin publication_id)')); return wrap }
+
+        // Título de la tabla
+        const ttl = document.createElement('div')
+        ttl.textContent = 'Unidades'
+        ttl.style.cssText = 'font-weight:700;font-size:13px;margin-bottom:8px;color:#e2e8f0;border-bottom:1px solid rgba(255,255,255,.15);padding-bottom:6px;'
+        wrap.appendChild(ttl)
+
+        // Spinner mientras carga
+        const spinner = document.createElement('div')
+        spinner.textContent = 'Cargando…'
+        spinner.style.cssText = 'font-size:12px;color:#94a3b8;text-align:center;padding:12px 0;'
+        wrap.appendChild(spinner)
+
+        // Fetch al endpoint público de unidades
+        fetch(`${API_BASE}/view/units?publication_id=${encodeURIComponent(pubId)}`)
+          .then((r) => r.json())
+          .then(({ data }) => {
+            spinner.remove()
+            let units = Array.isArray(data) ? data : []
+            if (filterStatus !== 'all') units = units.filter((u) => u.status === filterStatus)
+
+            if (!units.length) {
+              const empty = document.createElement('div')
+              empty.textContent = 'No hay unidades disponibles.'
+              empty.style.cssText = 'font-size:12px;color:#94a3b8;text-align:center;padding:16px 0;'
+              wrap.appendChild(empty)
+              return
+            }
+
+            const STATUS_COLOR = { available: '#16a34a', reserved: '#ca8a04', sold: '#dc2626' }
+            const STATUS_LABEL = { available: 'Disponible', reserved: 'Reservada', sold: 'Vendida' }
+
+            const tbl = document.createElement('table')
+            tbl.style.cssText = 'width:100%;border-collapse:collapse;font-size:11px;'
+
+            // Encabezado
+            const thead = document.createElement('thead')
+            const hrow = document.createElement('tr')
+            const cols = ['Unidad', 'Piso', ...(showArea ? ['m²'] : []), 'Dorm.', ...(showPrice ? ['Precio'] : []), 'Estado']
+            cols.forEach((col) => {
+              const th = document.createElement('th')
+              th.textContent = col
+              th.style.cssText = 'padding:5px 6px;text-align:left;color:#94a3b8;font-weight:600;border-bottom:1px solid rgba(255,255,255,.12);white-space:nowrap;'
+              hrow.appendChild(th)
+            })
+            thead.appendChild(hrow)
+            tbl.appendChild(thead)
+
+            // Filas de datos
+            const tbody = document.createElement('tbody')
+            units.forEach((u) => {
+              const tr = document.createElement('tr')
+              const tdStyle = 'padding:5px 6px;border-bottom:1px solid rgba(255,255,255,.07);white-space:nowrap;'
+
+              const cells = [
+                u.name || u.unit_number || '—',
+                u.floor != null ? u.floor : '—',
+                ...(showArea ? [u.area_m2 != null ? u.area_m2 : '—'] : []),
+                u.bedrooms != null ? u.bedrooms : '—',
+                ...(showPrice ? [u.price != null ? `$${Number(u.price).toLocaleString()}` : '—'] : []),
+              ]
+              cells.forEach((val) => {
+                const td = document.createElement('td')
+                td.textContent = String(val)
+                td.style.cssText = tdStyle
+                tr.appendChild(td)
+              })
+
+              // Badge de estado
+              const tdStatus = document.createElement('td')
+              tdStatus.style.cssText = tdStyle
+              const badge = document.createElement('span')
+              const color = STATUS_COLOR[u.status] || '#64748b'
+              badge.textContent = STATUS_LABEL[u.status] || u.status || '—'
+              badge.style.cssText = `display:inline-block;background:${color};color:#fff;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:600;`
+              tdStatus.appendChild(badge)
+              tr.appendChild(tdStatus)
+
+              tbody.appendChild(tr)
+            })
+            tbl.appendChild(tbody)
+            wrap.appendChild(tbl)
+          })
+          .catch(() => {
+            spinner.textContent = 'Error al cargar unidades.'
+          })
+
+        return wrap
+      }
       default: return placeholderBox(widget.type)
     }
   }

@@ -136,6 +136,16 @@ app.get('/public/:tenantSlug', async (c) => {
   return c.json({ success: true, data: results ?? [] })
 })
 
+// Endpoint público de unidades para el viewer (sin auth)
+app.get('/view/units', async (c) => {
+  const pubId = c.req.query('publication_id')
+  if (!pubId) return c.json({ success: false, error: 'publication_id requerido' }, 400)
+  const { results } = await c.env.DB.prepare(
+    `SELECT * FROM units WHERE publication_id = ? ORDER BY floor ASC, unit_number ASC, name ASC`
+  ).bind(pubId).all()
+  return c.json({ success: true, data: results })
+})
+
 // Public viewer endpoint — no auth required
 app.get('/view/:slug', async (c) => {
   const slug = c.req.param('slug')
