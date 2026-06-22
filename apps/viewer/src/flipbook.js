@@ -295,7 +295,211 @@ async function init() {
       }
       case 'show_hide':
         break
+
+      case 'gallery_images': {
+        const imgs = (a.images || []).filter(Boolean)
+        if (!imgs.length) break
+        injectGalleryStyles()
+        const startIdx = imgs.indexOf(a.cover) !== -1 ? imgs.indexOf(a.cover) : 0
+        showImageGallery(imgs, startIdx)
+        break
+      }
+
+      case 'gallery_videos': {
+        const vids = (a.videos || []).filter(Boolean)
+        if (!vids.length) break
+        injectGalleryStyles()
+        showVideoGallery(vids)
+        break
+      }
     }
+  }
+
+  function injectGalleryStyles() {
+    if (document.getElementById('flipbook-gallery-styles')) return
+    const st = document.createElement('style')
+    st.id = 'flipbook-gallery-styles'
+    st.textContent = `
+      .fg-overlay { position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px; }
+      .fg-close { position:fixed;top:14px;right:18px;background:none;border:none;color:#fff;font-size:28px;cursor:pointer;z-index:2001;line-height:1; }
+      .fg-main { flex:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:0;position:relative; }
+      .fg-main img { max-width:90vw;max-height:70vh;object-fit:contain;border-radius:8px;display:block;user-select:none; }
+      .fg-nav { position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.18);border:none;color:#fff;font-size:28px;cursor:pointer;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center;transition:background .15s; }
+      .fg-nav:hover { background:rgba(255,255,255,.35); }
+      .fg-nav.prev { left:8px; }
+      .fg-nav.next { right:8px; }
+      .fg-thumbs { display:flex;gap:8px;overflow-x:auto;padding:10px 4px;max-width:90vw; }
+      .fg-thumb { width:56px;height:56px;object-fit:cover;border-radius:6px;cursor:pointer;border:2px solid transparent;flex-shrink:0;transition:border-color .15s;opacity:.65; }
+      .fg-thumb.active { border-color:#818cf8;opacity:1; }
+      .fg-counter { color:rgba(255,255,255,.7);font-size:13px;margin-bottom:6px; }
+      .fv-grid { display:flex;flex-wrap:wrap;gap:12px;justify-content:center;max-height:70vh;overflow-y:auto;padding:4px; }
+      .fv-item { width:160px;cursor:pointer;border-radius:8px;overflow:hidden;border:2px solid rgba(255,255,255,.15);transition:border-color .15s;background:#1a1a2e; }
+      .fv-item:hover { border-color:#818cf8; }
+      .fv-thumb { width:100%;height:90px;object-fit:cover;display:block; }
+      .fv-play-wrap { width:100%;height:90px;display:flex;align-items:center;justify-content:center;font-size:36px; }
+      .fv-label { color:#fff;font-size:11px;padding:5px 6px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap; }
+      .fv-player { position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:2100;display:flex;align-items:center;justify-content:center; }
+      .fv-player iframe,.fv-player video { width:90vw;max-width:780px;aspect-ratio:16/9;border:0;border-radius:8px; }
+      .fv-player-close { position:fixed;top:14px;right:18px;background:none;border:none;color:#fff;font-size:28px;cursor:pointer; }
+    `
+    document.head.appendChild(st)
+  }
+
+  function showImageGallery(imgs, startIdx) {
+    let current = startIdx
+    const overlay = document.createElement('div')
+    overlay.className = 'fg-overlay'
+
+    const closeBtn = document.createElement('button')
+    closeBtn.className = 'fg-close'
+    closeBtn.textContent = '✕'
+    closeBtn.addEventListener('click', () => overlay.remove())
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove() })
+
+    const counter = document.createElement('div')
+    counter.className = 'fg-counter'
+
+    const main = document.createElement('div')
+    main.className = 'fg-main'
+
+    const mainImg = document.createElement('img')
+    main.appendChild(mainImg)
+
+    const prevBtn = document.createElement('button')
+    prevBtn.className = 'fg-nav prev'
+    prevBtn.textContent = '‹'
+    prevBtn.addEventListener('click', () => navigate(-1))
+    main.appendChild(prevBtn)
+
+    const nextBtn = document.createElement('button')
+    nextBtn.className = 'fg-nav next'
+    nextBtn.textContent = '›'
+    nextBtn.addEventListener('click', () => navigate(1))
+    main.appendChild(nextBtn)
+
+    const thumbRow = document.createElement('div')
+    thumbRow.className = 'fg-thumbs'
+    const thumbEls = imgs.map((url, i) => {
+      const t = document.createElement('img')
+      t.src = url; t.className = 'fg-thumb'; t.alt = ''
+      t.addEventListener('click', () => goto(i))
+      thumbRow.appendChild(t)
+      return t
+    })
+
+    function goto(i) {
+      current = (i + imgs.length) % imgs.length
+      mainImg.src = imgs[current]
+      counter.textContent = `${current + 1} / ${imgs.length}`
+      thumbEls.forEach((t, j) => t.classList.toggle('active', j === current))
+    }
+
+    function navigate(dir) { goto(current + dir) }
+
+    // Touch swipe
+    let touchX = 0
+    overlay.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX }, { passive: true })
+    overlay.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - touchX
+      if (Math.abs(dx) > 40) navigate(dx < 0 ? 1 : -1)
+    })
+
+    // Escape key
+    function onKey(e) { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey) } }
+    document.addEventListener('keydown', onKey)
+    overlay.addEventListener('click', () => document.removeEventListener('keydown', onKey))
+
+    overlay.appendChild(closeBtn)
+    overlay.appendChild(counter)
+    overlay.appendChild(main)
+    overlay.appendChild(thumbRow)
+    document.body.appendChild(overlay)
+    goto(startIdx)
+  }
+
+  function showVideoGallery(vids) {
+    const overlay = document.createElement('div')
+    overlay.className = 'fg-overlay'
+    overlay.style.justifyContent = 'flex-start'
+    overlay.style.paddingTop = '48px'
+
+    const closeBtn = document.createElement('button')
+    closeBtn.className = 'fg-close'
+    closeBtn.textContent = '✕'
+    closeBtn.addEventListener('click', () => overlay.remove())
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove() })
+
+    function onKey(e) { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey) } }
+    document.addEventListener('keydown', onKey)
+
+    const grid = document.createElement('div')
+    grid.className = 'fv-grid'
+
+    vids.forEach((url) => {
+      const yt = (url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/) || [])[1]
+      const vm = (url.match(/vimeo\.com\/(\d+)/) || [])[1]
+
+      const item = document.createElement('div')
+      item.className = 'fv-item'
+
+      if (yt) {
+        const thumb = document.createElement('img')
+        thumb.src = `https://img.youtube.com/vi/${yt}/mqdefault.jpg`
+        thumb.className = 'fv-thumb'
+        item.appendChild(thumb)
+      } else if (vm) {
+        const pw = document.createElement('div')
+        pw.className = 'fv-play-wrap'
+        pw.style.cssText = 'background:#1a1a2e;'
+        pw.textContent = '▶'
+        item.appendChild(pw)
+      } else {
+        const pw = document.createElement('div')
+        pw.className = 'fv-play-wrap'
+        pw.style.cssText = 'background:#1a1a2e;'
+        pw.textContent = '🎬'
+        item.appendChild(pw)
+      }
+
+      const lbl = document.createElement('div')
+      lbl.className = 'fv-label'
+      lbl.textContent = yt ? `YouTube` : vm ? 'Vimeo' : url.split('/').pop() || 'Video'
+      item.appendChild(lbl)
+
+      item.addEventListener('click', () => {
+        const player = document.createElement('div')
+        player.className = 'fv-player'
+        const pclose = document.createElement('button')
+        pclose.className = 'fv-player-close'
+        pclose.textContent = '✕'
+        pclose.addEventListener('click', () => player.remove())
+        player.addEventListener('click', (e) => { if (e.target === player) player.remove() })
+        let embedSrc = url
+        if (yt) embedSrc = `https://www.youtube.com/embed/${yt}?autoplay=1`
+        else if (vm) embedSrc = `https://player.vimeo.com/video/${vm}?autoplay=1`
+        let mediaEl
+        if (yt || vm) {
+          mediaEl = document.createElement('iframe')
+          mediaEl.src = embedSrc
+          mediaEl.allow = 'autoplay; fullscreen'
+        } else {
+          mediaEl = document.createElement('video')
+          mediaEl.src = url
+          mediaEl.controls = true
+          mediaEl.autoplay = true
+          mediaEl.style.borderRadius = '8px'
+        }
+        player.appendChild(pclose)
+        player.appendChild(mediaEl)
+        document.body.appendChild(player)
+      })
+
+      grid.appendChild(item)
+    })
+
+    overlay.appendChild(closeBtn)
+    overlay.appendChild(grid)
+    document.body.appendChild(overlay)
   }
 
   function showPopup(node) {

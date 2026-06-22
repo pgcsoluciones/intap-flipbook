@@ -597,6 +597,7 @@ export default function Publications() {
                   onDelete={() => handleDelete(pub.id)}
                   onPublish={() => handlePublish(pub.id)}
                   onMoveFolder={(fid) => moveToFolder(pub.id, fid)}
+                  onCoverChanged={(url) => setAll((prev) => prev.map((p) => p.id === pub.id ? { ...p, cover_image_url: url } : p))}
                   folders={folders}
                 />
               ))}
@@ -708,14 +709,16 @@ function ProposeModal({ pub, onClose }: { pub: any; onClose: () => void }) {
   )
 }
 
-function PubCard({ pub, isMobile, onDelete, onPublish, onMoveFolder, folders }: { pub: any; isMobile?: boolean; onDelete: () => void; onPublish: () => void; onMoveFolder: (folderId: string | null) => void; folders: any[] }) {
+function PubCard({ pub, isMobile, onDelete, onPublish, onMoveFolder, onCoverChanged, folders }: { pub: any; isMobile?: boolean; onDelete: () => void; onPublish: () => void; onMoveFolder: (folderId: string | null) => void; onCoverChanged: (url: string) => void; folders: any[] }) {
   const [hover, setHover] = useState(false)
   const [showPropose, setShowPropose] = useState(false)
+  const [showCoverModal, setShowCoverModal] = useState(false)
   const isPublished = pub.status === 'published'
 
   return (
     <>
     {showPropose && <ProposeModal pub={pub} onClose={() => setShowPropose(false)} />}
+    {showCoverModal && <CoverModal pubId={pub.id} currentCover={pub.cover_image_url} onClose={() => setShowCoverModal(false)} onConfirm={(url) => { onCoverChanged(url); setShowCoverModal(false) }} />}
     <div
       style={{ ...s.card, boxShadow: hover ? '0 4px 20px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.07)' }}
       onMouseEnter={() => setHover(true)}
@@ -772,6 +775,11 @@ function PubCard({ pub, isMobile, onDelete, onPublish, onMoveFolder, folders }: 
             <option value="">— Sin carpeta</option>
             {folders.map((f: any) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
+          <button
+            title="Cambiar portada"
+            style={{ ...s.actionBtn, fontSize: 11 }}
+            onClick={() => setShowCoverModal(true)}
+          >🖼️</button>
           {isPublished && (
             <button
               title="Proponer como plantilla"
@@ -784,6 +792,83 @@ function PubCard({ pub, isMobile, onDelete, onPublish, onMoveFolder, folders }: 
       </div>
     </div>
     </>
+  )
+}
+
+function CoverModal({ pubId, currentCover, onClose, onConfirm }: { pubId: string; currentCover: string | null; onClose: () => void; onConfirm: (url: string) => void }) {
+  const [pages, setPages] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<string | null>(currentCover ?? null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api.publications.get(pubId)
+      .then((r) => setPages(r.data?.pages ?? []))
+      .catch(() => setError('No se pudieron cargar las páginas.'))
+      .finally(() => setLoading(false))
+  }, [pubId])
+
+  async function handleConfirm() {
+    if (!selected) return
+    setSaving(true); setError('')
+    try {
+      await api.publications.update(pubId, { cover_image_url: selected })
+      onConfirm(selected)
+    } catch (e: any) {
+      setError(e.message ?? 'Error al guardar.')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={s.overlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div style={{ ...s.modal, width: 560 }}>
+        <div style={s.modalHeader}>
+          <h2 style={s.modalTitle}>Cambiar portada</h2>
+          <button style={s.closeBtn} onClick={onClose} disabled={saving}>✕</button>
+        </div>
+        <div style={{ padding: '16px 24px 24px' }}>
+          {loading && <p style={{ color: '#9ca3af', textAlign: 'center' }}>Cargando páginas...</p>}
+          {!loading && pages.length === 0 && !error && <p style={{ color: '#9ca3af', textAlign: 'center' }}>Sin páginas disponibles.</p>}
+          {error && <div style={s.errorText}>{error}</div>}
+          {!loading && pages.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 10, maxHeight: 360, overflowY: 'auto', marginBottom: 16 }}>
+              {pages.map((page: any, i: number) => (
+                <div
+                  key={page.id ?? i}
+                  onClick={() => setSelected(page.image_url)}
+                  style={{
+                    cursor: 'pointer',
+                    borderRadius: 8,
+                    border: selected === page.image_url ? '2.5px solid #4f46e5' : '2px solid #e5e7eb',
+                    overflow: 'hidden',
+                    background: '#f8fafc',
+                    transition: 'border-color .15s',
+                  }}
+                >
+                  {page.image_url
+                    ? <img src={page.image_url} alt="" style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block' }} />
+                    : <div style={{ width: '100%', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, opacity: 0.3 }}>📄</div>
+                  }
+                  <div style={{ fontSize: 10, color: '#6b7280', textAlign: 'center' as const, padding: '4px 2px' }}>Pág. {page.page_number ?? i + 1}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={s.modalFooter}>
+            <button style={s.btnCancel} onClick={onClose} disabled={saving}>Cancelar</button>
+            <button
+              style={{ ...s.btnCreate, opacity: (!selected || saving) ? 0.7 : 1 }}
+              disabled={!selected || saving}
+              onClick={handleConfirm}
+            >
+              {saving ? 'Guardando...' : 'Confirmar portada'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 

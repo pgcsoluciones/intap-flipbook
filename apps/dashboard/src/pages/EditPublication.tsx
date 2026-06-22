@@ -185,18 +185,20 @@ const BUTTON_PRESETS: { label: string; variant: 'solid' | 'outline' | 'pill' }[]
 ]
 
 // Tipos de acción de un botón (qué ocurre al hacer clic en el viewer)
-type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'download' | 'show_hide'
+type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos'
 const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
-  { type: 'link',        label: 'Abrir Enlace',      icon: 'link' },
-  { type: 'page',        label: 'Ir a Página',       icon: 'pages' },
-  { type: 'call',        label: 'Llamar',            icon: 'badge' },
-  { type: 'whatsapp',    label: 'WhatsApp',          icon: 'whatsapp' },
-  { type: 'email',       label: 'Email',             icon: 'contact' },
-  { type: 'popup_text',  label: 'Texto emergente',   icon: 'text' },
-  { type: 'popup_image', label: 'Imagen emergente',  icon: 'image' },
-  { type: 'popup_video', label: 'Video emergente',   icon: 'video' },
-  { type: 'download',    label: 'Descargar archivo', icon: 'uploads' },
-  { type: 'show_hide',   label: 'Mostrar/Ocultar',   icon: 'elements' },
+  { type: 'link',           label: 'Abrir Enlace',        icon: 'link' },
+  { type: 'page',           label: 'Ir a Página',         icon: 'pages' },
+  { type: 'call',           label: 'Llamar',              icon: 'badge' },
+  { type: 'whatsapp',       label: 'WhatsApp',            icon: 'whatsapp' },
+  { type: 'email',          label: 'Email',               icon: 'contact' },
+  { type: 'popup_text',     label: 'Texto emergente',     icon: 'text' },
+  { type: 'popup_image',    label: 'Imagen emergente',    icon: 'image' },
+  { type: 'popup_video',    label: 'Video emergente',     icon: 'video' },
+  { type: 'download',       label: 'Descargar archivo',   icon: 'uploads' },
+  { type: 'gallery_images', label: 'Galería de imágenes', icon: 'image' },
+  { type: 'gallery_videos', label: 'Galería de videos',   icon: 'video' },
+  { type: 'show_hide',      label: 'Mostrar/Ocultar',     icon: 'elements' },
 ]
 
 // Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
@@ -2175,12 +2177,151 @@ function ActionEditor({ data, pages, setData }: { data: any; pages: any[]; setDa
         </>
       )}
 
+      {action.type === 'gallery_images' && (
+        <GalleryImagesEditor action={action} setAction={setAction} />
+      )}
+
+      {action.type === 'gallery_videos' && (
+        <GalleryVideosEditor action={action} setAction={setAction} />
+      )}
+
       {action.type === 'show_hide' && (
         <PropGroup label="ID del elemento a mostrar/ocultar">
           <input style={s.propInput} placeholder="ej: oferta1" defaultValue={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })} />
         </PropGroup>
       )}
     </>
+  )
+}
+
+// ─── Editor de galería de imágenes ────────────────────────────────────────────
+function GalleryImagesEditor({ action, setAction }: { action: any; setAction: (p: any) => void }) {
+  const images: string[] = action.images ?? []
+  const cover: string = action.cover ?? images[0] ?? ''
+  const fileRefs = useRef<(HTMLInputElement | null)[]>([])
+
+  function setImages(next: string[]) {
+    setAction({ images: next, cover: next.includes(cover) ? cover : (next[0] ?? '') })
+  }
+
+  function addImage() {
+    if (images.length >= 20) return
+    setImages([...images, ''])
+  }
+
+  function updateImage(i: number, url: string) {
+    const next = [...images]
+    next[i] = url
+    setImages(next)
+    if (!cover) setAction({ images: next, cover: url })
+  }
+
+  function removeImage(i: number) {
+    const next = images.filter((_, j) => j !== i)
+    setImages(next)
+  }
+
+  async function uploadImage(i: number, file: File) {
+    try {
+      const res = await api.upload(file)
+      updateImage(i, res.data.url)
+    } catch (e: any) {
+      alert('Error al subir: ' + (e.message ?? e))
+    }
+  }
+
+  return (
+    <>
+      <PropGroup label="Imágenes de la galería (máx. 20)">
+        {images.map((url, i) => (
+          <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 6 }}>
+            <input
+              style={{ ...s.propInput, flex: 1, fontSize: 11 }}
+              placeholder="https://..."
+              value={url}
+              onChange={(e) => updateImage(i, e.target.value)}
+            />
+            <input
+              ref={(el) => { fileRefs.current[i] = el }}
+              type="file"
+              accept={ACCEPT_IMAGE}
+              style={{ display: 'none' }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(i, f); e.target.value = '' }}
+            />
+            <button
+              type="button"
+              style={{ ...s.alignBtn, fontSize: 11, padding: '4px 8px', flex: 'none', whiteSpace: 'nowrap' }}
+              onClick={() => fileRefs.current[i]?.click()}
+            >Subir</button>
+            <button
+              type="button"
+              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }}
+              onClick={() => removeImage(i)}
+            >✕</button>
+          </div>
+        ))}
+        {images.length < 20 && (
+          <button type="button" style={{ ...s.alignBtn, fontSize: 12 }} onClick={addImage}>+ Agregar imagen</button>
+        )}
+      </PropGroup>
+      {images.filter(Boolean).length > 0 && (
+        <PropGroup label="Imagen de portada">
+          <select
+            style={s.propInput}
+            value={cover}
+            onChange={(e) => setAction({ cover: e.target.value })}
+          >
+            {images.filter(Boolean).map((url, i) => (
+              <option key={i} value={url}>Imagen {i + 1}</option>
+            ))}
+          </select>
+        </PropGroup>
+      )}
+    </>
+  )
+}
+
+// ─── Editor de galería de videos ──────────────────────────────────────────────
+function GalleryVideosEditor({ action, setAction }: { action: any; setAction: (p: any) => void }) {
+  const videos: string[] = action.videos ?? []
+
+  function setVideos(next: string[]) {
+    setAction({ videos: next })
+  }
+
+  function addVideo() {
+    setVideos([...videos, ''])
+  }
+
+  function updateVideo(i: number, url: string) {
+    const next = [...videos]
+    next[i] = url
+    setVideos(next)
+  }
+
+  function removeVideo(i: number) {
+    setVideos(videos.filter((_, j) => j !== i))
+  }
+
+  return (
+    <PropGroup label="Videos de la galería (YouTube, Vimeo o MP4)">
+      {videos.map((url, i) => (
+        <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 6 }}>
+          <input
+            style={{ ...s.propInput, flex: 1, fontSize: 11 }}
+            placeholder="https://youtube.com/watch?v=..."
+            value={url}
+            onChange={(e) => updateVideo(i, e.target.value)}
+          />
+          <button
+            type="button"
+            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }}
+            onClick={() => removeVideo(i)}
+          >✕</button>
+        </div>
+      ))}
+      <button type="button" style={{ ...s.alignBtn, fontSize: 12 }} onClick={addVideo}>+ Agregar video</button>
+    </PropGroup>
   )
 }
 
