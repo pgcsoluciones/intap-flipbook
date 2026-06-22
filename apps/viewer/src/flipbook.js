@@ -65,6 +65,8 @@ function saveResponse(kind, payload, widgetKey) {
 async function init() {
   const res = await fetch(`${API_BASE}/view/${slug}`)
   if (!res.ok) {
+    const fc = document.getElementById('flipbook-container')
+    if (fc) fc.style.opacity = '1'
     document.body.innerHTML = `<p style="color:#fff;text-align:center;margin-top:2rem">Publication not found.</p>`
     return
   }
@@ -110,20 +112,17 @@ async function init() {
   soundEnabled = true
 
   const portrait = window.innerWidth < 700
-  // 64px = altura de la barra de controles + márgenes; 32px = padding vertical del contenedor
-  const CONTROLS_H = 64
-  const PADDING_V  = 32
+  // Altura disponible = viewport - barra de controles (~64px) - padding vertical (~32px)
+  const availH = window.innerHeight - 64 - 32
   let pageWidth
   if (portrait) {
-    // Móvil: limitar por ancho Y por altura disponible para que no quede espacio vacío
-    const byW = Math.min(420, window.innerWidth - 4)
-    const byH = Math.floor((window.innerHeight - CONTROLS_H - PADDING_V) / 1.414)
+    // Móvil: limitado por ancho Y por altura para que encaje justo en la pantalla
+    const byW = Math.min(420, window.innerWidth - 8)
+    const byH = Math.floor(availH / 1.414)
     pageWidth = Math.min(byW, byH)
   } else {
-    // Escritorio: llenar lo máximo posible sin que la altura desborde el viewport
-    const availW = Math.floor(window.innerWidth * 0.95 / 2)
-    const availH = window.innerHeight - CONTROLS_H - PADDING_V
-    const byW = Math.min(1100, availW)
+    // Escritorio: spread doble, limitado por ancho Y alto del viewport
+    const byW = Math.min(1100, Math.floor(window.innerWidth * 0.95 / 2))
     const byH = Math.floor(availH / 1.414)
     pageWidth = Math.min(byW, byH)
   }
@@ -1071,14 +1070,11 @@ async function init() {
   // Construye overlays para cada página real
   pageDivs.forEach((div, i) => buildOverlay(div, data.pages[i] && data.pages[i].canvas_json))
 
-  // Ocultar la pantalla de carga — esperar al próximo frame de pintura para que
-  // el flipbook ya esté renderizado antes de que el loader desaparezca (evita FOUC)
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      const loader = document.getElementById('flipbook-loader')
-      if (loader) loader.classList.add('hidden')
-    })
-  })
+  // Revelar el flipbook con fade-in una vez que Fabric.js tuvo tiempo de pintar el overlay inicial
+  setTimeout(() => {
+    const fc = document.getElementById('flipbook-container')
+    if (fc) fc.style.opacity = '1'
+  }, 280)
 
   // Centrado dinámico: cubre/contraportada centradas, spreads interiores sin desplazamiento
   let currentShift = 0

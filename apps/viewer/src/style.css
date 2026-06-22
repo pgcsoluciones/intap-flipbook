@@ -10,44 +10,11 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  height: 100svh;            /* svh = small viewport height — excluye la barra de URL del browser en móvil */
-  max-height: 100svh;
+  height: 100dvh;            /* height definido (no min-height) para que flex:1 funcione */
   font-family: sans-serif;
   color: #fff;
-  overflow: hidden;          /* sin scroll — todo cabe en la pantalla */
+  overflow: hidden;
 }
-
-/* Pantalla de carga — se oculta cuando el flipbook está listo */
-#flipbook-loader {
-  position: fixed;
-  inset: 0;
-  background: #1a1a2e;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  transition: opacity 0.35s ease;
-}
-#flipbook-loader.hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-.loader-spinner {
-  width: 42px;
-  height: 42px;
-  border: 3px solid rgba(255,255,255,.15);
-  border-top-color: #6c63ff;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  margin-bottom: 14px;
-}
-.loader-text {
-  color: rgba(255,255,255,.5);
-  font-size: 0.8rem;
-  letter-spacing: 0.05em;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Contenedor del flipbook ─────────────────────────────────────────────── */
 #flipbook-container {
@@ -57,8 +24,9 @@ body {
   flex: 1;
   width: 100%;
   padding: 16px 12px 0;
-  min-height: 0;             /* necesario para que flex: 1 funcione en columna */
-  overflow: hidden;
+  min-height: 0;             /* necesario para que flex:1 no desborde en columna */
+  opacity: 0;
+  transition: opacity 0.4s ease;
 }
 
 /* ── Controles ───────────────────────────────────────────────────────────── */
@@ -167,12 +135,6 @@ body {
 }
 
 /* ── Banner cintillo lateral ─────────────────────────────────────────────── */
-/*
-  El banner ocupa el lateral de la pantalla como una pestaña fija.
-  En escritorio: visible permanentemente como un cintillo vertical.
-  En móvil: colapsado (solo se ve el tab/lengüeta) y se expande al tocarlo.
-  Siempre fuera del área de lectura — nunca tapa el flipbook.
-*/
 #flipbook-banner {
   position: fixed;
   top: 50%;
@@ -186,7 +148,6 @@ body {
 #flipbook-banner.side-left  { left: 0; flex-direction: row; }
 #flipbook-banner.side-right { right: 0; flex-direction: row-reverse; }
 
-/* La tarjeta principal */
 #flipbook-banner .fb-card {
   display: flex;
   flex-direction: row;
@@ -202,7 +163,6 @@ body {
   flex-direction: row-reverse;
 }
 
-/* Imagen — 25 % del ancho */
 #flipbook-banner .fb-img {
   width: 25%;
   flex-shrink: 0;
@@ -212,7 +172,6 @@ body {
   display: block;
 }
 
-/* Cuerpo de texto — 75 % */
 #flipbook-banner .fb-body {
   flex: 1;
   display: flex;
@@ -248,7 +207,6 @@ body {
   white-space: nowrap;
 }
 
-/* Tab / lengüeta — siempre visible; en escritorio cierra el banner */
 #flipbook-banner .fb-tab {
   width: 28px;
   min-height: 80px;
@@ -271,7 +229,6 @@ body {
 
 #flipbook-banner .fb-tab:hover { opacity: .8; }
 
-/* Estado colapsado: la tarjeta se oculta deslizando fuera del viewport */
 #flipbook-banner.collapsed.side-left  .fb-card { transform: translateX(-100%); opacity: 0; pointer-events: none; position: absolute; }
 #flipbook-banner.collapsed.side-right .fb-card { transform: translateX(100%); opacity: 0; pointer-events: none; position: absolute; }
 
@@ -280,7 +237,6 @@ body {
   #flipbook-container { padding: 8px 4px 0; }
   #thumbnail-panel { bottom: 68px; }
 
-  /* Controles más compactos */
   #controls {
     gap: 6px;
     padding: 7px 12px;
@@ -289,10 +245,8 @@ body {
   }
   #controls button { font-size: 0.9rem; padding: 3px 5px; }
 
-  /* Marca de agua: si está en la barra, que no ensanche demasiado */
   #flipbook-watermark { font-size: 0.62rem !important; }
 
-  /* Banner: comienza colapsado en móvil, solo se ve la pestaña */
   #flipbook-banner { top: auto; transform: none; bottom: 88px; }
   #flipbook-banner.side-left  { left: 0; }
   #flipbook-banner.side-right { right: 0; }
