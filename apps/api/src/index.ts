@@ -151,6 +151,8 @@ app.get('/view/:slug', async (c) => {
   const slug = c.req.param('slug')
   const pub = await c.env.DB.prepare(
     `SELECT p.id, p.title, p.description, p.cover_image_url, p.sound_enabled,
+            p.project_phone, p.project_whatsapp, p.project_location,
+            p.project_address, p.project_developer, p.project_website,
             u.plan_id, u.watermark_override, u.watermark_tenant
      FROM publications p
      JOIN users u ON u.id = p.user_id
@@ -163,6 +165,12 @@ app.get('/view/:slug', async (c) => {
       description: string | null
       cover_image_url: string | null
       sound_enabled: number
+      project_phone: string | null
+      project_whatsapp: string | null
+      project_location: string | null
+      project_address: string | null
+      project_developer: string | null
+      project_website: string | null
       plan_id: string
       watermark_override: string
       watermark_tenant: string | null
@@ -201,6 +209,12 @@ app.get('/view/:slug', async (c) => {
       description: pub.description,
       cover_image_url: pub.cover_image_url,
       sound_enabled: pub.sound_enabled === 1,
+      project_phone: pub.project_phone,
+      project_whatsapp: pub.project_whatsapp,
+      project_location: pub.project_location,
+      project_address: pub.project_address,
+      project_developer: pub.project_developer,
+      project_website: pub.project_website,
       watermark_enabled: watermarkEnabled,
       watermark: wmConfig ?? { text: 'Intap Flipbook', link_url: 'https://intapflipbook.com', position: 'bottom-right', opacity: 80 },
       pages,

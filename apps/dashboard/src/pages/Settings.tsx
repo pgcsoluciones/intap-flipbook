@@ -27,6 +27,15 @@ export default function Settings() {
   const [confirmDelete, setConfirm] = useState(false)
   const [usage, setUsage]           = useState<any>(null)
 
+  // Campos CMS del proyecto inmobiliario
+  const [projectDeveloper, setProjectDeveloper] = useState('')
+  const [projectPhone, setProjectPhone]         = useState('')
+  const [projectWhatsapp, setProjectWhatsapp]   = useState('')
+  const [projectLocation, setProjectLocation]   = useState('')
+  const [projectAddress, setProjectAddress]     = useState('')
+  const [projectWebsite, setProjectWebsite]     = useState('')
+  const [savingProject, setSavingProject]       = useState(false)
+
   useEffect(() => {
     if (!id) return
     api.publications.get(id).then((r) => {
@@ -36,6 +45,12 @@ export default function Settings() {
       setDesc(p.description ?? '')
       setCategory(p.category ?? '')
       setSound(!!p.sound_enabled)
+      setProjectDeveloper(p.project_developer ?? '')
+      setProjectPhone(p.project_phone ?? '')
+      setProjectWhatsapp(p.project_whatsapp ?? '')
+      setProjectLocation(p.project_location ?? '')
+      setProjectAddress(p.project_address ?? '')
+      setProjectWebsite(p.project_website ?? '')
     })
     api.plan.usage().then((r) => setUsage(r.data))
   }, [id])
@@ -71,6 +86,29 @@ export default function Settings() {
     } catch (e: any) {
       setMsg({ text: e.message ?? 'Error al eliminar', ok: false })
       setDeleting(false)
+    }
+  }
+
+  async function handleSaveProject(e: React.FormEvent) {
+    e.preventDefault()
+    if (!id) return
+    setSavingProject(true)
+    try {
+      const res = await api.publications.update(id, {
+        project_developer: projectDeveloper || undefined,
+        project_phone:     projectPhone || undefined,
+        project_whatsapp:  projectWhatsapp || undefined,
+        project_location:  projectLocation || undefined,
+        project_address:   projectAddress || undefined,
+        project_website:   projectWebsite || undefined,
+      })
+      setPub(res.data)
+      setMsg({ text: 'Datos del proyecto guardados correctamente.', ok: true })
+    } catch (e: any) {
+      setMsg({ text: e.message ?? 'Error al guardar', ok: false })
+    } finally {
+      setSavingProject(false)
+      setTimeout(() => setMsg(null), 4000)
     }
   }
 
@@ -208,6 +246,86 @@ export default function Settings() {
               {saving ? 'Guardando...' : 'Guardar cambios'}
             </button>
           )}
+        </section>
+
+        {/* Datos del Proyecto */}
+        <section style={styles.card}>
+          <h2 style={styles.sectionTitle}>Datos del Proyecto</h2>
+          <p style={{ color: '#6b7280', fontSize: '0.8rem', marginBottom: '1rem', marginTop: 0 }}>
+            Información de contacto y ubicación que puede mostrarse en el flipbook.
+          </p>
+          <form onSubmit={handleSaveProject} style={styles.form}>
+            <label style={styles.label}>
+              Desarrolladora / Empresa
+              <input
+                style={styles.input}
+                value={projectDeveloper}
+                onChange={(e) => setProjectDeveloper(e.target.value)}
+                maxLength={120}
+                placeholder="Nombre de la empresa o desarrolladora"
+              />
+            </label>
+
+            <label style={styles.label}>
+              Teléfono del proyecto
+              <input
+                style={styles.input}
+                value={projectPhone}
+                onChange={(e) => setProjectPhone(e.target.value)}
+                maxLength={40}
+                placeholder="+54 11 1234-5678"
+              />
+            </label>
+
+            <label style={styles.label}>
+              WhatsApp del proyecto
+              <input
+                style={styles.input}
+                value={projectWhatsapp}
+                onChange={(e) => setProjectWhatsapp(e.target.value)}
+                maxLength={40}
+                placeholder="+54 9 11 1234-5678"
+              />
+            </label>
+
+            <label style={styles.label}>
+              Ubicación / Barrio
+              <input
+                style={styles.input}
+                value={projectLocation}
+                onChange={(e) => setProjectLocation(e.target.value)}
+                maxLength={120}
+                placeholder="Palermo, Buenos Aires"
+              />
+            </label>
+
+            <label style={styles.label}>
+              Dirección completa
+              <input
+                style={styles.input}
+                value={projectAddress}
+                onChange={(e) => setProjectAddress(e.target.value)}
+                maxLength={200}
+                placeholder="Av. Corrientes 1234, CABA"
+              />
+            </label>
+
+            <label style={styles.label}>
+              Sitio web
+              <input
+                style={styles.input}
+                value={projectWebsite}
+                onChange={(e) => setProjectWebsite(e.target.value)}
+                maxLength={200}
+                placeholder="https://www.miproyecto.com"
+                type="url"
+              />
+            </label>
+
+            <button type="submit" disabled={savingProject} style={styles.btnPrimary}>
+              {savingProject ? 'Guardando...' : 'Guardar datos del proyecto'}
+            </button>
+          </form>
         </section>
 
         {/* Gestión de Unidades — disponible para cualquier publicación */}

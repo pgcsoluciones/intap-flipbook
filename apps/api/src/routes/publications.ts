@@ -112,6 +112,12 @@ publications.put('/:id', async (c) => {
     category?: string
     sound_enabled?: boolean
     cover_image_url?: string
+    project_phone?: string
+    project_whatsapp?: string
+    project_location?: string
+    project_address?: string
+    project_developer?: string
+    project_website?: string
   }>()
 
   const pub = await c.env.DB.prepare('SELECT id FROM publications WHERE id = ? AND user_id = ?')
@@ -144,6 +150,12 @@ publications.put('/:id', async (c) => {
          category = COALESCE(?, category),
          sound_enabled = COALESCE(?, sound_enabled),
          cover_image_url = COALESCE(?, cover_image_url),
+         project_phone = COALESCE(?, project_phone),
+         project_whatsapp = COALESCE(?, project_whatsapp),
+         project_location = COALESCE(?, project_location),
+         project_address = COALESCE(?, project_address),
+         project_developer = COALESCE(?, project_developer),
+         project_website = COALESCE(?, project_website),
          updated_at = datetime('now')
      WHERE id = ?`,
   )
@@ -153,6 +165,12 @@ publications.put('/:id', async (c) => {
       body.category ?? null,
       soundValue,
       body.cover_image_url ?? null,
+      body.project_phone ?? null,
+      body.project_whatsapp ?? null,
+      body.project_location ?? null,
+      body.project_address ?? null,
+      body.project_developer ?? null,
+      body.project_website ?? null,
       c.req.param('id'),
     )
     .run()
