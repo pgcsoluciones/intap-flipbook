@@ -55,6 +55,9 @@ export const api = {
 
   publications: {
     list: () => request<{ success: true; data: any[] }>('/api/publications'),
+    trash: () => request<{ success: true; data: any[] }>('/api/publications/trash'),
+    restore: (id: string) => request<{ success: true; data: any }>(`/api/publications/${id}/restore`, { method: 'PATCH' }),
+    permanentDelete: (id: string) => request<{ success: true; data: any }>(`/api/publications/${id}/permanent`, { method: 'DELETE' }),
     get: (id: string) => request<{ success: true; data: any }>(`/api/publications/${id}`),
     create: (body: { title: string; description?: string; category?: string }) =>
       request<{ success: true; data: any }>('/api/publications', { method: 'POST', body: JSON.stringify(body) }),

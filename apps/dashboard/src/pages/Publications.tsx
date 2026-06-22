@@ -200,17 +200,27 @@ export default function Publications() {
   async function handleDelete(id: string) {
     if (!confirm('¿Mover a papelera?')) return
     await api.publications.delete(id)
-    const pub = all.find((p) => p.id === id)
     setAll((prev) => prev.filter((p) => p.id !== id))
-    if (pub) setTrash((prev) => [{ ...pub, deleted: true }, ...prev])
+    // Si la pestaña de papelera está abierta, la refrescamos desde el servidor
+    if (tab === 'trash') loadTrash()
+  }
+
+  async function loadTrash() {
+    const res = await api.publications.trash()
+    setTrash(res.data ?? [])
   }
 
   async function handleRestore(id: string) {
+    await api.publications.restore(id)
     setTrash((prev) => prev.filter((p) => p.id !== id))
+    // Recarga la lista de activas para que aparezca la publicación restaurada
+    const res = await api.publications.list()
+    setAll(res.data ?? [])
   }
 
   async function handlePermanentDelete(id: string) {
-    if (!confirm('¿Eliminar definitivamente? Esta acción no se puede deshacer.')) return
+    if (!confirm('¿Eliminar definitivamente? Esta acción es permanente e irreversible — no podrás recuperar este flipbook.')) return
+    await api.publications.permanentDelete(id)
     setTrash((prev) => prev.filter((p) => p.id !== id))
   }
 
@@ -523,7 +533,7 @@ export default function Publications() {
         <button style={{ ...s.tabBtn, ...(tab === 'active' ? s.tabActive : {}) }} onClick={() => setTab('active')}>
           Mis archivos ({all.length})
         </button>
-        <button style={{ ...s.tabBtn, ...(tab === 'trash' ? s.tabActive : {}) }} onClick={() => setTab('trash')}>
+        <button style={{ ...s.tabBtn, ...(tab === 'trash' ? s.tabActive : {}) }} onClick={() => { setTab('trash'); loadTrash() }}>
           Papelera ({trash.length})
         </button>
       </div>

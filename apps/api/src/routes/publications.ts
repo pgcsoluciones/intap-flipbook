@@ -11,16 +11,32 @@ const publications = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 publications.use('*', jwtMiddleware)
 
-// GET /api/publications
+// GET /api/publications — solo las activas (deleted_at IS NULL)
 publications.get('/', async (c) => {
   const userId = c.get('user').sub
   const { results } = await c.env.DB.prepare(
     `SELECT p.*, COUNT(pg.id) as page_count
      FROM publications p
      LEFT JOIN pages pg ON pg.publication_id = p.id
-     WHERE p.user_id = ?
+     WHERE p.user_id = ? AND p.deleted_at IS NULL
      GROUP BY p.id
      ORDER BY p.updated_at DESC`,
+  )
+    .bind(userId)
+    .all()
+  return c.json({ success: true, data: results })
+})
+
+// GET /api/publications/trash — publicaciones en papelera del tenant
+publications.get('/trash', async (c) => {
+  const userId = c.get('user').sub
+  const { results } = await c.env.DB.prepare(
+    `SELECT p.*, COUNT(pg.id) as page_count
+     FROM publications p
+     LEFT JOIN pages pg ON pg.publication_id = p.id
+     WHERE p.user_id = ? AND p.deleted_at IS NOT NULL
+     GROUP BY p.id
+     ORDER BY p.deleted_at DESC`,
   )
     .bind(userId)
     .all()
@@ -147,16 +163,58 @@ publications.put('/:id', async (c) => {
   return c.json({ success: true, data: updated, ...(soundWarning ? { warning: soundWarning } : {}) })
 })
 
-// DELETE /api/publications/:id
+// DELETE /api/publications/:id — soft delete: mueve a papelera (no borra datos)
 publications.delete('/:id', async (c) => {
   const userId = c.get('user').sub
-  const pub = await c.env.DB.prepare('SELECT id FROM publications WHERE id = ? AND user_id = ?')
+  const pub = await c.env.DB.prepare(
+    'SELECT id FROM publications WHERE id = ? AND user_id = ? AND deleted_at IS NULL',
+  )
     .bind(c.req.param('id'), userId)
     .first()
   if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
 
-  await c.env.DB.prepare('DELETE FROM pages WHERE publication_id = ?').bind(c.req.param('id')).run()
-  await c.env.DB.prepare('DELETE FROM publications WHERE id = ?').bind(c.req.param('id')).run()
+  await c.env.DB.prepare(
+    `UPDATE publications SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
+  )
+    .bind(c.req.param('id'))
+    .run()
+
+  return c.json({ success: true, data: { trashed: true } })
+})
+
+// PATCH /api/publications/:id/restore — recupera de la papelera
+publications.patch('/:id/restore', async (c) => {
+  const userId = c.get('user').sub
+  const pub = await c.env.DB.prepare(
+    'SELECT id FROM publications WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL',
+  )
+    .bind(c.req.param('id'), userId)
+    .first()
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada en la papelera' }, 404)
+
+  await c.env.DB.prepare(
+    `UPDATE publications SET deleted_at = NULL, updated_at = datetime('now') WHERE id = ?`,
+  )
+    .bind(c.req.param('id'))
+    .run()
+
+  return c.json({ success: true, data: { restored: true } })
+})
+
+// DELETE /api/publications/:id/permanent — borrado físico definitivo e irreversible
+publications.delete('/:id/permanent', async (c) => {
+  const userId = c.get('user').sub
+  const pub = await c.env.DB.prepare(
+    'SELECT id FROM publications WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL',
+  )
+    .bind(c.req.param('id'), userId)
+    .first()
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada en la papelera' }, 404)
+
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM pages WHERE publication_id = ?').bind(c.req.param('id')),
+    c.env.DB.prepare('DELETE FROM publications WHERE id = ?').bind(c.req.param('id')),
+  ])
 
   return c.json({ success: true, data: { deleted: true } })
 })
