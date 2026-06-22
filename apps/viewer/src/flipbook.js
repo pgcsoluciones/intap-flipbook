@@ -103,12 +103,13 @@ async function init() {
   const portrait = window.innerWidth < 700
   let pageWidth
   if (portrait) {
-    pageWidth = Math.min(390, window.innerWidth - 8)
+    // Móvil: usar todo el ancho disponible menos margen mínimo
+    pageWidth = Math.min(420, window.innerWidth - 4)
   } else {
-    // En escritorio: llenar lo máximo posible sin que la altura desborde el viewport
-    const availW = Math.floor(window.innerWidth * 0.95 / 2)  // 95% del ancho, dividido por 2 hojas
-    const availH = window.innerHeight - 64  // reservar solo lo justo para controles
-    const byW = Math.min(1100, availW)       // tope más amplio (antes 900)
+    // Escritorio: llenar lo máximo posible sin que la altura desborde el viewport
+    const availW = Math.floor(window.innerWidth * 0.95 / 2)
+    const availH = window.innerHeight - 64
+    const byW = Math.min(1100, availW)
     const byH = Math.floor(availH / 1.414)
     pageWidth = Math.min(byW, byH)
   }
@@ -158,6 +159,10 @@ async function init() {
 
   await waitForImages(container)
 
+  // Dar dimensiones explícitas al contenedor para que size:'stretch' sepa hasta dónde crecer
+  container.style.width  = (portrait ? pageWidth : pageWidth * 2) + 'px'
+  container.style.height = pageHeight + 'px'
+
   const pageFlip = new St.PageFlip(container, {
     width: pageWidth,
     height: pageHeight,
@@ -167,8 +172,7 @@ async function init() {
     flippingTime: 900,
     mobileScrollSupport: false,
     usePortrait: portrait,
-    size: 'fixed',
-    autoSize: false,
+    size: 'stretch',
   })
 
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
@@ -1063,3 +1067,11 @@ async function init() {
 }
 
 init().catch((err) => console.error('Flipbook init error:', err))
+
+// Al rotar el dispositivo o redimensionar la ventana, recargar para recalcular dimensiones.
+// Se espera 400ms para que el viewport termine de acomodarse antes de recargar.
+let resizeTimer
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => location.reload(), 400)
+})
