@@ -2,7 +2,7 @@
 
 **Repo:** `pgcsoluciones/intap-flipbook` (branch `claude/kind-shannon-udb4qo`)
 **Fecha de planeación:** Junio 2026
-**Estado:** Documento de propuesta — nada de esto está codificado todavía. Es la fuente de verdad para redactar tareas/prompts a Claude Code, fase por fase, con confirmación entre cada una.
+**Última actualización:** Junio 2026
 
 ---
 
@@ -24,7 +24,7 @@
 - Widgets de canvas: `map`, `video`, `audio`, `whatsapp`, `qr`, `table`, `like`, `download`, `embed`, `contact`, `quiz`, `popup_banner` (trigger por tiempo)
 - Slug de tenant (`users.slug`) y convención de URL `{slug-tenant}/{slug-flipbook}` (documentada, no implementada como listado público)
 - Patrón de aprobación reutilizable: `plan_requests` (status pending/approved/rejected + resolved_by/resolved_at)
-- Sistema de papelera/eliminación **(con bug crítico, ver sección 5)**
+- **Papelera/eliminación — BUG K RESUELTO ✅** (ver sección 5)
 
 ### No existe — confirmado por auditoría de código
 - Galería/modal de imágenes y de videos (ver más imágenes/videos en una página)
@@ -32,9 +32,9 @@
 - Categoría/plantilla "Inmobiliaria/Construcción"
 - Entidad "Unidad" estructurada (disponible/reservada/vendida, precio, m²)
 - Carga semi-automatizada de contenido por lote
-- Logo/branding propio del tenant (solo existe el logo de marca de agua de Intap)
-- Datos de contacto empresarial por defecto a nivel de perfil de tenant
-- Pre-carga de datos de proyecto al crear un flipbook
+- Logo/branding propio del tenant — **EN PROGRESO (Punto B)**
+- Datos de contacto empresarial por defecto a nivel de perfil de tenant — **EN PROGRESO (Punto D)**
+- Pre-carga de datos de proyecto al crear un flipbook — **EN PROGRESO (Punto C)**
 - Multiusuario / permisos por sub-usuario
 - Feed o galería pública de flipbooks por tenant
 - Plantillas creadas por el propio tenant (hoy solo las crea admin de Intap)
@@ -48,73 +48,123 @@
 
 ## 2. Modelo de datos (Fase 2)
 
-| Cambio | Detalle | Alcance |
-|---|---|---|
-| `users` +columnas | `logo_url`, `contact_phone`, `contact_whatsapp`, `contact_email`, `contact_address` | Global |
-| `publications` +columnas | `project_phone`, `project_whatsapp`, `project_location`, `project_address` (pre-cargan widgets al crear; si vacíos, usan los del perfil del tenant) | Global |
-| Tabla nueva `units` | `id`, `publication_id`, `page_id`, `name`, `status` (available/reserved/sold), `price`, `area_m2`, `bedrooms`, `description` | Específico de vertical |
-| Acción `popup_banner` | Sumarla al menú de acciones de zona clicable (ya existe como widget de delay; ahora también disponible al hacer clic en una zona) — opcional `unit_id` para vincular a una unidad | Global |
-| Acción `popup_audio` | Nueva, mismo patrón que `popup_video`/`popup_image` | Global |
-| Acción `gallery_images` | Modal/carrusel de imágenes — incluye campo de portada de la galería | Global |
-| Acción `gallery_videos` | Modal/carrusel de varios videos (distinto de `popup_video`, que es uno solo) | Global |
+| Cambio | Detalle | Alcance | Estado |
+|---|---|---|---|
+| `users` +columnas | `logo_url`, `contact_phone`, `contact_whatsapp`, `contact_email`, `contact_address` | Global | 🔄 migration_branding.sql creada, **pendiente ejecutar en D1** |
+| `publications` +columnas | `project_phone`, `project_whatsapp`, `project_location`, `project_address` | Global | Pendiente |
+| Tabla nueva `units` | `id`, `publication_id`, `page_id`, `name`, `status` (available/reserved/sold), `price`, `area_m2`, `bedrooms`, `description` | Vertical | Pendiente |
+| Acción `popup_banner` | Sumarla al menú de acciones de zona clicable (ya existe como widget de delay) | Global | Pendiente |
+| Acción `popup_audio` | Nueva, mismo patrón que `popup_video`/`popup_image` | Global | Pendiente |
+| Acción `gallery_images` | Modal/carrusel de imágenes — incluye campo de portada de la galería | Global | Pendiente |
+| Acción `gallery_videos` | Modal/carrusel de varios videos | Global | Pendiente |
 
 ---
 
 ## 3. Plantilla vertical + carga de contenido (Fase 3)
 
 1. **Categoría + plantilla "Inmobiliaria/Construcción"**: páginas tipo predefinidas (portada de proyecto, ubicación/mapa, fachada, plantas/unidades, amenidades, financiamiento, contacto final)
-2. **Modelo CMS-céntrico** (en vez de solo carga inicial por lote): la plantilla define zonas/campos editables (imágenes, galerías, datos de descripción/precio) en un panel central; al cargar/actualizar datos ahí, las páginas del flip se actualizan automáticamente — sin edición manual página por página
-3. **Categorización de imágenes al subir**: cada imagen se etiqueta (fachada/planta/amenidad/unidad/ubicación) y, si pertenece a una galería, se marca cuál es la portada
-4. **Auto-colocación por reglas** (v1 sin IA): cada categoría de imagen va a su página tipo correspondiente; si sobran imágenes de una categoría, se agregan páginas adicionales del mismo tipo automáticamente
-5. **Revisión final antes de publicar**: vista de borrador donde el tenant ajusta lo que la auto-colocación dejó listo (80-90% del trabajo ya hecho)
+2. **Modelo CMS-céntrico**: la plantilla define zonas/campos editables en un panel central; al cargar/actualizar datos ahí, las páginas del flip se actualizan automáticamente
+3. **Categorización de imágenes al subir**: cada imagen se etiqueta (fachada/planta/amenidad/unidad/ubicación) y se marca cuál es la portada de galería
+4. **Auto-colocación por reglas** (v1 sin IA): cada categoría de imagen va a su página tipo correspondiente
+5. **Revisión final antes de publicar**: vista de borrador donde el tenant ajusta lo que la auto-colocación dejó listo
 
 ---
 
-## 4. Funcionalidades globales nuevas (catálogo completo)
+## 4. Funcionalidades globales nuevas
 
-| # | Característica | Mecanismo propuesto | Prioridad sugerida |
+| # | Característica | Mecanismo propuesto | Estado |
 |---|---|---|---|
-| A | Acción `zone_click` para pop-ups | *(resuelto: se reutiliza el sistema de zona clicable existente, ver sección 2)* | — |
-| B | Logo/branding del tenant | Campo `logo_url` en `users`, insertable en portada/contacto del flip | Vertical / alta |
-| C | Pre-carga de datos al crear proyecto | Formulario inicial → pre-llena widgets whatsapp/map/contact | Vertical / alta |
-| D | Contacto empresarial por defecto en perfil | Fallback automático si el proyecto no define los suyos | Vertical / alta |
-| E | Multiusuario + permisos por plan | Tabla de miembros de equipo + roles, límite según plan | **Backlog** |
-| F | Feed/galería pública de flipbooks por tenant | Nueva ruta pública en el viewer, listando por `users.slug` | Media |
-| G | Tenant crea sus propias plantillas | Estado `pending` → aprobación admin obligatoria (mismo patrón que `plan_requests`) antes de publicarse en catálogo | Media |
-| H | Portada por galería | Campo dentro del config JSON de cada galería | Junto con A/galerías |
-| I | Edición CMS-céntrica | Ver sección 3, punto 2 | Vertical / alta |
-| J | Moderación de contenido público | Reactivo: botón "reportar" + cola de revisión admin + `publications.status = 'suspended'` | Media |
-| — | IA de moderación automática al subir imagen | **Backlog** — capa futura sobre J | Backlog |
-| K | **Bug crítico de eliminación** | Ver sección 5 — corregir antes de cualquier feature nueva | **Urgente** |
-| L | Estadísticas individuales por flipbook (clic en listado → abre vista dedicada) | Ya existe filtro `selectedPub`; falta confirmar/completar la vista dedicada | Media |
-| M | Estadísticas con metadata completa (páginas, tiempo, clics, dispositivo, geolocalización) | Geolocalización vía IP usando `request.cf` de Cloudflare (sin pedir permiso al visitante) | Media |
-| N | **Bug: flip perdió flexibilidad** | Causa probable: `size: 'fixed'` en config de PageFlip → cambiar a `'stretch'` | **Alta** (afecta mobile-first) |
-| O | Backup/exportación de datos del tenant | **Admin-only primero** (genera backup manualmente desde panel admin); ruta de autoservicio queda planteada para después, reusando la misma lógica de empaquetado | Media |
+| A | Acción `zone_click` para pop-ups | Se reutiliza el sistema de zona clicable existente | — |
+| **B** | **Logo/branding del tenant** | Campo `logo_url` en `users`, editable en Settings/Perfil | 🔄 En progreso |
+| **C** | **Pre-carga de datos al crear proyecto** | Aviso informativo en modal de creación; CMS-céntrico completo es Fase 3 | 🔄 En progreso |
+| **D** | **Contacto empresarial por defecto en perfil** | Campos `contact_*` en `users`, editable en Settings/Perfil | 🔄 En progreso |
+| E | Multiusuario + permisos por plan | Tabla de miembros de equipo + roles, límite según plan | Backlog |
+| F | Feed/galería pública de flipbooks por tenant | Nueva ruta pública en el viewer, listando por `users.slug` | Planificado |
+| G | Tenant crea sus propias plantillas | Estado `pending` → aprobación admin obligatoria (mismo patrón que `plan_requests`) | Planificado |
+| H | Portada por galería | Campo dentro del config JSON de cada galería | Junto con galerías |
+| I | Edición CMS-céntrica | Ver sección 3, punto 2 | Fase 3 |
+| J | Moderación de contenido público | Botón "reportar" + cola de revisión admin + `publications.status = 'suspended'` | Planificado |
+| **K** | **Bug crítico de eliminación** | **✅ RESUELTO** — ver sección 5 | ✅ Listo |
+| **L** | **Estadísticas individuales por flipbook** | Vista dedicada al hacer clic en una pub del listado | 🔄 En progreso |
+| M | Estadísticas con metadata completa (geolocalización) | Geoloc vía `request.cf` de Cloudflare (sin pedir permiso al visitante) | Planificado |
+| **N** | **Bug: flip perdió flexibilidad mobile** | **✅ RESUELTO** — `size: 'stretch'` + resize handler | ✅ Listo |
+| O | Backup/exportación de datos del tenant | Admin-only primero; autoservicio después | Backlog |
 
 ---
 
-## 5. Bug crítico — Eliminación de flipbooks (Punto K)
+## 5. Bug K — Eliminación de flipbooks ✅ RESUELTO
 
-**Diagnóstico confirmado en código:**
+**Diagnóstico original:**
+1. El botón "eliminar" preguntaba "¿Mover a papelera?" pero borraba permanentemente
+2. La "papelera" era solo estado local en memoria — no persistía ni usaba el servidor
+3. "Restaurar" y "Eliminar definitivamente" eran decorativos
 
-1. El botón "eliminar" en el listado pregunta "¿Mover a papelera?"
-2. Al confirmar, el frontend llama al endpoint real `DELETE /api/publications/:id`, que **borra permanentemente** de la base de datos (páginas + publicación) — sin posibilidad de recuperación
-3. El frontend solo **simula** una papelera guardando una copia en memoria (`setTrash`) — no en el servidor
-4. "Restaurar" y "Eliminar definitivamente" en la papelera **no llaman a ningún endpoint** — son decorativos; el contenido ya fue destruido en el paso 2
+**Solución implementada (commits `e21dee5` → `63a0757`):**
+- `DELETE /api/publications/:id` → **soft delete real** (`deleted_at = datetime('now')`)
+- `GET /api/publications/trash` → devuelve publicaciones con `deleted_at IS NOT NULL`
+- `PATCH /api/publications/:id/restore` → limpia `deleted_at`, publicación vuelve activa
+- `DELETE /api/publications/:id/permanent` → borra en cascada respetando FK de D1:
+  ```
+  page_events → publication_views → form_responses → pages → publications
+  ```
+- Causa raíz del error 500: D1 tiene `FOREIGN KEY enforcement` activo — hay que borrar las tablas hijas antes que la publicación
 
-**Riesgo:** cualquier tenant que use "eliminar" pensando que es reversible pierde su flipbook (y sus imágenes referenciadas) para siempre, sin aviso real de que es definitivo.
-
-**Corrección necesaria:**
-- Backend: implementar borrado suave real (`status = 'trashed'` + `deleted_at` en `publications`), el `DELETE` físico solo se ejecuta al confirmar "eliminar definitivamente" desde la papelera
-- Conectar `handleRestore` y `handlePermanentDelete` a endpoints reales
-- Revisar limpieza de imágenes huérfanas en R2 al eliminar definitivamente
-
-**Prioridad: corregir antes de construir cualquier feature nueva de esta lista.**
+**Migración:** `migration_softdelete.sql` ✅ ejecutada en D1 remoto
 
 ---
 
-## 6. Próximos pasos
+## 6. Bug N — Flexibilidad mobile ✅ RESUELTO
 
-1. Confirmar este documento como fuente de verdad
-2. Redactar la Fase 4 (interactividad: galerías, audio emergente — ya con base en lo que existe)
-3. Convertir cada bloque aprobado en tareas/prompts concretos para Claude Code, respetando el flujo de trabajo ya establecido en el `CLAUDE.md` del repo: modo aprendiz, español, máximo 4 pasos por fase, confirmación antes de avanzar, sin deploys sin aprobación explícita
+**Diagnóstico:** `size: 'fixed'` en PageFlip calculaba dimensiones una sola vez al cargar. Al rotar el dispositivo o en viewports pequeños, el flipbook desbordaba o quedaba mal dimensionado.
+
+**Solución implementada (commit `5398d9f`):**
+- `size: 'fixed'` → `size: 'stretch'`: PageFlip rellena el contenedor dinámicamente
+- Eliminado `autoSize: false`
+- Contenedor recibe dimensiones explícitas via JS para que stretch sepa hasta dónde crecer
+- Ancho móvil máximo: 420px (antes 390px fijo)
+- `window.addEventListener('resize', ...)` recarga el viewer 400ms después de rotar
+
+---
+
+## 7. Mejoras de performance implementadas
+
+- **Scripts CDN con `defer`** en viewer e `index.html` del dashboard → no bloquean el render inicial
+- **Lazy loading** en imágenes del viewer a partir de la página 3 (`loading="lazy"`)
+- **PDF → JPEG** calidad 0.82 en lugar de PNG sin compresión (archivos ~60% más pequeños)
+- **7 índices D1** (`migration_perf.sql` ✅ ejecutada): `form_responses`, `publication_views`, `publications (folder_id, status)`, `payments`, `notifications`, `page_events`
+
+---
+
+## 8. Próximos pasos en orden de prioridad
+
+1. ✅ ~~Bug K: papelera real~~ — resuelto
+2. ✅ ~~Bug N: flexibilidad mobile~~ — resuelto
+3. 🔄 **Puntos B/C/D**: logo + contacto en perfil de tenant (agente en progreso)
+4. 🔄 **Punto L**: estadísticas individuales por flipbook (agente en progreso)
+5. **Galerías de imágenes/videos** como acción de zona clicable (Punto A/H)
+6. **Portada designada** — galería de portadas por flipbook
+7. **Plantilla vertical inmobiliaria** (Fase 3)
+8. **Feed público** de flipbooks por tenant (Punto F)
+
+---
+
+## 9. Instrucciones para Juan — acciones pendientes manuales
+
+```bash
+# 1. Migración branding (logo_url + campos de contacto en users)
+cd ~/intap-flipbook/apps/api
+git pull origin claude/kind-shannon-udb4qo
+npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_branding.sql --remote
+
+# 2. Migración page_events (analítica avanzada — tabla para estadísticas por flipbook)
+npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase14.sql --remote
+
+# 3. Deploy del Worker (siempre tras cambios en apps/api/)
+npx wrangler deploy
+
+# 4. Deploy del Viewer (tras cambios en apps/viewer/)
+cd ~/intap-flipbook/apps/viewer
+npx wrangler pages deploy src --project-name=intap-flipbook-viewer
+```
+
+> El **Dashboard se despliega automáticamente** al hacer push a `claude/kind-shannon-udb4qo` — no requiere acción manual.
