@@ -187,10 +187,11 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
   const { results: publications } = await c.env.DB.prepare(
     `SELECT p.id, p.title, p.status,
             p.views_count as views,
+            p.cover_image_url as cover_url,
             COUNT(pg.id) as page_count
      FROM publications p
      LEFT JOIN pages pg ON pg.publication_id = p.id
-     WHERE p.user_id = ?
+     WHERE p.user_id = ? AND p.deleted_at IS NULL
      GROUP BY p.id
      ORDER BY p.views_count DESC`,
   )
@@ -389,6 +390,35 @@ auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
      ORDER BY day ASC`
   ).bind(pubId).all()
 
+  // Top países (desde publication_views)
+  const { results: countryBreakdown } = await c.env.DB.prepare(
+    `SELECT country, COUNT(*) as count
+     FROM publication_views
+     WHERE publication_id = ? AND country IS NOT NULL
+     GROUP BY country
+     ORDER BY count DESC
+     LIMIT 10`
+  ).bind(pubId).all()
+
+  // Top links clickeados con URL destino
+  const { results: topLinks } = await c.env.DB.prepare(
+    `SELECT action_type, label, url_destination, COUNT(*) as count
+     FROM page_events
+     WHERE publication_id = ? AND type = 'click'
+     GROUP BY action_type, label, url_destination
+     ORDER BY count DESC
+     LIMIT 20`
+  ).bind(pubId).all()
+
+  // Páginas más visitadas (por cantidad de eventos page_time)
+  const { results: pageVisits } = await c.env.DB.prepare(
+    `SELECT page_number, COUNT(*) as visits, AVG(duration_ms) as avg_ms
+     FROM page_events
+     WHERE publication_id = ? AND type = 'page_time'
+     GROUP BY page_number
+     ORDER BY visits DESC`
+  ).bind(pubId).all()
+
   return c.json({ success: true, data: {
     publication: pub,
     total_views: pub.views_count ?? 0,
@@ -397,6 +427,9 @@ auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
     page_times: pageTimes,
     button_clicks: buttonClicks,
     views_by_day: viewsByDay,
+    country_breakdown: countryBreakdown,
+    top_links: topLinks,
+    page_visits: pageVisits,
   }})
 })
 

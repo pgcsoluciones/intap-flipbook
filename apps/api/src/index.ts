@@ -283,6 +283,14 @@ app.get('/api/plan-requests', jwtMiddleware, async (c) => {
   return c.json({ success: true, data: results })
 })
 
+// Detecta el tipo de dispositivo desde el User-Agent HTTP
+function detectDevice(ua: string | undefined): string {
+  if (!ua) return 'desktop'
+  if (/iPad|Android(?!.*Mobile)|Tablet/i.test(ua)) return 'tablet'
+  if (/Mobi|Android.*Mobile|iPhone/i.test(ua)) return 'mobile'
+  return 'desktop'
+}
+
 // Registra una vista de publicación — público (sin auth), fire-and-forget
 app.post('/view/:slug/track', async (c) => {
   const slug = c.req.param('slug')
@@ -291,12 +299,17 @@ app.post('/view/:slug/track', async (c) => {
   ).bind(slug).first<{ id: string }>()
   if (!pub) return c.json({ success: false }, 404)
 
-  const device = c.req.header('user-agent')?.includes('Mobi') ? 'mobile' : 'desktop'
+  const device = detectDevice(c.req.header('user-agent'))
+  const cf = (c.req.raw as any).cf ?? {}
+  const country = cf.country ?? null
+  const city = cf.city ?? null
+  const referrer = c.req.header('referer') ?? c.req.header('referrer') ?? null
+
   try {
     await Promise.all([
       c.env.DB.prepare(
-        `INSERT INTO publication_views (publication_id, device) VALUES (?, ?)`
-      ).bind(pub.id, device).run(),
+        `INSERT INTO publication_views (publication_id, device, country, city, referrer) VALUES (?, ?, ?, ?, ?)`
+      ).bind(pub.id, device, country, city, referrer).run(),
       c.env.DB.prepare(
         `UPDATE publications SET views_count = views_count + 1 WHERE id = ?`
       ).bind(pub.id).run(),
@@ -322,13 +335,18 @@ app.post('/view/:slug/event', async (c) => {
   const label = typeof body.label === 'string' ? body.label.slice(0, 120) : null
   const actionType = typeof body.action_type === 'string' ? body.action_type.slice(0, 40) : null
   const durationMs = Number.isFinite(Number(body.duration_ms)) ? Math.max(0, Math.round(Number(body.duration_ms))) : null
-  const device = c.req.header('user-agent')?.includes('Mobi') ? 'mobile' : 'desktop'
+  const device = detectDevice(c.req.header('user-agent'))
+  const cf = (c.req.raw as any).cf ?? {}
+  const country = cf.country ?? null
+  const city = cf.city ?? null
+  const referrer = c.req.header('referer') ?? c.req.header('referrer') ?? null
+  const urlDestination = typeof body.url_destination === 'string' ? body.url_destination.slice(0, 500) : null
 
   try {
     await c.env.DB.prepare(
-      `INSERT INTO page_events (publication_id, type, page_number, label, action_type, duration_ms, device)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).bind(pub.id, type, pageNumber, label, actionType, durationMs, device).run()
+      `INSERT INTO page_events (publication_id, type, page_number, label, action_type, duration_ms, device, country, city, referrer, url_destination)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(pub.id, type, pageNumber, label, actionType, durationMs, device, country, city, referrer, urlDestination).run()
   } catch (_) {}
 
   return c.json({ success: true }, 201)

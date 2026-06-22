@@ -54,6 +54,9 @@ type PubDetail = {
   page_times: { page_number: number; visits: number; avg_ms: number }[]
   button_clicks: { label: string; action_type: string; page_number: number; clicks: number }[]
   views_by_day: { day: string; views: number }[]
+  country_breakdown?: { country: string; count: number }[]
+  top_links?: { action_type: string; label: string | null; url_destination: string | null; count: number }[]
+  page_visits?: { page_number: number; visits: number; avg_ms: number }[]
 }
 
 function fmtDuration(ms: number) {
@@ -75,10 +78,38 @@ function fmtDateTime(dateStr: string) {
   return new Date(dateStr).toLocaleString('es-AR')
 }
 
+// Convierte un código ISO 3166-1 alpha-2 (ej: "AR") en emoji de bandera
+function countryFlag(code: string): string {
+  if (!code || code.length !== 2) return ''
+  try {
+    return String.fromCodePoint(...[...code.toUpperCase()].map((c) => 0x1F1E6 + c.charCodeAt(0) - 65))
+  } catch {
+    return ''
+  }
+}
+
 // Donut SVG nativo para breakdown de dispositivos.
 // r=36 → circunferencia = 2 * π * 36 ≈ 226.19
-function DeviceDonut({ views }: { views: { device: string }[] }) {
-  const total = views.length
+function DeviceDonut({ views, breakdown }: { views: { device: string }[]; breakdown?: { device: string; count: number }[] }) {
+  // Si la API devuelve device_breakdown ya agregado, lo usamos directamente
+  let counts: { mobile: number; desktop: number; tablet: number }
+  if (breakdown && breakdown.length > 0) {
+    counts = { mobile: 0, desktop: 0, tablet: 0 }
+    for (const b of breakdown) {
+      const d = b.device as keyof typeof counts
+      if (d in counts) counts[d] += b.count
+      else counts.desktop += b.count
+    }
+  } else {
+    counts = { mobile: 0, desktop: 0, tablet: 0 }
+    for (const v of views) {
+      const d = v.device as keyof typeof counts
+      if (d in counts) counts[d]++
+      else counts.desktop++
+    }
+  }
+
+  const total = counts.mobile + counts.desktop + counts.tablet
   if (total === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '1rem' }}>
@@ -88,13 +119,6 @@ function DeviceDonut({ views }: { views: { device: string }[] }) {
         <span style={{ fontSize: 12, color: '#9ca3af' }}>Sin datos</span>
       </div>
     )
-  }
-
-  const counts = { mobile: 0, desktop: 0, tablet: 0 }
-  for (const v of views) {
-    const d = v.device as keyof typeof counts
-    if (d in counts) counts[d]++
-    else counts.desktop++
   }
 
   const C = 226.19
@@ -271,7 +295,7 @@ function PubDetailPanel({
 
           <div style={{ ...s.card, minWidth: 180 }}>
             <h2 style={s.cardTitle}>Dispositivos</h2>
-            <DeviceDonut views={recentViews} />
+            <DeviceDonut views={recentViews} breakdown={detail.device_breakdown} />
           </div>
         </div>
       )}
@@ -332,6 +356,95 @@ function PubDetailPanel({
               )
             })}
           </div>
+        </div>
+      )}
+
+      {/* Páginas más visitadas */}
+      {(detail.page_visits ?? []).length > 0 && (
+        <div style={s.card}>
+          <h2 style={s.cardTitle}>Paginas mas visitadas</h2>
+          <table style={s.table}>
+            <thead>
+              <tr>
+                {['Pagina', 'Visitas', 'Tiempo promedio'].map((h) => (
+                  <th key={h} style={s.th}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(detail.page_visits ?? []).map((pv) => (
+                <tr key={pv.page_number} style={s.tr}>
+                  <td style={s.td}>Pagina {pv.page_number}</td>
+                  <td style={s.td}>{pv.visits}</td>
+                  <td style={{ ...s.td, color: '#6b7280' }}>{fmtDuration(pv.avg_ms)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Links mas clickeados con URL destino */}
+      {(detail.top_links ?? []).length > 0 && (
+        <div style={s.card}>
+          <h2 style={s.cardTitle}>Links mas clickeados</h2>
+          <table style={s.table}>
+            <thead>
+              <tr>
+                {['Tipo', 'Etiqueta', 'URL destino', 'Clics'].map((h) => (
+                  <th key={h} style={s.th}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(detail.top_links ?? []).map((link, i) => {
+                const dest = link.url_destination ?? ''
+                const destTrunc = dest.length > 40 ? dest.slice(0, 40) + '…' : dest
+                const kind = ACTION_LABEL[link.action_type] ?? link.action_type
+                return (
+                  <tr key={i} style={s.tr}>
+                    <td style={s.td}>{kind}</td>
+                    <td style={{ ...s.td, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {link.label ?? '—'}
+                    </td>
+                    <td style={{ ...s.td, color: '#6b7280', maxWidth: 200 }}>
+                      <span title={dest}>{destTrunc || '—'}</span>
+                    </td>
+                    <td style={{ ...s.td, fontWeight: 700 }}>{link.count}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Top Paises */}
+      {(detail.country_breakdown ?? []).length > 0 && (
+        <div style={s.card}>
+          <h2 style={s.cardTitle}>Top Paises</h2>
+          {(() => {
+            const items = detail.country_breakdown ?? []
+            const maxCount = Math.max(...items.map((c) => c.count), 1)
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {items.map((item) => {
+                  const pct = Math.round((item.count / maxCount) * 100)
+                  const flag = countryFlag(item.country)
+                  return (
+                    <div key={item.country} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 20, width: 28, textAlign: 'center', flexShrink: 0 }}>{flag}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: '#374151', width: 36, flexShrink: 0 }}>{item.country}</span>
+                      <div style={{ flex: 1, height: 10, background: '#f3f4f6', borderRadius: 6, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${pct}%`, background: '#4f46e5', borderRadius: 6, transition: 'width .4s' }} />
+                      </div>
+                      <span style={{ fontSize: 12, color: '#6b7280', width: 36, textAlign: 'right', flexShrink: 0 }}>{item.count}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -482,8 +595,8 @@ export default function TenantStats() {
                         >
                           {/* Miniatura / placeholder */}
                           <div style={s.pubThumb}>
-                            {pub.cover_url ? (
-                              <img src={pub.cover_url} alt={pub.title} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
+                            {(pub.cover_url ?? (pub as any).cover_image_url) ? (
+                              <img src={pub.cover_url ?? (pub as any).cover_image_url} alt={pub.title} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
                             ) : (
                               <span style={{ fontSize: 22 }}>📖</span>
                             )}

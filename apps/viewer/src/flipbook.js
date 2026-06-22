@@ -228,12 +228,15 @@ async function init() {
 
   function runAction(a) {
     if (!a || !a.type) return
+    // Extraer la URL destino según el tipo de acción (para analítica)
+    const urlDest = a.url || a.phone || a.email || a.whatsapp || null
     // Analítica: registrar el clic en este botón/enlace
     sendEvent({
       type: 'click',
       page_number: trackedPage,
       action_type: a.type,
       label: a.label || a.text || a.url || a.phone || a.email || a.type,
+      url_destination: urlDest,
     })
     switch (a.type) {
       case 'link':
