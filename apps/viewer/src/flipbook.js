@@ -65,8 +65,6 @@ function saveResponse(kind, payload, widgetKey) {
 async function init() {
   const res = await fetch(`${API_BASE}/view/${slug}`)
   if (!res.ok) {
-    const fc = document.getElementById('flipbook-container')
-    if (fc) fc.style.opacity = '1'
     document.body.innerHTML = `<p style="color:#fff;text-align:center;margin-top:2rem">Publication not found.</p>`
     return
   }
@@ -185,7 +183,10 @@ async function init() {
     flippingTime: 900,
     mobileScrollSupport: false,
     usePortrait: portrait,
-    size: 'stretch',
+    // En móvil portrait: 'fixed' con dimensiones explícitas — evita el bug de StPageFlip v2.0.7
+    // donde size:'stretch' ignora usePortrait y muestra dos páginas aunque el ancho sea de una.
+    // En escritorio: 'stretch' para llenar el container doble calculado en JS.
+    size: portrait ? 'fixed' : 'stretch',
   })
 
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
@@ -1069,12 +1070,6 @@ async function init() {
 
   // Construye overlays para cada página real
   pageDivs.forEach((div, i) => buildOverlay(div, data.pages[i] && data.pages[i].canvas_json))
-
-  // Revelar el flipbook con fade-in una vez que Fabric.js tuvo tiempo de pintar el overlay inicial
-  setTimeout(() => {
-    const fc = document.getElementById('flipbook-container')
-    if (fc) fc.style.opacity = '1'
-  }, 280)
 
   // Centrado dinámico: cubre/contraportada centradas, spreads interiores sin desplazamiento
   let currentShift = 0
