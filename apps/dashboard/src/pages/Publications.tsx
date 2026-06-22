@@ -220,8 +220,12 @@ export default function Publications() {
 
   async function handlePermanentDelete(id: string) {
     if (!confirm('¿Eliminar definitivamente? Esta acción es permanente e irreversible — no podrás recuperar este flipbook.')) return
-    await api.publications.permanentDelete(id)
-    setTrash((prev) => prev.filter((p) => p.id !== id))
+    try {
+      await api.publications.permanentDelete(id)
+      setTrash((prev) => prev.filter((p) => p.id !== id))
+    } catch (err: any) {
+      alert('Error al eliminar: ' + (err.message ?? err))
+    }
   }
 
   async function handlePublish(id: string) {
