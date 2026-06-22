@@ -163,26 +163,8 @@ publications.put('/:id', async (c) => {
   return c.json({ success: true, data: updated, ...(soundWarning ? { warning: soundWarning } : {}) })
 })
 
-// DELETE /api/publications/:id — soft delete: mueve a papelera (no borra datos)
-publications.delete('/:id', async (c) => {
-  const userId = c.get('user').sub
-  const pub = await c.env.DB.prepare(
-    'SELECT id FROM publications WHERE id = ? AND user_id = ? AND deleted_at IS NULL',
-  )
-    .bind(c.req.param('id'), userId)
-    .first()
-  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
-
-  await c.env.DB.prepare(
-    `UPDATE publications SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
-  )
-    .bind(c.req.param('id'))
-    .run()
-
-  return c.json({ success: true, data: { trashed: true } })
-})
-
 // PATCH /api/publications/:id/restore — recupera de la papelera
+// (rutas específicas van ANTES de /:id para evitar que Hono las capture con el parámetro dinámico)
 publications.patch('/:id/restore', async (c) => {
   const userId = c.get('user').sub
   const pub = await c.env.DB.prepare(
@@ -217,6 +199,25 @@ publications.delete('/:id/permanent', async (c) => {
   ])
 
   return c.json({ success: true, data: { deleted: true } })
+})
+
+// DELETE /api/publications/:id — soft delete: mueve a papelera (no borra datos)
+publications.delete('/:id', async (c) => {
+  const userId = c.get('user').sub
+  const pub = await c.env.DB.prepare(
+    'SELECT id FROM publications WHERE id = ? AND user_id = ? AND deleted_at IS NULL',
+  )
+    .bind(c.req.param('id'), userId)
+    .first()
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  await c.env.DB.prepare(
+    `UPDATE publications SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
+  )
+    .bind(c.req.param('id'))
+    .run()
+
+  return c.json({ success: true, data: { trashed: true } })
 })
 
 // POST /api/publications/:id/publish
