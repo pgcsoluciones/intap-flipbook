@@ -193,10 +193,13 @@ publications.delete('/:id/permanent', async (c) => {
     .first()
   if (!pub) return c.json({ success: false, error: 'Publicación no encontrada en la papelera' }, 404)
 
-  await c.env.DB.batch([
-    c.env.DB.prepare('DELETE FROM pages WHERE publication_id = ?').bind(c.req.param('id')),
-    c.env.DB.prepare('DELETE FROM publications WHERE id = ?').bind(c.req.param('id')),
-  ])
+  const pubId = c.req.param('id')
+  try {
+    await c.env.DB.prepare('DELETE FROM pages WHERE publication_id = ?').bind(pubId).run()
+    await c.env.DB.prepare('DELETE FROM publications WHERE id = ?').bind(pubId).run()
+  } catch (err: any) {
+    return c.json({ success: false, error: 'Error al eliminar: ' + (err?.message ?? String(err)) }, 500)
+  }
 
   return c.json({ success: true, data: { deleted: true } })
 })
