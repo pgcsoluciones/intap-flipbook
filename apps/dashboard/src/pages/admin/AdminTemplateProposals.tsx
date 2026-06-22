@@ -1,178 +1,201 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 
-type Status = 'pending' | 'approved' | 'rejected'
-
-const STATUS_LABELS: Record<Status, string> = {
-  pending:  'Pendientes',
-  approved: 'Aprobadas',
-  rejected: 'Rechazadas',
+type Proposal = {
+  id: number
+  user_id: string
+  publication_id: string
+  title: string
+  description: string | null
+  category: string | null
+  cover_url: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  admin_notes: string | null
+  resolved_at: string | null
+  created_at: string
+  user_name: string
+  user_email: string
+  publication_title: string | null
 }
 
-const STATUS_COLORS: Record<Status, { bg: string; color: string }> = {
-  pending:  { bg: '#fef3c7', color: '#92400e' },
+const STATUS_LABELS: Record<string, string> = {
+  pending:  'Pendiente',
+  approved: 'Aprobada',
+  rejected: 'Rechazada',
+}
+const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
+  pending:  { bg: '#fef9c3', color: '#854d0e' },
   approved: { bg: '#d1fae5', color: '#065f46' },
   rejected: { bg: '#fee2e2', color: '#991b1b' },
 }
 
 export default function AdminTemplateProposals() {
-  const [proposals, setProposals] = useState<any[]>([])
+  const [proposals, setProposals] = useState<Proposal[]>([])
   const [loading, setLoading]     = useState(true)
-  const [tab, setTab]             = useState<Status>('pending')
-  const [rejectNotes, setRejectNotes] = useState<Record<number, string>>({})
-  const [rejectOpen, setRejectOpen]   = useState<Record<number, boolean>>({})
-  const [working, setWorking]         = useState<number | null>(null)
-  const [error, setError]             = useState('')
+  const [filter, setFilter]       = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending')
+  const [msg, setMsg]             = useState('')
+  const [rejectModal, setRejectModal] = useState<{ id: number } | null>(null)
+  const [rejectNotes, setRejectNotes] = useState('')
 
-  useEffect(() => {
-    api.proposals.listAll()
-      .then((r) => setProposals(r.data ?? []))
-      .catch((e) => setError(e.message ?? 'Error al cargar propuestas'))
-      .finally(() => setLoading(false))
-  }, [])
+  useEffect(() => { load() }, [])
 
-  const filtered = proposals.filter((p) => p.status === tab)
+  async function load() {
+    setLoading(true)
+    try {
+      const res = await api.proposals.listAll()
+      setProposals(res.data ?? [])
+    } catch (err: any) {
+      setMsg('Error al cargar propuestas: ' + (err.message ?? 'desconocido'))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   async function handleApprove(id: number) {
-    setWorking(id); setError('')
+    setMsg('')
     try {
       await api.proposals.approve(id)
+      setMsg('✅ Propuesta aprobada y plantilla creada.')
       setProposals((prev) => prev.map((p) => p.id === id ? { ...p, status: 'approved' } : p))
-    } catch (e: any) {
-      setError(e.message ?? 'Error al aprobar')
-    } finally {
-      setWorking(null)
+    } catch (err: any) {
+      setMsg('Error: ' + (err.message ?? 'desconocido'))
     }
   }
 
-  async function handleReject(id: number) {
-    setWorking(id); setError('')
+  async function handleReject() {
+    if (!rejectModal) return
+    setMsg('')
     try {
-      await api.proposals.reject(id, rejectNotes[id] ?? undefined)
-      setProposals((prev) => prev.map((p) => p.id === id ? { ...p, status: 'rejected' } : p))
-      setRejectOpen((prev) => ({ ...prev, [id]: false }))
-    } catch (e: any) {
-      setError(e.message ?? 'Error al rechazar')
-    } finally {
-      setWorking(null)
+      await api.proposals.reject(rejectModal.id, rejectNotes.trim() || undefined)
+      setMsg('Propuesta rechazada.')
+      setProposals((prev) => prev.map((p) => p.id === rejectModal.id ? { ...p, status: 'rejected', admin_notes: rejectNotes || null } : p))
+      setRejectModal(null)
+      setRejectNotes('')
+    } catch (err: any) {
+      setMsg('Error: ' + (err.message ?? 'desconocido'))
     }
   }
 
-  function formatDate(dt: string) {
-    try { return new Date(dt).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) } catch { return dt }
-  }
-
-  if (loading) return <div style={s.loading}>Cargando propuestas...</div>
+  const filtered = filter === 'all' ? proposals : proposals.filter((p) => p.status === filter)
 
   return (
     <div style={s.page}>
-      <h1 style={s.title}>Propuestas de Plantillas</h1>
-      <p style={s.sub}>Los tenants pueden proponer sus publicaciones como plantillas para que otros usuarios las utilicen.</p>
-
-      {error && <div style={s.errBanner}>{error}</div>}
-
-      {/* Tabs */}
-      <div style={s.tabs}>
-        {(['pending', 'approved', 'rejected'] as Status[]).map((st) => {
-          const count = proposals.filter((p) => p.status === st).length
-          return (
-            <button
-              key={st}
-              style={{ ...s.tabBtn, ...(tab === st ? s.tabActive : {}) }}
-              onClick={() => setTab(st)}
-            >
-              {STATUS_LABELS[st]} ({count})
-            </button>
-          )
-        })}
+      <div style={s.header}>
+        <div>
+          <h1 style={s.h1}>Propuestas de plantilla</h1>
+          <p style={s.sub}>Publicaciones enviadas por tenants para convertirse en plantillas del catálogo</p>
+        </div>
+        <button onClick={load} style={s.btnRefresh}>↺ Actualizar</button>
       </div>
 
-      {/* Lista */}
-      {filtered.length === 0 ? (
-        <div style={s.empty}>No hay propuestas en esta categoría.</div>
+      {msg && (
+        <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: msg.startsWith('Error') ? '#fee2e2' : '#d1fae5', color: msg.startsWith('Error') ? '#991b1b' : '#065f46', fontSize: 13 }}>
+          {msg}
+        </div>
+      )}
+
+      {/* Filtros */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        {(['all', 'pending', 'approved', 'rejected'] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            style={{
+              ...s.filterBtn,
+              background: filter === f ? '#4f46e5' : '#fff',
+              color: filter === f ? '#fff' : '#374151',
+              borderColor: filter === f ? '#4f46e5' : '#d1d5db',
+            }}
+          >
+            {f === 'all' ? 'Todas' : STATUS_LABELS[f]}
+            {' '}({f === 'all' ? proposals.length : proposals.filter((p) => p.status === f).length})
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 60, color: '#9ca3af' }}>Cargando...</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 60, color: '#9ca3af' }}>
+          <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.4 }}>⭐</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Sin propuestas</div>
+          <div style={{ fontSize: 13 }}>Cuando un tenant proponga una plantilla, aparecerá aquí.</div>
+        </div>
       ) : (
-        <div style={s.list}>
-          {filtered.map((p) => (
-            <div key={p.id} style={s.card}>
-              {/* Portada */}
-              {p.cover_url && (
-                <img src={p.cover_url} alt={p.title} style={s.cover} />
-              )}
-
-              <div style={s.body}>
-                <div style={s.row}>
-                  <div>
-                    <div style={s.name}>{p.title}</div>
-                    {p.category && <div style={s.catTag}>{p.category}</div>}
-                  </div>
-                  <span style={{ ...s.badge, ...STATUS_COLORS[p.status as Status] }}>
-                    {STATUS_LABELS[p.status as Status] ?? p.status}
-                  </span>
-                </div>
-
-                {p.description && <div style={s.desc}>{p.description}</div>}
-
-                <div style={s.meta}>
-                  <span>👤 {p.user_name ?? '—'} · {p.user_email}</span>
-                  <span>📖 {p.publication_title ?? p.publication_id}</span>
-                  <span>📅 {formatDate(p.created_at)}</span>
-                </div>
-
-                {/* Acciones — solo para pendientes */}
-                {p.status === 'pending' && (
-                  <div style={s.actions}>
-                    <button
-                      style={{ ...s.btnApprove, opacity: working === p.id ? 0.6 : 1 }}
-                      disabled={working === p.id}
-                      onClick={() => handleApprove(p.id)}
-                    >
-                      {working === p.id ? 'Procesando...' : '✅ Aprobar'}
-                    </button>
-
-                    {rejectOpen[p.id] ? (
-                      <div style={s.rejectBox}>
-                        <textarea
-                          style={s.rejectInput}
-                          placeholder="Motivo del rechazo (opcional)..."
-                          value={rejectNotes[p.id] ?? ''}
-                          onChange={(e) => setRejectNotes((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                        />
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button
-                            style={{ ...s.btnReject, opacity: working === p.id ? 0.6 : 1 }}
-                            disabled={working === p.id}
-                            onClick={() => handleReject(p.id)}
-                          >
-                            Confirmar rechazo
-                          </button>
-                          <button
-                            style={s.btnCancel}
-                            onClick={() => setRejectOpen((prev) => ({ ...prev, [p.id]: false }))}
-                          >
-                            Cancelar
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        style={s.btnRejectOpen}
-                        onClick={() => setRejectOpen((prev) => ({ ...prev, [p.id]: true }))}
-                      >
-                        ❌ Rechazar
-                      </button>
-                    )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {filtered.map((p) => {
+            const sc = STATUS_COLORS[p.status] ?? STATUS_COLORS.pending
+            return (
+              <div key={p.id} style={s.card}>
+                {/* Portada */}
+                {p.cover_url && (
+                  <img
+                    src={p.cover_url}
+                    alt={p.title}
+                    style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }}
+                  />
+                )}
+                {!p.cover_url && (
+                  <div style={{ width: 80, height: 80, borderRadius: 8, background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <span style={{ fontSize: 32, opacity: 0.3 }}>📄</span>
                   </div>
                 )}
 
-                {/* Notas del admin si fue rechazada */}
-                {p.status === 'rejected' && p.admin_notes && (
-                  <div style={s.adminNotes}>
-                    <strong>Motivo:</strong> {p.admin_notes}
+                {/* Info */}
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15, color: '#111827' }}>{p.title}</span>
+                    <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: sc.bg, color: sc.color }}>
+                      {STATUS_LABELS[p.status]}
+                    </span>
+                    {p.category && (
+                      <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, background: '#f3f4f6', color: '#6b7280' }}>{p.category}</span>
+                    )}
+                  </div>
+                  {p.description && <div style={{ fontSize: 13, color: '#4b5563', marginBottom: 4 }}>{p.description}</div>}
+                  <div style={{ fontSize: 12, color: '#9ca3af' }}>
+                    De: <strong style={{ color: '#6b7280' }}>{p.user_name ?? p.user_email}</strong>
+                    {' · '}Flipbook: <em>{p.publication_title ?? p.publication_id}</em>
+                    {' · '}{new Date(p.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </div>
+                  {p.admin_notes && (
+                    <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4, fontStyle: 'italic' }}>
+                      Nota admin: {p.admin_notes}
+                    </div>
+                  )}
+                </div>
+
+                {/* Acciones */}
+                {p.status === 'pending' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+                    <button onClick={() => handleApprove(p.id)} style={s.btnApprove}>✓ Aprobar</button>
+                    <button onClick={() => { setRejectModal({ id: p.id }); setRejectNotes('') }} style={s.btnReject}>✕ Rechazar</button>
                   </div>
                 )}
               </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Modal de rechazo */}
+      {rejectModal && (
+        <div style={s.overlay} onClick={(e) => e.target === e.currentTarget && setRejectModal(null)}>
+          <div style={s.modal}>
+            <h2 style={{ margin: '0 0 12px', fontSize: 16, fontWeight: 700 }}>Rechazar propuesta</h2>
+            <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>Podés incluir una nota opcional para explicarle al usuario por qué fue rechazada.</p>
+            <textarea
+              autoFocus
+              style={{ width: '100%', minHeight: 80, padding: '8px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }}
+              placeholder="Nota opcional para el tenant..."
+              value={rejectNotes}
+              onChange={(e) => setRejectNotes(e.target.value)}
+            />
+            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+              <button onClick={() => setRejectModal(null)} style={s.btnCancel}>Cancelar</button>
+              <button onClick={handleReject} style={s.btnReject}>Confirmar rechazo</button>
             </div>
-          ))}
+          </div>
         </div>
       )}
     </div>
@@ -180,38 +203,16 @@ export default function AdminTemplateProposals() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  page:    { padding: '2rem', maxWidth: 900, margin: '0 auto' },
-  loading: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: '#6b7280' },
-  title:   { fontSize: 22, fontWeight: 700, color: '#111827', margin: '0 0 4px' },
-  sub:     { fontSize: 13, color: '#6b7280', marginBottom: '1.5rem' },
-  errBanner: { background: '#fee2e2', color: '#991b1b', padding: '10px 16px', borderRadius: 8, marginBottom: 16, fontSize: 13 },
-
-  tabs:     { display: 'flex', gap: 0, borderBottom: '2px solid #f3f4f6', marginBottom: '1.5rem' },
-  tabBtn:   { background: 'none', border: 'none', borderBottom: '2px solid transparent', padding: '10px 18px', fontSize: 13, fontWeight: 500, color: '#6b7280', cursor: 'pointer', marginBottom: -2 },
-  tabActive:{ color: '#4f46e5', borderBottomColor: '#4f46e5', fontWeight: 600 },
-
-  empty: { textAlign: 'center', padding: '60px 20px', color: '#9ca3af', fontSize: 14 },
-
-  list: { display: 'flex', flexDirection: 'column', gap: 16 },
-  card: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden', display: 'flex', gap: 0 },
-  cover:{ width: 120, minWidth: 120, objectFit: 'cover', display: 'block', background: '#f8fafc' },
-  body: { flex: 1, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 8 },
-
-  row:    { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
-  name:   { fontSize: 15, fontWeight: 700, color: '#111827' },
-  catTag: { fontSize: 11, color: '#6b7280', fontWeight: 500, marginTop: 2 },
-  badge:  { fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, whiteSpace: 'nowrap' },
-  desc:   { fontSize: 13, color: '#374151', lineHeight: 1.5 },
-  meta:   { display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11, color: '#9ca3af' },
-
-  actions:    { display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap', marginTop: 4 },
-  btnApprove: { background: '#059669', color: '#fff', border: 'none', borderRadius: 7, padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  btnRejectOpen: { background: '#fee2e2', color: '#991b1b', border: 'none', borderRadius: 7, padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  btnReject:  { background: '#ef4444', color: '#fff', border: 'none', borderRadius: 7, padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
-  btnCancel:  { background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 7, padding: '7px 14px', fontSize: 12, fontWeight: 500, cursor: 'pointer' },
-
-  rejectBox:  { display: 'flex', flexDirection: 'column', gap: 6, width: '100%' },
-  rejectInput:{ border: '1px solid #e5e7eb', borderRadius: 7, padding: '8px 10px', fontSize: 12, outline: 'none', resize: 'vertical', minHeight: 64 },
-
-  adminNotes: { fontSize: 12, color: '#6b7280', background: '#f8fafc', borderRadius: 6, padding: '8px 12px', marginTop: 4 },
+  page:       { padding: '2rem 1.5rem', maxWidth: 900 },
+  header:     { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.25rem' },
+  h1:         { fontSize: '1.5rem', fontWeight: 800, color: '#111827', margin: 0 },
+  sub:        { color: '#6b7280', fontSize: 13, margin: '4px 0 0' },
+  filterBtn:  { padding: '5px 14px', borderRadius: 20, border: '1px solid', cursor: 'pointer', fontSize: 13, fontWeight: 500, transition: 'all .15s' },
+  btnRefresh: { padding: '6px 14px', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', color: '#374151', cursor: 'pointer', fontSize: 13 },
+  card:       { display: 'flex', gap: 16, alignItems: 'flex-start', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 16 },
+  btnApprove: { padding: '6px 14px', borderRadius: 8, background: '#059669', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
+  btnReject:  { padding: '6px 14px', borderRadius: 8, background: '#ef4444', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
+  btnCancel:  { padding: '6px 14px', borderRadius: 8, background: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db', cursor: 'pointer', fontSize: 13 },
+  overlay:    { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
+  modal:      { background: '#fff', borderRadius: 14, padding: 24, width: 420, maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' },
 }
