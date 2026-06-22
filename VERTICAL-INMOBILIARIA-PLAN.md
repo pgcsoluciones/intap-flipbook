@@ -139,12 +139,13 @@
 
 1. ✅ ~~Bug K: papelera real~~ — resuelto
 2. ✅ ~~Bug N: flexibilidad mobile~~ — resuelto
-3. 🔄 **Puntos B/C/D**: logo + contacto en perfil de tenant (agente en progreso)
-4. 🔄 **Punto L**: estadísticas individuales por flipbook (agente en progreso)
-5. **Galerías de imágenes/videos** como acción de zona clicable (Punto A/H)
-6. **Portada designada** — galería de portadas por flipbook
-7. **Plantilla vertical inmobiliaria** (Fase 3)
-8. **Feed público** de flipbooks por tenant (Punto F)
+3. ✅ ~~Puntos B/C/D: logo + contacto en perfil de tenant~~ — implementado y en producción
+4. ✅ ~~Punto L: estadísticas individuales por flipbook~~ — implementado y en producción
+5. ✅ ~~Puntos A/H: galerías de imágenes/videos como acción de zona clicable~~ — implementado y en producción
+6. ✅ ~~Punto 6: portada designada — CoverModal en Publications~~ — implementado y en producción
+7. ✅ ~~Punto F: feed público de flipbooks por tenant (`/p/:tenantSlug`)~~ — implementado y en producción
+8. ✅ ~~Punto G: tenant propone plantillas, admin aprueba~~ — implementado y en producción
+9. ✅ ~~Fase 3: Plantilla vertical Inmobiliaria/Construcción~~ — implementado (tabla units, plantilla 7 páginas, widget units_table en viewer/editor, panel CMS en Settings)
 
 ---
 

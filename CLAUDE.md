@@ -127,6 +127,12 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 | `a96444c` | Fix Bug K paso 3 — borrar tablas hijas con FK antes de eliminar publication |
 | `63a0757` | Fix Bug K paso 4 — safeDelete para tablas opcionales (page_events puede no existir) |
 | `5398d9f` | Fix Bug N — size:'stretch' + resize handler para flexibilidad mobile-first en viewer |
+| *(reciente)* | Punto B/C/D — logo_url + contacto en ProfilePage; migration_branding.sql ✅ ejecutada |
+| *(reciente)* | Punto L — TenantStats con vista individual por flipbook (sparkline SVG, donut dispositivos, tabla tiempos) |
+| *(reciente)* | Punto F — PublicFeed `/p/:tenantSlug` (página pública sin auth, grid de flipbooks del tenant) |
+| *(reciente)* | Puntos A/H/6 — gallery_images + gallery_videos como acciones de zona en editor y viewer; portada designada (CoverModal) |
+| *(reciente)* | Punto G — template_proposals: tenant propone, admin aprueba/rechaza (migration_tenant_templates.sql ✅ ejecutada) |
+| `dbc97f6` | Punto L frontend — TenantStats con PubDetailPanel (analítica individual por flipbook) |
 
 ---
 
@@ -134,7 +140,7 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 
 ### API (Hono.js en Cloudflare Workers)
 
-- `POST /auth/register` + `POST /auth/login` + `GET /auth/me` + `PUT /auth/me`
+- `POST /auth/register` + `POST /auth/login` + `GET /auth/me` + `PUT /auth/me` (incluye logo_url + contact_*)
 - CRUD completo `/api/publications` con límites por plan
   - `GET /api/publications` — solo activas (`deleted_at IS NULL`)
   - `GET /api/publications/trash` — papelera (`deleted_at IS NOT NULL`)
@@ -152,16 +158,24 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 - `GET|POST /api/folders` + `PUT|DELETE /api/folders/:id` + `PATCH /api/publications/:id/folder`
 - `GET /api/responses` + `GET /api/responses/unread-count` + `PATCH /api/responses/:id/read` + `DELETE /api/responses/:id`
 - `POST /api/templates/:id/apply`
+- `GET /view/feed/:tenantSlug` — feed público de flipbooks publicados de un tenant
+- `POST /api/template-proposals` — tenant propone publicación como plantilla
+- `GET /api/template-proposals` — tenant lista sus propuestas
+- `GET /admin/template-proposals` — admin lista todas las propuestas
+- `PATCH /admin/template-proposals/:id/approve` — admin aprueba (copia pub→template)
+- `PATCH /admin/template-proposals/:id/reject` — admin rechaza con notas
 - **Admin routes** `/admin/*`: users, plans, payments, gateways, modules, stats, notifications, promotions, referrals, branding, resources
 
 ### Viewer (`apps/viewer/src/`)
 
 - StPageFlip via CDN — efecto de voltear páginas + sonido Web Audio API
-- `size: 'stretch'` — se adapta al contenedor (mobile-first)
+- `size: 'stretch'` — se adapta al contenedor (mobile-first) ✅ Bug N resuelto
 - Resize listener — recalcula dimensiones al rotar el dispositivo
 - Lazy loading — imágenes a partir de la pág. 3 cargan en diferido
 - Fabric.js 5.3 via CDN — renderiza `canvas_json` como overlay escalado
 - Acciones: `link`, `page`, `call`, `email`, `whatsapp`, `popup_text`, `popup_image`, `popup_video`, `download`
+- **`gallery_images`** — lightbox/carrusel de imágenes con flechas, miniaturas, Escape, swipe táctil ✅ nuevo
+- **`gallery_videos`** — carrusel de videos con misma UX ✅ nuevo
 - **Widgets** (11 tipos): mapa, video, audio, QR, tabla CSV, like, formulario de contacto, cuestionario, embed HTML, popup cintillo, download
 - **Hotspots animados**: `hs-pulse`, `hs-blink`, `hs-ring`
 - Analítica: tiempo por página (`page_time`), clics, dispositivo vía `sendBeacon`
@@ -175,16 +189,20 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
   - Botón "Crear desde cero" directo en el header
   - Plantillas inline por carpeta seleccionada
   - Soft delete real → papelera → restaurar / eliminar definitivamente
+  - **CoverModal** — selecciona portada por página (miniatura) + guarda en `cover_image_url`
+  - **"Proponer como plantilla"** — botón en publicaciones publicadas → `POST /api/template-proposals`
 - **Editor** (`EditPublication.tsx`): Fabric.js canvas full-screen, autoguardado 1.2s
   - Import SVG editable (`fabric.loadSVGFromString`)
   - Import PDF → páginas JPEG (pdf.js 3.11 via CDN, escala 1.5, calidad 0.82)
   - Rail izquierdo: 10 paneles (Páginas, Plantillas, Texto, Imagen, Formas, Botones, Elementos, Enlace, Widgets, Subidas)
   - Navegador de páginas bajo el canvas
   - Panel derecho: propiedades por tipo, tipografía, color, tamaño, rotación
+  - **Acciones de zona**: `gallery_images` (carrusel de imágenes + portada) y `gallery_videos` (carrusel de videos)
 - **Respuestas** (`TenantResponses.tsx`): filtros, marcar leída, eliminar
-- **Estadísticas** (`TenantStats.tsx`): en progreso — agente trabajando en vista individual
-- **Perfil/Settings**: en progreso — agente trabajando en logo + contacto
-- **Admin (13 páginas)**: Dashboard, Tenants, Plans, Payments, Gateways, Modules, Resources, Promotions, Referrals, Branding, Notifications, Stats, Templates
+- **Estadísticas** (`TenantStats.tsx`): ✅ lista de publicaciones clicable + `PubDetailPanel` con sparkline SVG de vistas, donut de dispositivos, tabla de tiempo por página, desglose de clics
+- **Perfil** (`ProfilePage.tsx`): ✅ logo con upload a R2, campos phone/whatsapp/email/address, link al feed público
+- **Feed público** (`PublicFeed.tsx`): ✅ ruta `/p/:tenantSlug` — grid de flipbooks publicados, sin auth, link al viewer
+- **Admin (14 páginas)**: Dashboard, Tenants, Plans, Payments, Gateways, Modules, Resources, Promotions, Referrals, Branding, Notifications, Stats, Templates, **TemplateProposals** (nuevo)
 
 ### Límites por plan (`lib/plans.ts`)
 
@@ -252,12 +270,18 @@ npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase14.sql --r
 
 ## ⚠️ Pendiente de acción de Juan
 
-| Tarea | Comando |
-|-------|---------|
-| Migración branding (logo + contacto en users) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_branding.sql --remote` |
-| Migración page_events (analítica avanzada) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase14.sql --remote` |
-| Deploy Worker (siempre tras cambios en `apps/api/`) | `cd ~/intap-flipbook/apps/api && git pull && npx wrangler deploy` |
-| Crear tablas modules/plan_modules si no existen | Ver comandos más abajo |
+| Tarea | Comando | Estado |
+|-------|---------|--------|
+| Migración branding (logo + contacto en users) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_branding.sql --remote` | ✅ Ejecutada |
+| Migración page_events (analítica avanzada) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase14.sql --remote` | ✅ Ejecutada |
+| Migración template_proposals | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_tenant_templates.sql --remote` | ✅ Ejecutada |
+| Migración Fase 3 — tabla units | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase3_units.sql --remote` | ✅ Ejecutada |
+| Migración Fase 3 — plantilla inmobiliaria | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase3_inmobiliaria_template.sql --remote` | ✅ Ejecutada |
+| Migración Fase 3 — campos CMS del proyecto | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase3_project_fields.sql --remote` | ✅ Ejecutada |
+| Migración analítica avanzada (country, city, referrer, url_destination) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_analytics_advanced.sql --remote` | ✅ Ejecutada |
+| Deploy Worker (siempre tras cambios en `apps/api/`) | `cd ~/intap-flipbook/apps/api && git pull && npx wrangler deploy` | ✅ Ejecutado (Worker `ed902d00`) |
+| Deploy Viewer (tras cambios en `apps/viewer/`) | `cd ~/intap-flipbook/apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer` | ✅ Ejecutado |
+| Crear tablas modules/plan_modules si no existen | Ver comandos más abajo | Pendiente verificar |
 
 ```bash
 # Tablas modules y plan_modules (verificar si existen primero):
@@ -271,21 +295,24 @@ npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NO
 
 | Tarea | Estado |
 |-------|--------|
-| Stats individuales por flipbook (Punto L) | 🔄 En progreso (agente) |
-| Logo/branding tenant + contacto empresarial (Puntos B/C/D) | 🔄 En progreso (agente) |
-| Galerías — modal/carrusel de imágenes y videos como acción de zona | Planificado |
-| Portada designada por galería de imágenes | Planificado |
-| Entidad Unidad (inmobiliaria: disponible/reservada/vendida) | Planificado |
-| Multiusuario / permisos por sub-usuario | Backlog |
-| Feed público de flipbooks por tenant | Planificado |
-| Tenant crea sus propias plantillas (con aprobación admin) | Planificado |
+| Stats individuales por flipbook (Punto L) | ✅ Implementado |
+| Logo/branding tenant + contacto empresarial (Puntos B/C/D) | ✅ Implementado |
+| Galerías — modal/carrusel de imágenes y videos como acción de zona (Puntos A/H) | ✅ Implementado |
+| Portada designada (CoverModal en Publications) (Punto 6) | ✅ Implementado |
+| Feed público de flipbooks por tenant (Punto F) | ✅ Implementado |
+| Tenant crea sus propias plantillas — con aprobación admin (Punto G) | ✅ Implementado |
+| **Fase 3 — Plantilla vertical Inmobiliaria** (páginas tipo + CMS-céntrico + entidad Unidades) | ✅ Implementado |
+| Entidad Unidad (tabla `units`, widget `units_table` en viewer y editor, panel CMS en Settings) | ✅ Implementado |
+| **Analítica avanzada** — geoloc `request.cf`, tablet detection, url_destination, país/links/páginas en dashboard | ✅ Implementado |
 | Acción `show_hide` en viewer (elementos nombrados) | Pendiente |
 | Alinear claves de módulos frontend ↔ D1 | Pendiente |
 | AdminModules toggle — claves no coinciden | Pendiente |
+| Multiusuario / permisos por sub-usuario (Punto E) | Backlog |
+| Moderación de contenido público — botón reportar + suspender (Punto J) | Planificado |
+| Geolocalización en estadísticas (via `request.cf`) (Punto M) | Planificado |
 | Dominios personalizados (`*.intapflipbook.com`) | No configurado |
 | Pagos / Stripe | No iniciado |
 | Banners tenant: alerta >80% uso, período de gracia | No iniciado |
-| Geolocalización en estadísticas (via `request.cf`) | Planificado |
 | Backup/exportación de datos del tenant | Backlog |
 
 ---
