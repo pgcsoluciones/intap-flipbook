@@ -1,3 +1,10 @@
+// Fix bug Fabric.js 5.3.0: el textBaseline por defecto es 'alphabetical' (inválido según
+// el estándar Canvas) y dispara un warning del navegador en cada render de cada texto.
+// El valor correcto es 'alphabetic'. Lo corregimos en el prototype de fabric.Text.
+if (window.fabric?.Text?.prototype) {
+  window.fabric.Text.prototype.textBaseline = 'alphabetic'
+}
+
 const API_BASE = window.__FLIPBOOK_CONFIG__?.apiBase ?? 'https://intap-flipbook-api.fliaprince.workers.dev'
 
 const slug = location.pathname.split('/').filter(Boolean).pop()
