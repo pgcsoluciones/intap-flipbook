@@ -13,7 +13,6 @@ body {
   height: 100dvh;            /* height (no min-height) para que flex:1 del container funcione */
   font-family: sans-serif;
   color: #fff;
-  overflow: hidden;
 }
 
 /* ── Contenedor del flipbook ─────────────────────────────────────────────── */
