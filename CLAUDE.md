@@ -309,7 +309,8 @@ npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NO
 | Acción `show_hide` en viewer (elementos nombrados) | ✅ Implementado |
 | Borrar imágenes huérfanas del panel Cargas (Punto EE) | ✅ Implementado |
 | **Biblioteca SVG Fase 1** — backend (migración 3 tablas, rutas `/admin/svg` + `/api/svg`, sanitización HTMLRewriter en `lib/svg.ts`) | ✅ Implementado + desplegado (Worker `5b74b7de`) |
-| **Biblioteca SVG Fase 2** — gestor visual en Super Admin (`AdminSvg.tsx`: grilla, subida individual/lote drag&drop, familias, edición, gating por plan/módulo) | ✅ Implementado + desplegado |
+| **Biblioteca SVG Fase 2** — gestor visual en Super Admin (`AdminSvg.tsx`: grilla, subida individual/lote drag&drop, familias, edición, archivar, eliminar definitivo, gating por plan/módulo) | ✅ Implementado + desplegado (Worker `3b4deb15`) |
+| Biblioteca SVG — fixes post-deploy (sanitización segura sin romper xmlns, try/catch con error real, validación FK familia, miniatura `<img>` sin CORS, URL corta, DELETE /:id borra D1+R2) | ✅ Resuelto — 14 SVG suben y renderizan OK |
 | Biblioteca SVG Fase 3 — selector en editor del tenant (candados premium, inserción como vector + metadata) | Pendiente |
 | Biblioteca SVG Fase 4 — panel de propiedades SVG (colores por capa, gradientes, trazo, voltear) | Pendiente |
 | Biblioteca SVG Fase 5 — SVG en botones + sync multi-página (`syncGroupId`) | Pendiente |
