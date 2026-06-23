@@ -67,6 +67,8 @@ function saveResponse(kind, payload, widgetKey) {
 async function init() {
   const res = await fetch(`${API_BASE}/view/${slug}`)
   if (!res.ok) {
+    const ls = document.getElementById('loading-screen')
+    if (ls) ls.remove()
     document.body.innerHTML = `<p style="color:#fff;text-align:center;margin-top:2rem">Publication not found.</p>`
     return
   }
@@ -193,6 +195,15 @@ async function init() {
 
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
 
+  // Mostrar el flipbook y ocultar la pantalla de carga
+  const loadingScreen = document.getElementById('loading-screen')
+  const flipbookContainer = document.getElementById('flipbook-container')
+  flipbookContainer.style.display = ''
+  if (loadingScreen) {
+    loadingScreen.classList.add('hidden')
+    setTimeout(() => loadingScreen.remove(), 450)
+  }
+
   // ── Flechas laterales de navegación (solo escritorio) ──────────────────────
   if (!portrait) {
     const arrowStyle = [
@@ -312,9 +323,11 @@ async function init() {
         audio.controls = true
         audio.style.cssText = 'width:80vw;max-width:480px;display:block;'
         showPopup(audio)
-        // .play() explícito: más compatible que el atributo `autoplay` en elementos dinámicos.
-        // La promesa puede rechazarse si el navegador bloquea audio sin interacción previa —
-        // lo ignoramos silenciosamente (los controles permiten que el usuario lo inicie a mano).
+        // audio.load() inicia la descarga/decodificación del archivo.
+        // Sin esto, .play() puede fallar porque el buffer está vacío.
+        // .play() debe llamarse en el mismo hilo que el evento de clic del usuario
+        // para que el navegador lo permita (autoplay policy).
+        audio.load()
         audio.play().catch(() => {})
         break
       }
