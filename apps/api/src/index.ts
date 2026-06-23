@@ -7,6 +7,7 @@ import uploadRoutes from './routes/upload'
 import adminRoutes from './routes/admin'
 import proposalRoutes from './routes/proposals'
 import unitRoutes from './routes/units'
+import svgRoutes from './routes/svg'
 import { jwtMiddleware } from './middleware/jwt'
 import { getUserPlan, getPlanUsage } from './lib/plans'
 import type { AuthVariables } from './middleware/jwt'
@@ -48,6 +49,7 @@ app.route('/api/publications', publicationRoutes)
 app.route('/api', pageRoutes)
 app.route('/api/upload', uploadRoutes)
 app.route('/admin', adminRoutes)
+app.route('/admin/svg', svgRoutes)
 app.route('/', proposalRoutes)
 app.route('/api/units', unitRoutes)
 
@@ -57,6 +59,65 @@ app.get('/api/me/usage', jwtMiddleware, async (c) => {
   const { plan } = await getUserPlan(c.env.DB, userId)
   const usage = await getPlanUsage(c.env.DB, userId, plan)
   return c.json({ success: true, data: usage })
+})
+
+// Biblioteca SVG disponible para el tenant — filtrada por su plan.
+// Los recursos de plan superior se devuelven con locked=true (incentivo de upgrade),
+// salvo que el recurso tenga visible_to_lower_plans=0 (entonces se ocultan).
+// Parámetro opcional ?module= para filtrar por módulo (canvas_insert_svg, button_icon_picker...).
+app.get('/api/svg', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { planId: plan } = await getUserPlan(c.env.DB, userId)
+  const moduleFilter = c.req.query('module')
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT r.id, r.name, r.slug, r.family_id, r.category, r.tags,
+            r.available_modules, r.plans, r.visible_to_lower_plans, r.upgrade_message,
+            r.editable_colors, r.editable_stroke, r.editable_layers,
+            r.editable_gradients, r.editable_geometry, r.svg_url, r.preview_url, r.version,
+            f.name as family_name
+     FROM svg_resources r
+     LEFT JOIN svg_families f ON f.id = r.family_id
+     WHERE r.status = 'active'
+       AND (r.scope = 'global' OR (r.scope = 'tenant' AND r.tenant_id = ?))
+     ORDER BY r.name ASC`
+  ).bind(userId).all<any>()
+
+  // Orden de planes para decidir si un recurso está "por encima" del plan del tenant.
+  const RANK: Record<string, number> = { free: 0, basic: 1, pro: 2 }
+  const myRank = RANK[plan] ?? 0
+
+  const data = (results ?? []).flatMap((r: any) => {
+    const plans: string[] = safeParse(r.plans, [])
+    const modules: string[] = safeParse(r.available_modules, [])
+    if (moduleFilter && modules.length && !modules.includes(moduleFilter)) return []
+
+    // ¿El plan del tenant está permitido? Si no, está bloqueado.
+    const allowed = plans.length === 0 || plans.includes(plan)
+    // Plan mínimo requerido (el de menor rank entre los permitidos)
+    const minRank = plans.length ? Math.min(...plans.map((p) => RANK[p] ?? 99)) : 0
+    const locked = !allowed && minRank > myRank
+    // Si está bloqueado y NO es visible a planes inferiores, se oculta por completo.
+    if (locked && !r.visible_to_lower_plans) return []
+
+    return [{
+      id: r.id, name: r.name, slug: r.slug, family_id: r.family_id,
+      family_name: r.family_name, category: r.category,
+      tags: safeParse(r.tags, []), modules,
+      svg_url: locked ? null : r.svg_url, // no exponemos la fuente de recursos bloqueados
+      preview_url: r.preview_url, version: r.version,
+      editable: {
+        colors: !!r.editable_colors, stroke: !!r.editable_stroke,
+        layers: !!r.editable_layers, gradients: !!r.editable_gradients,
+        geometry: !!r.editable_geometry,
+      },
+      locked,
+      required_plan: locked ? (Object.keys(RANK).find((k) => RANK[k] === minRank) ?? null) : null,
+      upgrade_message: locked ? r.upgrade_message : null,
+    }]
+  })
+
+  return c.json({ success: true, data })
 })
 
 // Módulos activos para este tenant
@@ -286,6 +347,13 @@ app.get('/api/plan-requests', jwtMiddleware, async (c) => {
   ).bind(userId).all()
   return c.json({ success: true, data: results })
 })
+
+// Parsea JSON de forma segura, devolviendo un fallback si falla.
+function safeParse<T>(raw: any, fallback: T): T {
+  if (raw == null) return fallback
+  if (typeof raw !== 'string') return raw as T
+  try { return JSON.parse(raw) as T } catch { return fallback }
+}
 
 // Detecta el tipo de dispositivo desde el User-Agent HTTP
 function detectDevice(ua: string | undefined): string {
