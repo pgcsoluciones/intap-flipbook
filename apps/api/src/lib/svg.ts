@@ -65,10 +65,14 @@ export async function sanitizeSvg(raw: string): Promise<SanitizeResult> {
           return
         }
         // Limpiar atributos peligrosos del elemento permitido.
+        // Recolectamos primero los nombres a borrar y removemos DESPUÉS de
+        // terminar de iterar: mutar `el.attributes` durante su propia iteración
+        // puede lanzar excepción en HTMLRewriter.
+        const toRemove: string[] = []
         for (const [name, value] of el.attributes) {
           const lname = name.toLowerCase()
           if (lname.startsWith(EVENT_ATTR_PREFIX)) {
-            el.removeAttribute(name)
+            toRemove.push(name)
             continue
           }
           if (DANGEROUS_ATTRS.has(lname)) {
@@ -76,13 +80,14 @@ export async function sanitizeSvg(raw: string): Promise<SanitizeResult> {
             if ((lname === 'href' || lname === 'xlink:href') && value.trim().startsWith('#')) {
               continue
             }
-            el.removeAttribute(name)
+            toRemove.push(name)
             continue
           }
           if (isDangerousValue(value)) {
-            el.removeAttribute(name)
+            toRemove.push(name)
           }
         }
+        for (const name of toRemove) el.removeAttribute(name)
       },
     })
 

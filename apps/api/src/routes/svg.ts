@@ -39,6 +39,16 @@ async function uniqueSlug(env: Env, base: string): Promise<string> {
 
 const J = (v: any) => JSON.stringify(v ?? [])
 
+// Devuelve un family_id válido (número) o null. Evita el error
+// SQLITE_CONSTRAINT_FOREIGNKEY si llega un id inexistente o no numérico.
+async function resolveFamilyId(env: Env, raw: any): Promise<number | null> {
+  if (raw === null || raw === undefined || raw === '') return null
+  const id = Number(raw)
+  if (!Number.isInteger(id)) return null
+  const exists = await env.DB.prepare('SELECT id FROM svg_families WHERE id = ?').bind(id).first()
+  return exists ? id : null
+}
+
 // ─── FAMILIAS ───────────────────────────────────────────────────────────────
 
 svg.get('/families', async (c) => {
@@ -110,31 +120,38 @@ svg.post('/', async (c) => {
   if (!b.name?.trim()) return c.json({ success: false, error: 'El nombre es requerido' }, 400)
   if (!b.svg_content) return c.json({ success: false, error: 'El contenido SVG es requerido' }, 400)
 
-  const clean = await sanitizeSvg(b.svg_content)
-  if (!clean.ok) return c.json({ success: false, error: clean.error }, 400)
+  try {
+    const clean = await sanitizeSvg(b.svg_content)
+    if (!clean.ok) return c.json({ success: false, error: clean.error }, 400)
 
-  const slug = await uniqueSlug(c.env, slugify(b.slug || b.name))
-  const url = await putSvgToR2(c.env, slug, clean.svg)
-  const hash = await svgHash(clean.svg)
+    // family_id solo es válido si referencia una familia existente (D1 tiene FK ON)
+    const familyId = await resolveFamilyId(c.env, b.family_id)
 
-  const { meta } = await c.env.DB.prepare(
-    `INSERT INTO svg_resources
-       (name, slug, family_id, category, tags, available_modules, plans,
-        visible_to_lower_plans, upgrade_message, editable_colors, editable_stroke,
-        editable_layers, editable_gradients, editable_geometry, scope, tenant_id,
-        svg_url, hash, version, status, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`
-  ).bind(
-    b.name.trim(), slug, b.family_id ?? null, b.category ?? null, J(b.tags),
-    J(b.available_modules ?? ['canvas_insert_svg']), J(b.plans ?? ['free']),
-    b.visible_to_lower_plans === false ? 0 : 1, b.upgrade_message ?? null,
-    b.editable_colors === false ? 0 : 1, b.editable_stroke === false ? 0 : 1,
-    b.editable_layers === false ? 0 : 1, b.editable_gradients ? 1 : 0,
-    b.editable_geometry === false ? 0 : 1, b.scope ?? 'global', b.tenant_id ?? null,
-    url, hash, b.status ?? 'active', userId
-  ).run()
+    const slug = await uniqueSlug(c.env, slugify(b.slug || b.name))
+    const url = await putSvgToR2(c.env, slug, clean.svg)
+    const hash = await svgHash(clean.svg)
 
-  return c.json({ success: true, data: { id: meta.last_row_id, slug, svg_url: url } }, 201)
+    const { meta } = await c.env.DB.prepare(
+      `INSERT INTO svg_resources
+         (name, slug, family_id, category, tags, available_modules, plans,
+          visible_to_lower_plans, upgrade_message, editable_colors, editable_stroke,
+          editable_layers, editable_gradients, editable_geometry, scope, tenant_id,
+          svg_url, hash, version, status, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`
+    ).bind(
+      b.name.trim(), slug, familyId, b.category ?? null, J(b.tags),
+      J(b.available_modules ?? ['canvas_insert_svg']), J(b.plans ?? ['free']),
+      b.visible_to_lower_plans === false ? 0 : 1, b.upgrade_message ?? null,
+      b.editable_colors === false ? 0 : 1, b.editable_stroke === false ? 0 : 1,
+      b.editable_layers === false ? 0 : 1, b.editable_gradients ? 1 : 0,
+      b.editable_geometry === false ? 0 : 1, b.scope ?? 'global', b.tenant_id ?? null,
+      url, hash, b.status ?? 'active', userId
+    ).run()
+
+    return c.json({ success: true, data: { id: meta.last_row_id, slug, svg_url: url } }, 201)
+  } catch (e: any) {
+    return c.json({ success: false, error: `Error al subir SVG: ${e?.message ?? e}` }, 500)
+  }
 })
 
 // Sube varios SVG en lote. Body: { items: [{ name, svg_content }], family_id?,
@@ -145,32 +162,39 @@ svg.post('/batch', async (c) => {
   const items: any[] = Array.isArray(b.items) ? b.items : []
   if (!items.length) return c.json({ success: false, error: 'No hay items' }, 400)
 
+  // Resolvemos la familia una sola vez (la config es compartida para el lote).
+  const familyId = await resolveFamilyId(c.env, b.family_id)
+
   const created: any[] = []
   const errors: any[] = []
   for (const it of items) {
     if (!it.name?.trim() || !it.svg_content) { errors.push({ name: it.name, error: 'name/svg_content requerido' }); continue }
-    const clean = await sanitizeSvg(it.svg_content)
-    if (!clean.ok) { errors.push({ name: it.name, error: clean.error }); continue }
-    const slug = await uniqueSlug(c.env, slugify(it.name))
-    const url = await putSvgToR2(c.env, slug, clean.svg)
-    const hash = await svgHash(clean.svg)
-    const { meta } = await c.env.DB.prepare(
-      `INSERT INTO svg_resources
-         (name, slug, family_id, category, tags, available_modules, plans,
-          visible_to_lower_plans, upgrade_message, editable_colors, editable_stroke,
-          editable_layers, editable_gradients, editable_geometry, scope, tenant_id,
-          svg_url, hash, version, status, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`
-    ).bind(
-      it.name.trim(), slug, b.family_id ?? null, b.category ?? null, J(it.tags),
-      J(b.available_modules ?? ['canvas_insert_svg']), J(b.plans ?? ['free']),
-      b.visible_to_lower_plans === false ? 0 : 1, b.upgrade_message ?? null,
-      b.editable_colors === false ? 0 : 1, b.editable_stroke === false ? 0 : 1,
-      b.editable_layers === false ? 0 : 1, b.editable_gradients ? 1 : 0,
-      b.editable_geometry === false ? 0 : 1, b.scope ?? 'global', b.tenant_id ?? null,
-      url, hash, b.status ?? 'active', userId
-    ).run()
-    created.push({ id: meta.last_row_id, name: it.name, slug })
+    try {
+      const clean = await sanitizeSvg(it.svg_content)
+      if (!clean.ok) { errors.push({ name: it.name, error: clean.error }); continue }
+      const slug = await uniqueSlug(c.env, slugify(it.name))
+      const url = await putSvgToR2(c.env, slug, clean.svg)
+      const hash = await svgHash(clean.svg)
+      const { meta } = await c.env.DB.prepare(
+        `INSERT INTO svg_resources
+           (name, slug, family_id, category, tags, available_modules, plans,
+            visible_to_lower_plans, upgrade_message, editable_colors, editable_stroke,
+            editable_layers, editable_gradients, editable_geometry, scope, tenant_id,
+            svg_url, hash, version, status, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`
+      ).bind(
+        it.name.trim(), slug, familyId, b.category ?? null, J(it.tags),
+        J(b.available_modules ?? ['canvas_insert_svg']), J(b.plans ?? ['free']),
+        b.visible_to_lower_plans === false ? 0 : 1, b.upgrade_message ?? null,
+        b.editable_colors === false ? 0 : 1, b.editable_stroke === false ? 0 : 1,
+        b.editable_layers === false ? 0 : 1, b.editable_gradients ? 1 : 0,
+        b.editable_geometry === false ? 0 : 1, b.scope ?? 'global', b.tenant_id ?? null,
+        url, hash, b.status ?? 'active', userId
+      ).run()
+      created.push({ id: meta.last_row_id, name: it.name, slug })
+    } catch (e: any) {
+      errors.push({ name: it.name, error: e?.message ?? String(e) })
+    }
   }
   return c.json({ success: true, data: { created, errors } }, 201)
 })
