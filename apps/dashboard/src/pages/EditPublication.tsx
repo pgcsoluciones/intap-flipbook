@@ -2287,7 +2287,7 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
       )}
 
       {action.type === 'show_hide' && (
-        <PropGroup label=”Elemento a mostrar u ocultar”>
+        <PropGroup label="Elemento a mostrar u ocultar">
           {targets.length === 0 ? (
             <p style={cp.hint}>
               Primero selecciona el elemento objetivo y asígnale un “Nombre del elemento”
@@ -2295,7 +2295,7 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
             </p>
           ) : (
             <select style={s.propInput} value={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })}>
-              <option value=””>— Selecciona un elemento —</option>
+              <option value="">— Selecciona un elemento —</option>
               {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           )}
