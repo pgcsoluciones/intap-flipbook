@@ -1499,6 +1499,12 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'
   const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen', icon: 'Icono', widget: 'Widget', hotspot: 'Punto activo' }
 
+  // Elementos de esta página que tienen nombre asignado (excepto el actual): posibles
+  // objetivos para la acción "Mostrar / ocultar". Se muestra el nombre, se guarda el elementId.
+  const namedTargets = (canvas?.getObjects?.() ?? [])
+    .filter((o: any) => o !== obj && o.data?.name && o.data?.elementId)
+    .map((o: any) => ({ id: o.data.elementId as string, name: o.data.name as string }))
+
   return (
     <div style={s.propsScroll}>
       <div style={s.rightHeader}>{titleMap[kind] ?? 'Elemento'}</div>
@@ -1537,6 +1543,23 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
 
         <PropGroup label="Opacidad">
           <input type="range" min={0} max={1} step={0.05} defaultValue={obj.opacity ?? 1} onChange={(e) => set({ opacity: +e.target.value })} style={{ width: '100%' }} />
+        </PropGroup>
+
+        {/* Nombre amigable del elemento. Internamente se le asigna un elementId único
+            e inmutable (no editable) para que otra acción pueda apuntarlo de forma segura
+            aunque dos elementos compartan el mismo nombre visible. */}
+        <PropGroup label="Nombre del elemento">
+          <input
+            style={s.propInput}
+            placeholder="ej: Precio apartamento"
+            defaultValue={(obj as any).data?.name ?? ''}
+            onChange={(e) => {
+              const name = e.target.value
+              const existing = (obj as any).data?.elementId
+              setData({ name, elementId: existing || `el_${Math.random().toString(36).slice(2, 9)}` })
+            }}
+          />
+          <p style={cp.hint}>Asígnale un nombre para poder mostrarlo u ocultarlo desde un botón o zona (acción "Mostrar / ocultar elemento").</p>
         </PropGroup>
 
         {/* ── TEXTO ── */}
@@ -1644,7 +1667,7 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
         {kind !== 'button' && kind !== 'widget' && (
           <>
             <div style={s.actionDivider}>Acción al hacer clic</div>
-            <ActionEditor data={(obj as any).data ?? {}} pages={pages} setData={setData} />
+            <ActionEditor data={(obj as any).data ?? {}} pages={pages} setData={setData} targets={namedTargets} />
           </>
         )}
 
@@ -1657,6 +1680,9 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
 // Propiedades específicas del botón: estilo + acción
 function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canvas: any; pages: any[]; setData: (p: any) => void; onChange: () => void }) {
   const data = (obj as any).data ?? {}
+  const namedTargets = (canvas?.getObjects?.() ?? [])
+    .filter((o: any) => o !== obj && o.data?.name && o.data?.elementId)
+    .map((o: any) => ({ id: o.data.elementId as string, name: o.data.name as string }))
   // Reaplica estilo al grupo (rect + text internos)
   function restyle(patch: any) {
     const next = { ...data, ...patch }
@@ -1710,7 +1736,7 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
       </PropGroup>
 
       <div style={s.actionDivider}>Acción al hacer clic</div>
-      <ActionEditor data={data} pages={pages} setData={setData} />
+      <ActionEditor data={data} pages={pages} setData={setData} targets={namedTargets} />
     </>
   )
 }
@@ -2143,7 +2169,7 @@ function ImageAdjuster({
 }
 
 // Editor de acción reutilizable (botones y zonas de enlace)
-function ActionEditor({ data, pages, setData }: { data: any; pages: any[]; setData: (p: any) => void }) {
+function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages: any[]; setData: (p: any) => void; targets?: { id: string; name: string }[] }) {
   const action = data.action ?? { type: 'link' }
   const setAction = (patch: any) => setData({ action: { ...action, ...patch } })
 
@@ -2249,9 +2275,27 @@ function ActionEditor({ data, pages, setData }: { data: any; pages: any[]; setDa
       )}
 
       {action.type === 'show_hide' && (
-        <PropGroup label="ID del elemento a mostrar/ocultar">
-          <input style={s.propInput} placeholder="ej: oferta1" defaultValue={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })} />
-        </PropGroup>
+        <>
+          <PropGroup label="Elemento a mostrar u ocultar">
+            {targets.length === 0 ? (
+              <p style={cp.hint}>
+                Primero asigna un “Nombre del elemento” a otro elemento de esta página
+                (selecciónalo y completa el campo en su panel de propiedades).
+              </p>
+            ) : (
+              <select style={s.propInput} value={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })}>
+                <option value="">— Selecciona un elemento —</option>
+                {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            )}
+          </PropGroup>
+          <PropGroup label="Estado inicial">
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: '#374151' }}>
+              <input type="checkbox" checked={!!action.startHidden} onChange={(e) => setAction({ startHidden: e.target.checked })} />
+              El elemento empieza oculto (se revela al hacer clic)
+            </label>
+          </PropGroup>
+        </>
       )}
     </>
   )

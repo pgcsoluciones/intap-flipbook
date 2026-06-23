@@ -253,7 +253,7 @@ async function init() {
   const DESIGN_H = Math.round(DESIGN_W * 1.414)
   const overlayScale = pageWidth / DESIGN_W
 
-  function runAction(a) {
+  function runAction(a, fcanvas) {
     if (!a || !a.type) return
     // Extraer la URL destino según el tipo de acción (para analítica)
     const urlDest = a.url || a.phone || a.email || a.whatsapp || null
@@ -338,8 +338,17 @@ async function init() {
         document.body.appendChild(link); link.click(); document.body.removeChild(link)
         break
       }
-      case 'show_hide':
+      case 'show_hide': {
+        // Alterna la visibilidad del elemento objetivo (identificado por su elementId único).
+        // El fcanvas es el StaticCanvas de Fabric de la página donde vive el elemento.
+        if (!a.target || !fcanvas) break
+        const tgt = fcanvas.getObjects().find((o) => (o.data || {}).elementId === a.target)
+        if (tgt) {
+          tgt.visible = !tgt.visible
+          fcanvas.renderAll()
+        }
         break
+      }
 
       case 'gallery_images': {
         const imgs = (a.images || []).filter(Boolean)
@@ -1060,7 +1069,7 @@ async function init() {
           const hs = document.createElement('div')
           hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;pointer-events:auto;`
           hs.innerHTML = `<div class="${animClass}" style="width:36px;height:36px;border-radius:50%;background:${color}44;border:2.5px solid ${color};display:flex;align-items:center;justify-content:center;"><div style="width:14px;height:14px;border-radius:50%;background:${color};"></div></div>`
-          if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action) })
+          if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action, fcanvas) })
           blockFlipDrag(hs)
           wrap.appendChild(hs)
           fcanvas.remove(obj)
@@ -1088,10 +1097,21 @@ async function init() {
         hot.href = 'javascript:void(0)'
         hot.title = ''
         hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;pointer-events:auto;`
-        hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action) })
+        hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action, fcanvas) })
         blockFlipDrag(hot)
         wrap.appendChild(hot)
       })
+
+      // Visibilidad inicial: los elementos cuyo "objetivo" de una acción show_hide
+      // está marcado como startHidden arrancan ocultos (se revelan al hacer clic).
+      fcanvas.getObjects().forEach((obj) => {
+        const act = (obj.data || {}).action
+        if (act && act.type === 'show_hide' && act.startHidden && act.target) {
+          const tgt = fcanvas.getObjects().find((o) => (o.data || {}).elementId === act.target)
+          if (tgt) tgt.visible = false
+        }
+      })
+
       fcanvas.renderAll()
       // Fade-in del overlay una vez que Fabric.js terminó de renderizar —
       // evita el "flash" de elementos que aparecen de golpe sobre la imagen.
