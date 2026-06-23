@@ -91,9 +91,9 @@ export default function AdminSvg() {
         <div style={s.grid}>
           {resources.map((r) => (
             <div key={r.id} style={{ ...s.card, ...(r.status === 'archived' ? { opacity: 0.55 } : {}) }}>
-              <div style={s.preview}>
-                <img src={r.svg_url} alt={r.name} style={s.previewImg} loading="lazy" />
-              </div>
+              {/* Miniatura inline: fetch del SVG y dangerouslySetInnerHTML evita
+                  problemas de xmlns/content-type que rompen <img src=svg_url> */}
+              <SvgThumb url={r.svg_url} />
               <div style={s.cardBody}>
                 <div style={s.cardName} title={r.name}>{r.name}</div>
                 <div style={s.cardMeta}>{r.family_name ?? 'Sin familia'} · v{r.version}</div>
@@ -109,6 +109,11 @@ export default function AdminSvg() {
                       await api.adminSvg.archive(r.id); load()
                     }}>Archivar</button>
                   )}
+                  <button style={s.miniBtnDelete} onClick={async () => {
+                    if (!confirm(`¿Eliminar definitivamente "${r.name}"? Se borrará de la base de datos y de R2. Los diseños que ya lo usan no se rompen (el SVG ya fue incrustado).`)) return
+                    try { await api.adminSvg.remove(r.id); load() }
+                    catch (e: any) { alert(e?.message ?? 'Error al eliminar') }
+                  }}>✕</button>
                 </div>
               </div>
             </div>
@@ -387,6 +392,29 @@ function FamiliesModal({ families, onClose, onChange }: { families: any[]; onClo
   )
 }
 
+// ─── Miniatura SVG inline ─────────────────────────────────────────────────────
+// Fetch del archivo y renderizado via dangerouslySetInnerHTML: evita los
+// problemas de xmlns/content-type que rompen el elemento <img src=svg_url>.
+function SvgThumb({ url }: { url: string }) {
+  const [svg, setSvg] = useState('')
+  useEffect(() => {
+    if (!url) return
+    fetch(url).then((r) => r.text()).then((t) => {
+      // Quedarse solo con el bloque <svg>…</svg>
+      const m = t.match(/<svg[\s\S]*<\/svg>/i)
+      setSvg(m ? m[0] : '')
+    }).catch(() => setSvg(''))
+  }, [url])
+  return (
+    <div style={s.preview}>
+      {svg
+        ? <div style={s.previewSvg} dangerouslySetInnerHTML={{ __html: svg }} />
+        : <div style={{ color: '#d1d5db', fontSize: 11 }}>…</div>
+      }
+    </div>
+  )
+}
+
 // ─── Modal genérico ───────────────────────────────────────────────────────────
 function Modal({ title, children, onClose, wide }: { title: string; children: any; onClose: () => void; wide?: boolean }) {
   return (
@@ -419,7 +447,7 @@ const s: Record<string, React.CSSProperties> = {
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 },
   card: { border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden', background: '#fff' },
   preview: { height: 100, background: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 },
-  previewImg: { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' },
+  previewSvg: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   cardBody: { padding: 10 },
   cardName: { fontSize: 13, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   cardMeta: { fontSize: 11, color: '#9ca3af', margin: '2px 0 6px' },
@@ -428,6 +456,7 @@ const s: Record<string, React.CSSProperties> = {
   cardActions: { display: 'flex', gap: 6 },
   miniBtn: { flex: 1, fontSize: 12, padding: '5px 0', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer' },
   miniBtnDanger: { flex: 1, fontSize: 12, padding: '5px 8px', border: '1px solid #fecaca', borderRadius: 6, background: '#fff', color: '#dc2626', cursor: 'pointer' },
+  miniBtnDelete: { fontSize: 12, padding: '5px 8px', border: '1px solid #fecaca', borderRadius: 6, background: '#fff', color: '#dc2626', cursor: 'pointer' },
   primBtn: { padding: '8px 16px', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   secBtn: { padding: '8px 16px', background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 13, cursor: 'pointer' },
   backdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 },

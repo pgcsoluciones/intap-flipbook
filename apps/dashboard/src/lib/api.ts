@@ -186,6 +186,8 @@ export const api = {
       request<{ success: true }>(`/admin/svg/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     archive: (id: number | string) =>
       request<{ success: true }>(`/admin/svg/${id}/archive`, { method: 'PATCH' }),
+    remove: (id: number | string) =>
+      request<{ success: true }>(`/admin/svg/${id}`, { method: 'DELETE' }),
     newVersion: (id: number | string, svg_content: string) =>
       request<{ success: true; data: { version: number; svg_url: string } }>(`/admin/svg/${id}/version`, {
         method: 'POST', body: JSON.stringify({ svg_content }),

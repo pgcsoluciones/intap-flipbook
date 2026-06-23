@@ -231,6 +231,40 @@ svg.put('/:id', async (c) => {
   return c.json({ success: true })
 })
 
+// Elimina definitivamente un recurso: borra de D1 y de R2.
+// Los canvas ya creados no se rompen porque Fabric.js incrusta el SVG en el
+// canvas_json al insertar (no referencia la URL en tiempo de visualización).
+svg.delete('/:id', async (c) => {
+  const id = c.req.param('id')
+  try {
+    const row = await c.env.DB.prepare('SELECT svg_url FROM svg_resources WHERE id = ?')
+      .bind(id).first<{ svg_url: string }>()
+    if (!row) return c.json({ success: false, error: 'Recurso no encontrado' }, 404)
+
+    // Borrar el archivo de R2
+    const base = c.env.R2_PUBLIC_BASE_URL.replace(/\/+$/, '')
+    const key = row.svg_url.replace(`${base}/`, '')
+    await c.env.MEDIA.delete(key)
+
+    // Borrar versiones anteriores de R2
+    const { results: versions } = await c.env.DB.prepare(
+      'SELECT svg_url FROM svg_resource_versions WHERE resource_id = ?'
+    ).bind(id).all<{ svg_url: string }>()
+    for (const v of versions) {
+      const vkey = v.svg_url.replace(`${base}/`, '')
+      await c.env.MEDIA.delete(vkey)
+    }
+
+    // Borrar de D1 (versiones primero por FK, luego el recurso)
+    await c.env.DB.prepare('DELETE FROM svg_resource_versions WHERE resource_id = ?').bind(id).run()
+    await c.env.DB.prepare('DELETE FROM svg_resources WHERE id = ?').bind(id).run()
+
+    return c.json({ success: true })
+  } catch (e: any) {
+    return c.json({ success: false, error: `Error al eliminar: ${e?.message ?? e}` }, 500)
+  }
+})
+
 // Archiva un recurso: no disponible para nuevas inserciones, pero no rompe
 // documentos existentes (siguen apuntando al svg_url, que permanece en R2).
 svg.patch('/:id/archive', async (c) => {
