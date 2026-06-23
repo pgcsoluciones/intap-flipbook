@@ -1102,14 +1102,10 @@ async function init() {
         wrap.appendChild(hot)
       })
 
-      // Visibilidad inicial: los elementos cuyo "objetivo" de una acción show_hide
-      // está marcado como startHidden arrancan ocultos (se revelan al hacer clic).
+      // Visibilidad inicial: cualquier elemento con data.startHidden = true arranca invisible.
+      // Esto es independiente de si tiene o no un disparador configurado.
       fcanvas.getObjects().forEach((obj) => {
-        const act = (obj.data || {}).action
-        if (act && act.type === 'show_hide' && act.startHidden && act.target) {
-          const tgt = fcanvas.getObjects().find((o) => (o.data || {}).elementId === act.target)
-          if (tgt) tgt.visible = false
-        }
+        if ((obj.data || {}).startHidden) obj.visible = false
       })
 
       fcanvas.renderAll()

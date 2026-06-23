@@ -1562,6 +1562,17 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
           <p style={cp.hint}>Asígnale un nombre para poder mostrarlo u ocultarlo desde un botón o zona (acción "Mostrar / ocultar elemento").</p>
         </PropGroup>
 
+        <PropGroup label="Visibilidad inicial">
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: '#374151' }}>
+            <input
+              type="checkbox"
+              checked={!!(obj as any).data?.startHidden}
+              onChange={(e) => setData({ startHidden: e.target.checked })}
+            />
+            Empieza oculto (se revela al hacer clic en el disparador)
+          </label>
+        </PropGroup>
+
         {/* ── TEXTO ── */}
         {kind === 'text' && (
           <>
