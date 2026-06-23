@@ -2459,6 +2459,10 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'
   const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen', icon: 'Icono', widget: 'Widget', hotspot: 'Punto activo', svglib: 'Gráfico SVG' }
 
+  // Inspector con dos pestañas: Configuraciones (estilo/posición) y Acciones (interacción).
+  const [insTab, setInsTab] = React.useState<'config' | 'actions'>('config')
+  const isWidget = kind === 'widget'
+
   // Elementos de esta página que tienen nombre asignado (excepto el actual): posibles
   // objetivos para la acción "Mostrar / ocultar". Se muestra el nombre, se guarda el elementId.
   const namedTargets = (canvas?.getObjects?.() ?? [])
@@ -2468,6 +2472,14 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
   return (
     <div style={s.propsScroll}>
       <div style={s.rightHeader}>{titleMap[kind] ?? 'Elemento'}</div>
+
+      {/* Pestañas del inspector */}
+      <div style={s.insTabs}>
+        <button style={{ ...s.insTabBtn, ...(insTab === 'config' ? s.insTabActive : {}) }} onClick={() => setInsTab('config')}>Configuraciones</button>
+        <button style={{ ...s.insTabBtn, ...(insTab === 'actions' ? s.insTabActive : {}) }} onClick={() => setInsTab('actions')}>Acciones</button>
+      </div>
+
+      {insTab === 'config' && (
       <div style={s.props}>
 
         {/* Posición — común a todos */}
@@ -2643,17 +2655,22 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
           <WidgetProps obj={obj} setData={setData} />
         )}
 
-        {/* ── ACCIÓN: disponible para todos menos botón y widget
-            (el botón ya incluye su ActionEditor; el widget es autónomo) ── */}
-        {kind !== 'button' && kind !== 'widget' && (
+        <button style={s.deleteBtn} onClick={() => { canvas?.remove(obj); canvas?.requestRenderAll(); onChange() }}>Eliminar elemento</button>
+      </div>
+      )}
+
+      {insTab === 'actions' && (
+      <div style={s.props}>
+        {isWidget ? (
+          <p style={cp.hint}>Este widget es autónomo: su comportamiento se configura en la pestaña <b>Configuraciones</b>.</p>
+        ) : (
           <>
-            <div style={s.actionDivider}>Acción al hacer clic</div>
+            <TriggerSelector data={(obj as any).data ?? {}} setData={setData} />
             <ActionEditor data={(obj as any).data ?? {}} pages={pages} setData={setData} targets={namedTargets} />
           </>
         )}
-
-        <button style={s.deleteBtn} onClick={() => { canvas?.remove(obj); canvas?.requestRenderAll(); onChange() }}>Eliminar elemento</button>
       </div>
+      )}
     </div>
   )
 }
@@ -2896,8 +2913,6 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
         )
       })()}
 
-      <div style={s.actionDivider}>Acción al hacer clic</div>
-      <ActionEditor data={data} pages={pages} setData={setData} targets={namedTargets} />
     </>
   )
 }
@@ -3329,18 +3344,57 @@ function ImageAdjuster({
   )
 }
 
+// Selector del evento que dispara la acción (pestaña Acciones del inspector).
+// Nota: hoy el viewer ejecuta la acción al hacer clic/tap. Los demás disparadores
+// (hover, mantener presionado, al cargar) quedan guardados para soporte futuro.
+const TRIGGERS: { key: string; label: string }[] = [
+  { key: 'click', label: 'Al hacer clic' },
+  { key: 'hover', label: 'Al pasar el cursor' },
+  { key: 'hold',  label: 'Mantener presionado' },
+  { key: 'load',  label: 'Al cargar la página' },
+]
+function TriggerSelector({ data, setData }: { data: any; setData: (p: any) => void }) {
+  const trigger = data.trigger ?? 'click'
+  return (
+    <PropGroup label="Evento disparador">
+      <select style={s.propInput} value={trigger} onChange={(e) => setData({ trigger: e.target.value })}>
+        {TRIGGERS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+      </select>
+      {trigger !== 'click' && <p style={cp.hint}>El disparador “{TRIGGERS.find((t) => t.key === trigger)?.label}” se guardará; por ahora el visor ejecuta la acción al hacer clic/tap (soporte ampliado próximamente).</p>}
+    </PropGroup>
+  )
+}
+
 // Editor de acción reutilizable (botones y zonas de enlace)
 function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages: any[]; setData: (p: any) => void; targets?: { id: string; name: string }[] }) {
   const action = data.action ?? { type: 'link' }
   const setAction = (patch: any) => setData({ action: { ...action, ...patch } })
+  const current = action.type ?? 'none'
 
   return (
     <>
       <PropGroup label="Tipo de acción">
-        <select style={s.propInput} value={action.type ?? 'none'} onChange={(e) => setAction({ type: e.target.value })}>
-          <option value="none">— Sin acción —</option>
-          {ACTION_TYPES.map((a) => <option key={a.type} value={a.type}>{a.label}</option>)}
-        </select>
+        <div style={s.actionGrid}>
+          <button
+            style={{ ...s.actionCard, ...(current === 'none' ? s.actionCardActive : {}) }}
+            onClick={() => setAction({ type: 'none' })}
+            title="Sin acción"
+          >
+            <Icon name="circle" size={16} />
+            <span style={s.actionCardLabel}>Ninguna</span>
+          </button>
+          {ACTION_TYPES.map((a) => (
+            <button
+              key={a.type}
+              style={{ ...s.actionCard, ...(current === a.type ? s.actionCardActive : {}) }}
+              onClick={() => setAction({ type: a.type })}
+              title={a.label}
+            >
+              <Icon name={a.icon} size={16} />
+              <span style={s.actionCardLabel}>{a.label}</span>
+            </button>
+          ))}
+        </div>
       </PropGroup>
 
       {action.type === 'link' && (
@@ -3781,6 +3835,13 @@ const s: Record<string, React.CSSProperties> = {
   canvasWrap:  { flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 32, alignItems: 'flex-start' },
   adjustBar:   { display: 'flex', alignItems: 'center', gap: 14, padding: '8px 16px', background: '#eef2ff', borderBottom: '1px solid #c7d2fe', flexShrink: 0, flexWrap: 'wrap' } as React.CSSProperties,
   adjustReset: { background: '#fff', border: '1px solid #c7d2fe', borderRadius: 7, padding: '5px 12px', fontSize: 12, fontWeight: 600, color: '#4338ca', cursor: 'pointer', fontFamily: 'inherit' } as React.CSSProperties,
+  insTabs:   { display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', flexShrink: 0 } as React.CSSProperties,
+  insTabBtn: { flex: 1, padding: '10px 8px', border: 'none', borderBottom: '2px solid transparent', background: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, color: '#6b7280', fontFamily: 'inherit' } as React.CSSProperties,
+  insTabActive: { color: '#4F46E5', borderBottom: '2px solid #4F46E5' } as React.CSSProperties,
+  actionGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 } as React.CSSProperties,
+  actionCard: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '8px 4px', border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', cursor: 'pointer', color: '#374151', fontFamily: 'inherit', minHeight: 56 } as React.CSSProperties,
+  actionCardActive: { borderColor: '#4F46E5', background: '#eef2ff', color: '#4338ca' } as React.CSSProperties,
+  actionCardLabel: { fontSize: 9.5, fontWeight: 600, textAlign: 'center', lineHeight: 1.15 } as React.CSSProperties,
   adjustDone:  { background: '#4F46E5', border: 'none', borderRadius: 7, padding: '5px 14px', fontSize: 12, fontWeight: 700, color: '#fff', cursor: 'pointer', fontFamily: 'inherit', marginLeft: 'auto' } as React.CSSProperties,
   pageNav:   { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 16px', background: '#fff', borderTop: '1px solid #e5e7eb', flexShrink: 0 },
   pageNavBtn: { background: 'none', border: '1px solid #e5e7eb', borderRadius: 8, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 14, color: '#374151', transition: 'background .15s', fontFamily: 'inherit' } as React.CSSProperties,
