@@ -63,6 +63,19 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
     case 'like':      return <svg {...p}><path d="M7 10v10H4V10zM7 10l4-7c1.3 0 2 .8 2 2l-.7 5H19a2 2 0 0 1 2 2.3l-1 6A2 2 0 0 1 18 21H7"/></svg>
     case 'quiz':      return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.3 2.4c-.8.3-1.3 1-1.3 1.8M12 17h.01"/></svg>
     case 'embed':     return <svg {...p}><path d="m9 8-5 4 5 4M15 8l5 4-5 4"/></svg>
+    case 'group':     return <svg {...p}><rect x="3" y="3" width="13" height="13" rx="1.5"/><path d="M8 21h11a2 2 0 0 0 2-2V8"/></svg>
+    case 'ungroup':   return <svg {...p}><rect x="3" y="3" width="9" height="9" rx="1.5"/><rect x="12" y="12" width="9" height="9" rx="1.5"/></svg>
+    case 'forward':   return <svg {...p}><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M3 12h2M12 3v2"/></svg>
+    case 'backward':  return <svg {...p}><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M20 11v8a1 1 0 0 1-1 1h-8"/></svg>
+    case 'lock':      return <svg {...p}><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+    case 'unlock':    return <svg {...p}><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>
+    case 'replace':   return <svg {...p}><path d="M4 8a8 8 0 0 1 13-2l3 3M20 16a8 8 0 0 1-13 2l-3-3"/><path d="M20 4v5h-5M4 20v-5h5"/></svg>
+    case 'alignLeft':   return <svg {...p}><path d="M4 4v16"/><rect x="7" y="7" width="11" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/></svg>
+    case 'alignCenterH':return <svg {...p}><path d="M12 4v16"/><rect x="6" y="7" width="12" height="4" rx="1"/><rect x="8" y="14" width="8" height="4" rx="1"/></svg>
+    case 'alignRight':  return <svg {...p}><path d="M20 4v16"/><rect x="6" y="7" width="11" height="4" rx="1"/><rect x="10" y="14" width="7" height="4" rx="1"/></svg>
+    case 'alignTop':    return <svg {...p}><path d="M4 4h16"/><rect x="7" y="7" width="4" height="11" rx="1"/><rect x="14" y="7" width="4" height="7" rx="1"/></svg>
+    case 'alignMiddle': return <svg {...p}><path d="M4 12h16"/><rect x="7" y="6" width="4" height="12" rx="1"/><rect x="14" y="8" width="4" height="8" rx="1"/></svg>
+    case 'alignBottom': return <svg {...p}><path d="M4 20h16"/><rect x="7" y="6" width="4" height="11" rx="1"/><rect x="14" y="10" width="4" height="7" rx="1"/></svg>
     default:          return <svg {...p}><circle cx="12" cy="12" r="8"/></svg>
   }
 }
@@ -305,6 +318,7 @@ export default function EditPublication() {
 
   const [activeTool, setActiveTool] = useState<ToolKey>('pages')
   const [panelOpen, setPanelOpen]   = useState(true)
+  const [ctxMenu, setCtxMenu]       = useState<{ x: number; y: number } | null>(null)
   const [templates, setTemplates]   = useState<any[]>([])
   const [tplQuery, setTplQuery]     = useState('')
   const [bgColor, setBgColor]       = useState('#ffffff')
@@ -322,6 +336,7 @@ export default function EditPublication() {
   const imgInputRef  = useRef<HTMLInputElement>(null)
   const svgInputRef = useRef<HTMLInputElement>(null)
   const pdfPagesInputRef = useRef<HTMLInputElement>(null)
+  const replaceInputRef = useRef<HTMLInputElement>(null)
   const rightPanelRef = useRef<HTMLDivElement>(null)
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
@@ -942,6 +957,83 @@ export default function EditPublication() {
   }
   function bringToFront() { const o = fabricRef.current?.getActiveObject(); if (o) { o.bringToFront(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
   function sendToBack() { const o = fabricRef.current?.getActiveObject(); if (o) { o.sendToBack(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
+  function bringForward() { const o = fabricRef.current?.getActiveObject(); if (o) { o.bringForward(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
+  function sendBackward() { const o = fabricRef.current?.getActiveObject(); if (o) { o.sendBackwards(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
+
+  // Agrupar la selección múltiple en un solo objeto / desagrupar un grupo.
+  function groupSelected() {
+    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
+    if (o.type === 'activeSelection') { o.toGroup(); c.requestRenderAll(); setSelectVersion((v) => v + 1); scheduleAutosave() }
+  }
+  function ungroupSelected() {
+    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
+    if (o.type === 'group') { o.toActiveSelection(); c.requestRenderAll(); setSelectVersion((v) => v + 1); scheduleAutosave() }
+  }
+
+  // Bloquear / desbloquear: impide mover, escalar y rotar el objeto.
+  function toggleLock() {
+    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
+    const locked = !o.lockMovementX
+    o.set({
+      lockMovementX: locked, lockMovementY: locked,
+      lockScalingX: locked, lockScalingY: locked, lockRotation: locked,
+      hasControls: !locked, editable: !locked,
+    })
+    o.data = { ...(o.data ?? {}), locked }
+    c.discardActiveObject(); c.requestRenderAll(); setSelected(null); setSelectVersion((v) => v + 1); scheduleAutosave()
+  }
+
+  // Reemplazar la imagen seleccionada por otra (sube y cambia el src).
+  function replaceSelected() {
+    const o = fabricRef.current?.getActiveObject()
+    const kind = o?.data?.kind
+    if (!o || (kind !== 'image' && o.type !== 'image')) { alert('Selecciona una imagen para reemplazarla.'); return }
+    replaceInputRef.current?.click()
+  }
+  async function handleReplaceFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; e.target.value = ''
+    if (!file) return
+    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
+    setUploading(true)
+    try {
+      const up = await api.upload(file)
+      o.setSrc(up.data.url, () => {
+        o.data = { ...(o.data ?? {}), src: up.data.url }
+        c.requestRenderAll(); scheduleAutosave()
+      })
+    } catch (err: any) { alert(err?.message ?? 'No se pudo reemplazar la imagen') }
+    finally { setUploading(false) }
+  }
+
+  // Alinear el objeto respecto al lienzo.
+  function alignSelected(how: 'left' | 'centerH' | 'right' | 'top' | 'middle' | 'bottom') {
+    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
+    const W = c.getWidth(), H = c.getHeight()
+    const bw = o.getScaledWidth?.() ?? o.width ?? 0
+    const bh = o.getScaledHeight?.() ?? o.height ?? 0
+    // Compensa el origen (la mayoría usan left/top, los grupos pueden usar center)
+    const offX = (o.originX === 'center') ? bw / 2 : 0
+    const offY = (o.originY === 'center') ? bh / 2 : 0
+    switch (how) {
+      case 'left':    o.set({ left: offX }); break
+      case 'centerH': o.set({ left: (W - bw) / 2 + offX }); break
+      case 'right':   o.set({ left: W - bw + offX }); break
+      case 'top':     o.set({ top: offY }); break
+      case 'middle':  o.set({ top: (H - bh) / 2 + offY }); break
+      case 'bottom':  o.set({ top: H - bh + offY }); break
+    }
+    o.setCoords(); c.requestRenderAll(); setSelectVersion((v) => v + 1); scheduleAutosave()
+  }
+
+  // Menú contextual (clic derecho) sobre el lienzo.
+  function onCanvasContextMenu(e: React.MouseEvent) {
+    e.preventDefault()
+    const c = fabricRef.current; if (!c) return
+    const target = c.findTarget?.(e.nativeEvent, false)
+    if (target) { c.setActiveObject(target); c.requestRenderAll(); setSelected(target); setSelectVersion((v) => v + 1) }
+    else { c.discardActiveObject(); c.requestRenderAll(); setSelected(null) }
+    setCtxMenu({ x: e.clientX, y: e.clientY })
+  }
 
   function selectTool(key: ToolKey) {
     if (key === activeTool && panelOpen) { setPanelOpen(false); return }
@@ -1058,11 +1150,26 @@ export default function EditPublication() {
             <ToolbarBtn icon="undo"      title="Deshacer (Ctrl+Z)" onClick={undo}             disabled={!canUndo} />
             <ToolbarBtn icon="redo"      title="Rehacer (Ctrl+Y)"  onClick={redo}             disabled={!canRedo} />
             <div style={s.toolSep} />
-            <ToolbarBtn icon="trash"     title="Eliminar"          onClick={deleteSelected}   disabled={!selected} />
             <ToolbarBtn icon="duplicate" title="Duplicar"          onClick={duplicateSelected} disabled={!selected} />
+            <ToolbarBtn icon="trash"     title="Eliminar"          onClick={deleteSelected}   disabled={!selected} />
+            <div style={s.toolSep} />
+            <ToolbarBtn icon="group"     title="Agrupar"           onClick={groupSelected}    disabled={selected?.type !== 'activeSelection'} />
+            <ToolbarBtn icon="ungroup"   title="Desagrupar"        onClick={ungroupSelected}  disabled={selected?.type !== 'group'} />
             <div style={s.toolSep} />
             <ToolbarBtn icon="front"     title="Traer al frente"   onClick={bringToFront}     disabled={!selected} />
+            <ToolbarBtn icon="forward"   title="Adelantar"         onClick={bringForward}     disabled={!selected} />
+            <ToolbarBtn icon="backward"  title="Atrasar"           onClick={sendBackward}     disabled={!selected} />
             <ToolbarBtn icon="back"      title="Enviar al fondo"   onClick={sendToBack}       disabled={!selected} />
+            <div style={s.toolSep} />
+            <ToolbarBtn icon={selected?.data?.locked ? 'unlock' : 'lock'} title={selected?.data?.locked ? 'Desbloquear' : 'Bloquear'} onClick={toggleLock} disabled={!selected} />
+            <ToolbarBtn icon="replace"   title="Reemplazar imagen" onClick={replaceSelected}  disabled={!selected} />
+            <div style={s.toolSep} />
+            <ToolbarBtn icon="alignLeft"    title="Alinear a la izquierda" onClick={() => alignSelected('left')}    disabled={!selected} />
+            <ToolbarBtn icon="alignCenterH" title="Centrar horizontal"     onClick={() => alignSelected('centerH')} disabled={!selected} />
+            <ToolbarBtn icon="alignRight"   title="Alinear a la derecha"   onClick={() => alignSelected('right')}   disabled={!selected} />
+            <ToolbarBtn icon="alignTop"     title="Alinear arriba"         onClick={() => alignSelected('top')}     disabled={!selected} />
+            <ToolbarBtn icon="alignMiddle"  title="Centrar vertical"       onClick={() => alignSelected('middle')}  disabled={!selected} />
+            <ToolbarBtn icon="alignBottom"  title="Alinear abajo"          onClick={() => alignSelected('bottom')}  disabled={!selected} />
             <div style={{ flex: 1 }} />
             <div style={s.zoomGroup}>
               {[50, 75, 100, 125].map((z) => (
@@ -1075,7 +1182,10 @@ export default function EditPublication() {
 
           <div style={s.canvasWrap}>
             {activePage ? (
-              <div style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}>
+              <div
+                style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
+                onContextMenu={onCanvasContextMenu}
+              >
                 <canvas ref={canvasRef} />
               </div>
             ) : (
@@ -1183,7 +1293,63 @@ export default function EditPublication() {
           if (f) importPdfPages(f)
         }}
       />
+      <input
+        ref={replaceInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif"
+        style={{ display: 'none' }}
+        onChange={handleReplaceFile}
+      />
+
+      {/* ── Menú contextual (clic derecho) ── */}
+      {ctxMenu && (
+        <>
+          <div style={s.ctxOverlay} onClick={() => setCtxMenu(null)} onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null) }} />
+          <div style={{ ...s.ctxMenu, left: ctxMenu.x, top: ctxMenu.y }}>
+            {selected ? (
+              <>
+                <CtxItem icon="duplicate" label="Duplicar"        onClick={() => { duplicateSelected(); setCtxMenu(null) }} />
+                <CtxItem icon="trash"     label="Eliminar"        onClick={() => { deleteSelected(); setCtxMenu(null) }} />
+                <div style={s.ctxSep} />
+                {selected?.type === 'activeSelection' && <CtxItem icon="group" label="Agrupar" onClick={() => { groupSelected(); setCtxMenu(null) }} />}
+                {selected?.type === 'group' && <CtxItem icon="ungroup" label="Desagrupar" onClick={() => { ungroupSelected(); setCtxMenu(null) }} />}
+                <CtxItem icon="front"    label="Traer al frente" onClick={() => { bringToFront(); setCtxMenu(null) }} />
+                <CtxItem icon="forward"  label="Adelantar"       onClick={() => { bringForward(); setCtxMenu(null) }} />
+                <CtxItem icon="backward" label="Atrasar"         onClick={() => { sendBackward(); setCtxMenu(null) }} />
+                <CtxItem icon="back"     label="Enviar al fondo" onClick={() => { sendToBack(); setCtxMenu(null) }} />
+                <div style={s.ctxSep} />
+                <CtxItem icon={selected?.data?.locked ? 'unlock' : 'lock'} label={selected?.data?.locked ? 'Desbloquear' : 'Bloquear'} onClick={() => { toggleLock(); setCtxMenu(null) }} />
+                {(selected?.data?.kind === 'image' || selected?.type === 'image') &&
+                  <CtxItem icon="replace" label="Reemplazar imagen" onClick={() => { setCtxMenu(null); replaceSelected() }} />}
+                <div style={s.ctxSep} />
+                <CtxItem icon="alignLeft"    label="Alinear izquierda" onClick={() => { alignSelected('left'); setCtxMenu(null) }} />
+                <CtxItem icon="alignCenterH" label="Centrar horizontal" onClick={() => { alignSelected('centerH'); setCtxMenu(null) }} />
+                <CtxItem icon="alignRight"   label="Alinear derecha"   onClick={() => { alignSelected('right'); setCtxMenu(null) }} />
+                <CtxItem icon="alignTop"     label="Alinear arriba"    onClick={() => { alignSelected('top'); setCtxMenu(null) }} />
+                <CtxItem icon="alignMiddle"  label="Centrar vertical"  onClick={() => { alignSelected('middle'); setCtxMenu(null) }} />
+                <CtxItem icon="alignBottom"  label="Alinear abajo"     onClick={() => { alignSelected('bottom'); setCtxMenu(null) }} />
+              </>
+            ) : (
+              <div style={{ padding: '8px 12px', color: '#9ca3af', fontSize: 12 }}>Selecciona un elemento</div>
+            )}
+          </div>
+        </>
+      )}
     </div>
+  )
+}
+
+function CtxItem({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
+  return (
+    <button
+      style={s.ctxItem}
+      onClick={onClick}
+      onMouseEnter={(e) => (e.currentTarget.style.background = '#f3f4f6')}
+      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+    >
+      <Icon name={icon} size={15} />
+      <span>{label}</span>
+    </button>
   )
 }
 
@@ -2708,6 +2874,10 @@ const s: Record<string, React.CSSProperties> = {
   toolbar:   { display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', height: 44, background: '#fff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 },
   toolBtn:   { background: 'none', border: '1px solid transparent', borderRadius: 8, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151' },
   toolSep:   { width: 1, height: 20, background: '#e5e7eb', margin: '0 6px' },
+  ctxOverlay:{ position: 'fixed', inset: 0, zIndex: 4000 },
+  ctxMenu:   { position: 'fixed', zIndex: 4001, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 10px 40px rgba(0,0,0,0.18)', padding: 6, minWidth: 190, maxHeight: '80vh', overflowY: 'auto' },
+  ctxItem:   { display: 'flex', alignItems: 'center', gap: 10, width: '100%', border: 'none', background: 'transparent', borderRadius: 7, padding: '7px 10px', fontSize: 13, color: '#374151', cursor: 'pointer', textAlign: 'left' as const },
+  ctxSep:    { height: 1, background: '#f0f0f0', margin: '4px 0' },
   zoomGroup: { display: 'flex', gap: 2 },
   zoomBtn:   { background: 'none', border: '1px solid transparent', borderRadius: 12, padding: '3px 9px', fontSize: 11, cursor: 'pointer', color: '#6b7280', fontWeight: 500 },
   zoomActive:{ background: '#f3f4f6', borderColor: '#e5e7eb', color: '#111827', fontWeight: 600 },
