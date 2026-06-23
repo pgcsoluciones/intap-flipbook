@@ -529,10 +529,27 @@ export default function EditPublication() {
     // el timer de 1.2s expira con el canvas a medio cargar, sobreescribiendo datos.
     let isLoading = true
 
+    // Fondo de página en modo "cubrir": la hoja llena el recuadro A4 (W×H) sin
+    // deformarse, recortando el sobrante y centrando el recorte (cropX/cropY).
+    // Replica exactamente el `object-fit:cover` que usa el viewer (flipbook.js),
+    // así el editor y el flipbook publicado se ven idénticos aunque la hoja
+    // importada tenga otra proporción.
     fabric.Image.fromURL(activePage.image_url, (img: any) => {
-      img.scaleToWidth(W)
-      img.scaleToHeight(H)
-      img.set({ selectable: false, evented: false })
+      if (img && img.width && img.height) {
+        const iw = img.width, ih = img.height
+        const targetAspect = W / H
+        let cropW = iw, cropH = ih, cropX = 0, cropY = 0
+        if (iw / ih > targetAspect) { cropW = ih * targetAspect; cropX = (iw - cropW) / 2 }
+        else { cropH = iw / targetAspect; cropY = (ih - cropH) / 2 }
+        img.set({
+          cropX, cropY, width: cropW, height: cropH,
+          scaleX: W / cropW, scaleY: H / cropH,
+          originX: 'left', originY: 'top', left: 0, top: 0,
+          selectable: false, evented: false,
+        })
+      } else {
+        img.set({ selectable: false, evented: false })
+      }
       canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
     })
 
