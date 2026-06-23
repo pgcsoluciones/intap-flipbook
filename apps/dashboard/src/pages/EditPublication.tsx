@@ -319,6 +319,7 @@ export default function EditPublication() {
   const [activeTool, setActiveTool] = useState<ToolKey>('pages')
   const [panelOpen, setPanelOpen]   = useState(true)
   const [ctxMenu, setCtxMenu]       = useState<{ x: number; y: number } | null>(null)
+  const [alignRef, setAlignRef]     = useState<'canvas' | 'selection'>('canvas')
   const [templates, setTemplates]   = useState<any[]>([])
   const [tplQuery, setTplQuery]     = useState('')
   const [bgColor, setBgColor]       = useState('#ffffff')
@@ -328,6 +329,7 @@ export default function EditPublication() {
   const [svgLibLoaded, setSvgLibLoaded] = useState(false)
   const [svgLibQuery, setSvgLibQuery]   = useState('')
   const [svgLibFamily, setSvgLibFamily] = useState('') // '' = todas
+  const [svgSync, setSvgSync]           = useState(false) // sincronizar SVG en todas las páginas
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
@@ -424,6 +426,10 @@ export default function EditPublication() {
     })
   }, [id])
 
+  // Ref a pages para acceder dentro de persistCanvas sin re-crear el callback
+  const pagesRef = useRef<any[]>([])
+  useEffect(() => { pagesRef.current = pages }, [pages])
+
   // ── Autoguardado: guarda el canvas actual en segundo plano ──
   // Se llama tras cada cambio (debounce) y al cambiar de página.
   const persistCanvas = useCallback(async (pageId: string, canvas: any, flash = true) => {
@@ -433,6 +439,37 @@ export default function EditPublication() {
       const json = JSON.stringify(canvas.toJSON(['data']))
       await api.pages.saveCanvas(pageId, json)
       setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, canvas_json: json } : p)))
+
+      // Propagar objetos con syncGroupId a otras páginas.
+      // syncGroupId (identificador de sincronización) marca SVGs que deben ser iguales en todas las páginas.
+      // Solo sincronizamos propiedades visuales (escala, ángulo, datos) manteniendo la posición por página.
+      try {
+        const parsed = JSON.parse(json)
+        const synced: any[] = (parsed?.objects ?? []).filter((o: any) => o?.data?.syncGroupId)
+        if (synced.length > 0) {
+          const otherPages = pagesRef.current.filter((p) => p.id !== pageId && p.canvas_json)
+          for (const page of otherPages) {
+            try {
+              const pj = typeof page.canvas_json === 'string' ? JSON.parse(page.canvas_json) : page.canvas_json
+              let changed = false
+              const updatedObjs = (pj?.objects ?? []).map((o: any) => {
+                if (!o?.data?.syncGroupId) return o
+                const match = synced.find((s: any) => s.data.syncGroupId === o.data.syncGroupId)
+                if (!match) return o
+                changed = true
+                // Copia propiedades visuales pero conserva left/top/data.action de la copia local
+                return { ...match, left: o.left, top: o.top, data: { ...match.data, action: o.data?.action } }
+              })
+              if (changed) {
+                const newJson = JSON.stringify({ ...pj, objects: updatedObjs })
+                await api.pages.saveCanvas(page.id, newJson)
+                setPages((prev) => prev.map((p) => (p.id === page.id ? { ...p, canvas_json: newJson } : p)))
+              }
+            } catch { /* página con JSON inválido — se ignora */ }
+          }
+        }
+      } catch { /* ignorar errores de propagación */ }
+
       if (flash) {
         setSaveState('saved')
         clearTimeout(savedFlashTimer.current)
@@ -645,6 +682,46 @@ export default function EditPublication() {
     setActiveTool('buttons')
   }
 
+  // Crea un botón con icono SVG de la biblioteca a la izquierda del texto.
+  async function addButtonWithIcon(iconItem: any) {
+    if (iconItem.locked) {
+      alert(iconItem.upgrade_message || `Este recurso requiere plan superior.`)
+      return
+    }
+    const c = fabricRef.current; if (!c) return
+    const accent = '#4F46E5'
+    try {
+      const svgText = await api.svgRaw(iconItem.id)
+      fabric.loadSVGFromString(svgText, (objects: any[], options: any) => {
+        if (!objects?.length) return
+        const icon = fabric.util.groupSVGElements(objects, options)
+        icon.scaleToWidth(22)
+        icon.set({ originX: 'center', originY: 'center', left: -68, top: 0 })
+        const txt = new fabric.Text('Botón', {
+          fill: '#fff', fontSize: 14, fontFamily: 'Inter, sans-serif', fontWeight: 'bold',
+          originX: 'center', originY: 'center', left: 16, top: 0,
+        })
+        const bg = new fabric.Rect({
+          width: 200, height: 46, fill: accent, rx: 8, ry: 8,
+          originX: 'center', originY: 'center',
+        })
+        const btn = new fabric.Group([bg, icon, txt], {
+          left: 110, top: 130,
+          data: {
+            kind: 'button', label: 'Botón', bg: accent, textColor: '#fff', variant: 'solid',
+            svgIconId: iconItem.id,
+            action: { type: 'link' as ActionType, url: 'https://' },
+          },
+        })
+        c.add(btn); c.setActiveObject(btn); c.requestRenderAll()
+        setActiveTool('buttons')
+        scheduleAutosave()
+      })
+    } catch (e: any) {
+      alert(e?.message ?? 'No se pudo cargar el icono')
+    }
+  }
+
   // Inserta la imagen como un objeto editable Fabric sobre el canvas actual (NO crea página nueva)
   async function addImageElement(file: File) {
     const c = fabricRef.current; if (!c) return
@@ -795,7 +872,8 @@ export default function EditPublication() {
         if (!objects || !objects.length) { alert('No se pudo cargar el SVG.'); return }
         const obj = fabric.util.groupSVGElements(objects, options)
         obj.scaleToWidth(120)
-        obj.set({ left: 100, top: 100, data: { kind: 'svglib', svgResourceId: item.id, editable: item.editable } })
+        const syncId = svgSync ? crypto.randomUUID() : undefined
+        obj.set({ left: 100, top: 100, data: { kind: 'svglib', svgResourceId: item.id, editable: item.editable, ...(syncId ? { syncGroupId: syncId } : {}) } })
         c.add(obj); c.setActiveObject(obj); c.requestRenderAll()
         scheduleAutosave()
       })
@@ -1005,24 +1083,47 @@ export default function EditPublication() {
     finally { setUploading(false) }
   }
 
-  // Alinear el objeto respecto al lienzo.
+  // Alinear el objeto respecto al lienzo o a la selección múltiple.
   function alignSelected(how: 'left' | 'centerH' | 'right' | 'top' | 'middle' | 'bottom') {
     const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
-    const W = c.getWidth(), H = c.getHeight()
-    const bw = o.getScaledWidth?.() ?? o.width ?? 0
-    const bh = o.getScaledHeight?.() ?? o.height ?? 0
-    // Compensa el origen (la mayoría usan left/top, los grupos pueden usar center)
-    const offX = (o.originX === 'center') ? bw / 2 : 0
-    const offY = (o.originY === 'center') ? bh / 2 : 0
-    switch (how) {
-      case 'left':    o.set({ left: offX }); break
-      case 'centerH': o.set({ left: (W - bw) / 2 + offX }); break
-      case 'right':   o.set({ left: W - bw + offX }); break
-      case 'top':     o.set({ top: offY }); break
-      case 'middle':  o.set({ top: (H - bh) / 2 + offY }); break
-      case 'bottom':  o.set({ top: H - bh + offY }); break
+
+    if (alignRef === 'selection' && o.type === 'activeSelection') {
+      // Alinear objetos dentro de los límites de la selección múltiple.
+      // Las posiciones de sub-objetos son relativas al centro de la selección activa.
+      const selW = o.getScaledWidth?.() ?? o.width ?? 0
+      const selH = o.getScaledHeight?.() ?? o.height ?? 0
+      const objs: any[] = (o as any).getObjects()
+      objs.forEach((obj: any) => {
+        const bw = obj.getScaledWidth?.() ?? obj.width ?? 0
+        const bh = obj.getScaledHeight?.() ?? obj.height ?? 0
+        switch (how) {
+          case 'left':    obj.set({ left: -selW / 2 }); break
+          case 'centerH': obj.set({ left: -bw / 2 }); break
+          case 'right':   obj.set({ left: selW / 2 - bw }); break
+          case 'top':     obj.set({ top: -selH / 2 }); break
+          case 'middle':  obj.set({ top: -bh / 2 }); break
+          case 'bottom':  obj.set({ top: selH / 2 - bh }); break
+        }
+        obj.setCoords()
+      })
+      o.setCoords(); c.requestRenderAll()
+    } else {
+      const W = c.getWidth(), H = c.getHeight()
+      const bw = o.getScaledWidth?.() ?? o.width ?? 0
+      const bh = o.getScaledHeight?.() ?? o.height ?? 0
+      const offX = (o.originX === 'center') ? bw / 2 : 0
+      const offY = (o.originY === 'center') ? bh / 2 : 0
+      switch (how) {
+        case 'left':    o.set({ left: offX }); break
+        case 'centerH': o.set({ left: (W - bw) / 2 + offX }); break
+        case 'right':   o.set({ left: W - bw + offX }); break
+        case 'top':     o.set({ top: offY }); break
+        case 'middle':  o.set({ top: (H - bh) / 2 + offY }); break
+        case 'bottom':  o.set({ top: H - bh + offY }); break
+      }
+      o.setCoords(); c.requestRenderAll()
     }
-    o.setCoords(); c.requestRenderAll(); setSelectVersion((v) => v + 1); scheduleAutosave()
+    setSelectVersion((v) => v + 1); scheduleAutosave()
   }
 
   // Menú contextual (clic derecho) sobre el lienzo.
@@ -1133,6 +1234,9 @@ export default function EditPublication() {
               svgLibFamily={svgLibFamily}
               setSvgLibFamily={setSvgLibFamily}
               addSvgFromLibrary={addSvgFromLibrary}
+              svgSync={svgSync}
+              setSvgSync={setSvgSync}
+              addButtonWithIcon={addButtonWithIcon}
               defaultFont={defaultFont}
               setDefaultFont={setDefaultFont}
               imageBank={imageBank}
@@ -1164,6 +1268,18 @@ export default function EditPublication() {
             <ToolbarBtn icon={selected?.data?.locked ? 'unlock' : 'lock'} title={selected?.data?.locked ? 'Desbloquear' : 'Bloquear'} onClick={toggleLock} disabled={!selected} />
             <ToolbarBtn icon="replace"   title="Reemplazar imagen" onClick={replaceSelected}  disabled={!selected} />
             <div style={s.toolSep} />
+            <div style={{ display: 'flex', border: '1px solid #e5e7eb', borderRadius: 7, overflow: 'hidden', fontSize: 10, fontWeight: 600 }}>
+              <button
+                style={{ padding: '0 7px', height: 30, border: 'none', cursor: 'pointer', background: alignRef === 'canvas' ? '#4F46E5' : '#fff', color: alignRef === 'canvas' ? '#fff' : '#6b7280', transition: 'background .15s' }}
+                title="Alinear respecto al lienzo"
+                onClick={() => setAlignRef('canvas')}
+              >Lienzo</button>
+              <button
+                style={{ padding: '0 7px', height: 30, border: 'none', borderLeft: '1px solid #e5e7eb', cursor: 'pointer', background: alignRef === 'selection' ? '#4F46E5' : '#fff', color: alignRef === 'selection' ? '#fff' : '#6b7280', transition: 'background .15s' }}
+                title="Alinear respecto a la selección múltiple"
+                onClick={() => setAlignRef('selection')}
+              >Objeto</button>
+            </div>
             <ToolbarBtn icon="alignLeft"    title="Alinear a la izquierda" onClick={() => alignSelected('left')}    disabled={!selected} />
             <ToolbarBtn icon="alignCenterH" title="Centrar horizontal"     onClick={() => alignSelected('centerH')} disabled={!selected} />
             <ToolbarBtn icon="alignRight"   title="Alinear a la derecha"   onClick={() => alignSelected('right')}   disabled={!selected} />
@@ -1532,7 +1648,8 @@ function ContextPanel(p: any) {
         </>
       )
 
-    case 'buttons':
+    case 'buttons': {
+      const btnIcons = (p.svgLib as any[]).filter((it) => !it.locked).slice(0, 24)
       return (
         <>
           <PanelTitle title="Botones" />
@@ -1554,8 +1671,30 @@ function ContextPanel(p: any) {
               </button>
             ))}
           </div>
+          {btnIcons.length > 0 && (
+            <>
+              <div style={cp.sectionLabel}>Botón con icono SVG</div>
+              <p style={cp.hint}>Elige un ícono de la biblioteca para crear un botón con icono.</p>
+              <div style={cp.iconGrid}>
+                {btnIcons.map((it) => (
+                  <button
+                    key={it.id}
+                    title={it.name}
+                    style={cp.iconBtn}
+                    onClick={() => p.addButtonWithIcon(it)}
+                  >
+                    {it.svg_url
+                      ? <img src={it.svg_url} alt={it.name} style={{ width: 28, height: 28, objectFit: 'contain' }} loading="lazy" />
+                      : <span style={{ fontSize: 20 }}>🔲</span>}
+                    <span style={cp.iconName}>{it.name}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </>
       )
+    }
 
     case 'elements':
       return (
@@ -1625,6 +1764,16 @@ function ContextPanel(p: any) {
         <>
           <PanelTitle title="Biblioteca SVG" />
           <p style={cp.hint}>Íconos vectoriales editables. Hacé clic para insertarlos en la página. Los marcados con 🔒 requieren un plan superior.</p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', marginBottom: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={p.svgSync}
+              onChange={(e) => p.setSvgSync(e.target.checked)}
+              style={{ accentColor: '#4F46E5', width: 15, height: 15 }}
+            />
+            <span>Sincronizar en todas las páginas</span>
+            <span title="Al activar esta opción, el SVG insertado se actualiza automáticamente en todas las páginas cuando lo modificas en una." style={{ color: '#9ca3af', fontSize: 11, cursor: 'help' }}>ⓘ</span>
+          </label>
           <input
             style={cp.search}
             placeholder="Buscar por nombre o etiqueta…"
@@ -1736,7 +1885,7 @@ function ShapeBtn({ icon, label, onClick }: { icon: string; label: string; onCli
 // ─── Configuración de página (panel derecho cuando no hay selección) ──────────
 function PageConfig({ bgColor, applyBgColor }: { bgColor: string; applyBgColor: (c: string, all?: boolean) => void }) {
   return (
-    <div style={{ padding: 16, overflowY: 'auto' }}>
+    <div style={{ padding: 16, overflowY: 'auto', flex: 1, minHeight: 0 }}>
       <div style={s.rightHeader}>Configuración de página</div>
 
       <CfgGroup label="Tamaño de página">
@@ -2890,7 +3039,7 @@ const s: Record<string, React.CSSProperties> = {
   right:      { width: 288, minWidth: 288, background: '#fff', borderLeft: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   rightHeader:{ fontSize: 13, fontWeight: 700, color: '#111827', padding: '14px 16px 10px', borderBottom: '1px solid #f3f4f6' },
 
-  propsScroll: { display: 'flex', flexDirection: 'column', overflowY: 'auto', height: '100%' },
+  propsScroll: { display: 'flex', flexDirection: 'column', overflowY: 'auto', flex: 1, minHeight: 0 },
   props:     { padding: '12px 16px 16px', display: 'flex', flexDirection: 'column', gap: 14 },
   propLabel: { fontSize: 11, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
   miniLabel: { fontSize: 10, color: '#9ca3af', display: 'block', marginBottom: 4 },
