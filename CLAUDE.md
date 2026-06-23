@@ -321,9 +321,9 @@ npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase14.sql --r
 | Migración Biblioteca SVG (svg_families, svg_resources, svg_resource_versions) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_svg_library.sql --remote` | ✅ Ejecutada (7 queries) |
 | Deploy Worker (siempre tras cambios en `apps/api/`) | `cd ~/intap-flipbook/apps/api && git pull && npx wrangler deploy` | ✅ Ejecutado (Worker `5b74b7de` — incluye rutas SVG) |
 | Deploy Viewer (tras cambios en `apps/viewer/`) | `cd ~/intap-flipbook/apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer` | ✅ Ejecutado |
-| **Migración reencuadre de hoja (pages.cover_json)** — ⚠️ correr ANTES del deploy del Worker (`/view` ya consulta la columna) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_cover.sql --remote` | ⚠️ **PENDIENTE** |
-| **Deploy Worker (reencuadre)** — DESPUÉS de la migración cover | `cd ~/intap-flipbook/apps/api && git pull && npx wrangler deploy` | ⚠️ **PENDIENTE** |
-| **Deploy Viewer (reencuadre)** — `applyCoverStyle` aplica zoom/posición | `cd ~/intap-flipbook/apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer` | ⚠️ **PENDIENTE** |
+| **Migración reencuadre de hoja (pages.cover_json)** — ⚠️ correr ANTES del deploy del Worker (`/view` ya consulta la columna) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_cover.sql --remote` | ✅ Ejecutada (1 query) |
+| **Deploy Worker (reencuadre)** — DESPUÉS de la migración cover | `cd ~/intap-flipbook/apps/api && git pull && npx wrangler deploy` | ✅ Ejecutado (Worker `feb66c46`) |
+| **Deploy Viewer (reencuadre)** — `applyCoverStyle` aplica zoom/posición | `cd ~/intap-flipbook/apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer` | ✅ Ejecutado |
 | Crear tablas modules/plan_modules si no existen | Ver comandos más abajo | Pendiente verificar |
 
 ```bash
@@ -359,7 +359,8 @@ npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NO
 | Editor — reemplazo de imagen con modal (banco del proyecto + subir nueva, conserva posición/tamaño); subida de imagen al banco del flipbook (no inserta directo) | ✅ Implementado |
 | Editor — "Reemplazar" para todos los tipos (menú contextual + reemplazo in-situ de icono/SVG/forma/botón/texto); fix bug "línea" al reemplazar imagen (quitar crossOrigin) | ✅ Implementado |
 | Editor/Viewer — fondo de página modo "cubrir" (llena el recuadro A4 sin deformar, editor = publicado) | ✅ Implementado |
-| **Reencuadre manual de hoja** — herramienta "Ajustar hoja" (zoom 1x–3x + arrastrar), guardado por página en `cover_json`, reflejado en el viewer | ✅ Implementado (⚠️ requiere migración + deploys de Juan, ver tabla arriba) |
+| **Reencuadre manual de hoja** — herramienta "Ajustar hoja" (zoom 1x–3x + arrastrar), guardado por página en `cover_json`, reflejado en el viewer | ✅ Implementado y en producción (migración + Worker `feb66c46` + viewer desplegados) |
+| **Vista previa de hoja activa** — botón en el editor, modal con el diseño actual a proporción A4 respetando el encuadre (solo dashboard) | ✅ Implementado y en producción |
 | Biblioteca SVG Fase 6 — RBAC granular (resources_manager, tenant_editor, tenant_viewer) | Pendiente |
 | Alinear claves de módulos frontend ↔ D1 | Pendiente |
 | AdminModules toggle — claves no coinciden | Pendiente |
