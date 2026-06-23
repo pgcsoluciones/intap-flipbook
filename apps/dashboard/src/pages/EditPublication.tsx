@@ -18,6 +18,28 @@ export const BLANK_PAGE_URL = 'data:image/svg+xml,' + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1754"><rect width="1240" height="1754" fill="#ffffff"/></svg>',
 )
 
+// Dimensiones de diseño del lienzo (proporción A4 retrato). El viewer usa las
+// mismas (DESIGN_W/DESIGN_H en flipbook.js) para que editor y publicado coincidan.
+const CANVAS_W = 580
+const CANVAS_H = Math.round(CANVAS_W * 1.414)
+
+// Calcula el recorte "cubrir" de una hoja dentro del recuadro A4 según el encuadre
+// { zoom>=1, fx 0..1, fy 0..1 }. zoom=1 y fx=fy=0.5 → cubrir centrado estándar.
+// Devuelve el recorte en píxeles naturales de la imagen + la escala para llenar A4.
+function computeCover(iw: number, ih: number, fr: { zoom?: number; fx?: number; fy?: number }) {
+  const zoom = Math.max(1, fr?.zoom ?? 1)
+  const fx = Math.min(1, Math.max(0, fr?.fx ?? 0.5))
+  const fy = Math.min(1, Math.max(0, fr?.fy ?? 0.5))
+  const targetAspect = CANVAS_W / CANVAS_H
+  let baseW: number, baseH: number
+  if (iw / ih > targetAspect) { baseH = ih; baseW = ih * targetAspect }
+  else { baseW = iw; baseH = iw / targetAspect }
+  const cropW = baseW / zoom, cropH = baseH / zoom
+  const cropX = (iw - cropW) * fx
+  const cropY = (ih - cropH) * fy
+  return { cropX, cropY, cropW, cropH, scaleX: CANVAS_W / cropW, scaleY: CANVAS_H / cropH }
+}
+
 // ─── Iconos SVG monocromáticos (estilo línea, 20px, stroke uniforme) ──────────
 // "stroke" = trazo. Todos comparten grosor 1.6 y currentColor para mantener
 // consistencia visual en toda la barra de herramientas.
@@ -70,6 +92,7 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
     case 'lock':      return <svg {...p}><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
     case 'unlock':    return <svg {...p}><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>
     case 'replace':   return <svg {...p}><path d="M4 8a8 8 0 0 1 13-2l3 3M20 16a8 8 0 0 1-13 2l-3-3"/><path d="M20 4v5h-5M4 20v-5h5"/></svg>
+    case 'crop':      return <svg {...p}><path d="M6 2v16h16"/><path d="M2 6h16v16"/></svg>
     case 'alignLeft':   return <svg {...p}><path d="M4 4v16"/><rect x="7" y="7" width="11" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/></svg>
     case 'alignCenterH':return <svg {...p}><path d="M12 4v16"/><rect x="6" y="7" width="12" height="4" rx="1"/><rect x="8" y="14" width="8" height="4" rx="1"/></svg>
     case 'alignRight':  return <svg {...p}><path d="M20 4v16"/><rect x="6" y="7" width="11" height="4" rx="1"/><rect x="10" y="14" width="7" height="4" rx="1"/></svg>
@@ -343,6 +366,14 @@ export default function EditPublication() {
   // Objeto que se va a reemplazar in-situ (icono/SVG/forma/botón/texto): al insertar
   // el siguiente elemento desde el panel, se intercambia por éste conservando caja y posición.
   const replaceTargetRef = useRef<any>(null)
+  // ── Reencuadre manual de la hoja (zoom + arrastrar) ──
+  const bgImgRef = useRef<any>(null)              // imagen de fondo Fabric actual
+  const bgNatRef = useRef<{ iw: number; ih: number }>({ iw: 0, ih: 0 }) // dims naturales
+  const coverRef = useRef<{ zoom: number; fx: number; fy: number }>({ zoom: 1, fx: 0.5, fy: 0.5 })
+  const coverSaveTimer = useRef<any>(null)
+  const adjustModeRef = useRef(false)             // espejo de adjustMode para los listeners del canvas
+  const [adjustMode, setAdjustMode] = useState(false)
+  const [coverZoom, setCoverZoom] = useState(1)   // valor del slider (espejo de coverRef.zoom)
   const rightPanelRef = useRef<HTMLDivElement>(null)
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
@@ -510,8 +541,10 @@ export default function EditPublication() {
     pageIdRef.current = activePage.id
     if (fabricRef.current) { fabricRef.current.dispose(); fabricRef.current = null }
     setSelected(null)
-    // Cancela cualquier reemplazo in-situ pendiente al cambiar de página
+    // Cancela cualquier reemplazo in-situ pendiente y el modo "Ajustar hoja" al cambiar de página
     replaceTargetRef.current = null
+    adjustModeRef.current = false
+    setAdjustMode(false)
 
     // Reinicia el historial al cambiar de página
     historyRef.current = []
@@ -519,10 +552,20 @@ export default function EditPublication() {
     setCanUndo(false)
     setCanRedo(false)
 
-    const W = 580
-    const H = Math.round(W * 1.414)
+    const W = CANVAS_W
+    const H = CANVAS_H
     const canvas = new fabric.Canvas(canvasRef.current, { width: W, height: H, backgroundColor: bgColor, preserveObjectStacking: true })
     fabricRef.current = canvas
+
+    // Inicializa el encuadre de esta página desde cover_json (o cubrir centrado).
+    bgImgRef.current = null
+    bgNatRef.current = { iw: 0, ih: 0 }
+    try {
+      coverRef.current = activePage.cover_json
+        ? { zoom: 1, fx: 0.5, fy: 0.5, ...JSON.parse(activePage.cover_json) }
+        : { zoom: 1, fx: 0.5, fy: 0.5 }
+    } catch { coverRef.current = { zoom: 1, fx: 0.5, fy: 0.5 } }
+    setCoverZoom(coverRef.current.zoom ?? 1)
 
     // Guarda bloquea el autoguardado mientras se deserializa el JSON de la página.
     // Sin esto, `object:added` dispara por cada objeto durante `loadFromJSON` y
@@ -530,25 +573,15 @@ export default function EditPublication() {
     let isLoading = true
 
     // Fondo de página en modo "cubrir": la hoja llena el recuadro A4 (W×H) sin
-    // deformarse, recortando el sobrante y centrando el recorte (cropX/cropY).
-    // Replica exactamente el `object-fit:cover` que usa el viewer (flipbook.js),
-    // así el editor y el flipbook publicado se ven idénticos aunque la hoja
-    // importada tenga otra proporción.
+    // deformarse. Replica el `object-fit:cover` del viewer (flipbook.js) y respeta
+    // el encuadre manual (zoom + posición) guardado en cover_json.
     fabric.Image.fromURL(activePage.image_url, (img: any) => {
+      img.set({ selectable: false, evented: false })
       if (img && img.width && img.height) {
-        const iw = img.width, ih = img.height
-        const targetAspect = W / H
-        let cropW = iw, cropH = ih, cropX = 0, cropY = 0
-        if (iw / ih > targetAspect) { cropW = ih * targetAspect; cropX = (iw - cropW) / 2 }
-        else { cropH = iw / targetAspect; cropY = (ih - cropH) / 2 }
-        img.set({
-          cropX, cropY, width: cropW, height: cropH,
-          scaleX: W / cropW, scaleY: H / cropH,
-          originX: 'left', originY: 'top', left: 0, top: 0,
-          selectable: false, evented: false,
-        })
-      } else {
-        img.set({ selectable: false, evented: false })
+        bgImgRef.current = img
+        bgNatRef.current = { iw: img.width, ih: img.height }
+        const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
+        img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
       }
       canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
     })
@@ -572,6 +605,26 @@ export default function EditPublication() {
     canvas.on('selection:cleared', (e: any) => {
       if (rightPanelRef.current && e?.e?.target && rightPanelRef.current.contains(e.e.target as Node)) return
       setSelected(null)
+    })
+
+    // Arrastre para reencuadrar la hoja (solo en "Ajustar hoja").
+    let panning = false, lastPX = 0, lastPY = 0
+    canvas.on('mouse:down', (opt: any) => {
+      if (!adjustModeRef.current) return
+      panning = true
+      const pt = canvas.getPointer(opt.e); lastPX = pt.x; lastPY = pt.y
+      canvas.setCursor('grabbing')
+    })
+    canvas.on('mouse:move', (opt: any) => {
+      if (!adjustModeRef.current || !panning) return
+      const pt = canvas.getPointer(opt.e)
+      panCover(pt.x - lastPX, pt.y - lastPY)
+      lastPX = pt.x; lastPY = pt.y
+    })
+    canvas.on('mouse:up', () => {
+      if (!panning) return
+      panning = false
+      if (adjustModeRef.current) { canvas.setCursor('grab'); scheduleCoverSave() }
     })
 
     // Tecla Supr / Delete para eliminar el objeto seleccionado
@@ -659,6 +712,25 @@ export default function EditPublication() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage?.id])
+
+  // Activa/desactiva el modo "Ajustar hoja": mientras está activo se desactiva la
+  // selección de elementos (para arrastrar el fondo) y el cursor cambia a "grab".
+  useEffect(() => {
+    adjustModeRef.current = adjustMode
+    const c = fabricRef.current; if (!c) return
+    if (adjustMode) {
+      c.discardActiveObject()
+      setSelected(null)
+      c.selection = false
+      c.skipTargetFind = true
+      c.defaultCursor = 'grab'
+    } else {
+      c.selection = true
+      c.skipTargetFind = false
+      c.defaultCursor = 'default'
+    }
+    c.requestRenderAll()
+  }, [adjustMode])
 
   // Guarda al cerrar/recargar la pestaña
   useEffect(() => {
@@ -1118,6 +1190,56 @@ export default function EditPublication() {
     c.discardActiveObject(); c.requestRenderAll(); setSelected(null); setSelectVersion((v) => v + 1); scheduleAutosave()
   }
 
+  // ── Reencuadre manual de la hoja ──
+  // Re-aplica el recorte "cubrir" a la imagen de fondo según coverRef.current.
+  function applyCover() {
+    const c = fabricRef.current; const img = bgImgRef.current; const { iw, ih } = bgNatRef.current
+    if (!c || !img || !iw || !ih) return
+    const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(iw, ih, coverRef.current)
+    img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, left: 0, top: 0, originX: 'left', originY: 'top' })
+    c.requestRenderAll()
+  }
+
+  // Mueve el encuadre (pan) según un arrastre en píxeles del lienzo. Arrastrar la
+  // hoja hacia un lado revela el lado contrario, por eso fx/fy se mueven en sentido inverso.
+  function panCover(dx: number, dy: number) {
+    const { iw, ih } = bgNatRef.current; if (!iw || !ih) return
+    const { cropW, cropH, scaleX, scaleY } = computeCover(iw, ih, coverRef.current)
+    const fr = coverRef.current
+    const rangeX = iw - cropW, rangeY = ih - cropH
+    if (rangeX > 0) fr.fx = Math.min(1, Math.max(0, fr.fx - (dx / scaleX) / rangeX))
+    if (rangeY > 0) fr.fy = Math.min(1, Math.max(0, fr.fy - (dy / scaleY) / rangeY))
+    applyCover()
+  }
+
+  // Cambia el zoom del encuadre (1x–3x) desde el slider.
+  function setCoverZoomValue(z: number) {
+    coverRef.current = { ...coverRef.current, zoom: z }
+    setCoverZoom(z)
+    applyCover(); scheduleCoverSave()
+  }
+
+  // Restablece el encuadre a "cubrir centrado".
+  function resetCover() {
+    coverRef.current = { zoom: 1, fx: 0.5, fy: 0.5 }
+    setCoverZoom(1)
+    applyCover(); scheduleCoverSave()
+  }
+
+  // Guarda el encuadre (debounce) en la página actual vía PUT cover_json.
+  function scheduleCoverSave() {
+    clearTimeout(coverSaveTimer.current)
+    coverSaveTimer.current = setTimeout(saveCover, 700)
+  }
+  async function saveCover() {
+    const pid = pageIdRef.current; if (!pid) return
+    const json = JSON.stringify(coverRef.current)
+    try {
+      await api.pages.update(pid, { cover_json: json })
+      setPages((prev) => prev.map((p) => (p.id === pid ? { ...p, cover_json: json } : p)))
+    } catch { /* si falla, el encuadre queda solo en pantalla hasta el próximo guardado */ }
+  }
+
   // Reemplazar el elemento seleccionado — enruta al panel de origen según tipo.
   // Imágenes: abren el modal del banco. Los demás tipos: se marcan para reemplazo
   // in-situ (replaceTargetRef) y se navega al panel; al insertar el nuevo elemento,
@@ -1432,6 +1554,7 @@ export default function EditPublication() {
             <div style={s.toolSep} />
             <ToolbarBtn icon={selected?.data?.locked ? 'unlock' : 'lock'} title={selected?.data?.locked ? 'Desbloquear' : 'Bloquear'} onClick={toggleLock} disabled={!selected} />
             <ToolbarBtn icon="replace"   title="Reemplazar elemento" onClick={replaceSelected}  disabled={!selected} />
+            <ToolbarBtn icon="crop"      title="Ajustar hoja (zoom y posición)" onClick={() => setAdjustMode((v) => !v)} active={adjustMode} disabled={!activePage} />
             <div style={s.toolSep} />
             <div style={{ display: 'flex', border: '1px solid #e5e7eb', borderRadius: 7, overflow: 'hidden', fontSize: 10, fontWeight: 600 }}>
               <button
@@ -1461,10 +1584,28 @@ export default function EditPublication() {
             </div>
           </div>
 
+          {adjustMode && activePage && (
+            <div style={s.adjustBar}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>Ajustar hoja</span>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>Arrastra la hoja para moverla</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: '#6b7280' }}>Zoom</span>
+                <input
+                  type="range" min={1} max={3} step={0.01} value={coverZoom}
+                  onChange={(e) => setCoverZoomValue(parseFloat(e.target.value))}
+                  style={{ width: 150 }}
+                />
+                <span style={{ fontSize: 11, color: '#374151', width: 34 }}>{coverZoom.toFixed(2)}x</span>
+              </div>
+              <button style={s.adjustReset} onClick={resetCover}>Restablecer</button>
+              <button style={s.adjustDone} onClick={() => setAdjustMode(false)}>Listo</button>
+            </div>
+          )}
+
           <div style={s.canvasWrap}>
             {activePage ? (
               <div
-                style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
+                style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center', boxShadow: '0 8px 32px rgba(0,0,0,0.18)', ...(adjustMode ? { outline: '2px solid #4F46E5', outlineOffset: 2 } : {}) }}
                 onContextMenu={onCanvasContextMenu}
               >
                 <canvas ref={canvasRef} />
@@ -1688,9 +1829,12 @@ function CtxItem({ icon, label, onClick }: { icon: string; label: string; onClic
   )
 }
 
-function ToolbarBtn({ icon, title, onClick, disabled }: { icon: string; title: string; onClick: () => void; disabled?: boolean }) {
+function ToolbarBtn({ icon, title, onClick, disabled, active }: { icon: string; title: string; onClick: () => void; disabled?: boolean; active?: boolean }) {
   return (
-    <button style={{ ...s.toolBtn, opacity: disabled ? 0.35 : 1, cursor: disabled ? 'default' : 'pointer' }} title={title} onClick={onClick} disabled={disabled}>
+    <button
+      style={{ ...s.toolBtn, opacity: disabled ? 0.35 : 1, cursor: disabled ? 'default' : 'pointer', ...(active ? { background: '#4F46E5', color: '#fff' } : {}) }}
+      title={title} onClick={onClick} disabled={disabled}
+    >
       <Icon name={icon} size={18} />
     </button>
   )
@@ -3498,6 +3642,9 @@ const s: Record<string, React.CSSProperties> = {
   zoomBtn:   { background: 'none', border: '1px solid transparent', borderRadius: 12, padding: '3px 9px', fontSize: 11, cursor: 'pointer', color: '#6b7280', fontWeight: 500 },
   zoomActive:{ background: '#f3f4f6', borderColor: '#e5e7eb', color: '#111827', fontWeight: 600 },
   canvasWrap:  { flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 32, alignItems: 'flex-start' },
+  adjustBar:   { display: 'flex', alignItems: 'center', gap: 14, padding: '8px 16px', background: '#eef2ff', borderBottom: '1px solid #c7d2fe', flexShrink: 0, flexWrap: 'wrap' } as React.CSSProperties,
+  adjustReset: { background: '#fff', border: '1px solid #c7d2fe', borderRadius: 7, padding: '5px 12px', fontSize: 12, fontWeight: 600, color: '#4338ca', cursor: 'pointer', fontFamily: 'inherit' } as React.CSSProperties,
+  adjustDone:  { background: '#4F46E5', border: 'none', borderRadius: 7, padding: '5px 14px', fontSize: 12, fontWeight: 700, color: '#fff', cursor: 'pointer', fontFamily: 'inherit', marginLeft: 'auto' } as React.CSSProperties,
   pageNav:   { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 16px', background: '#fff', borderTop: '1px solid #e5e7eb', flexShrink: 0 },
   pageNavBtn: { background: 'none', border: '1px solid #e5e7eb', borderRadius: 8, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 14, color: '#374151', transition: 'background .15s', fontFamily: 'inherit' } as React.CSSProperties,
   pageNavInfo:{ fontSize: 13, color: '#374151', fontWeight: 600, minWidth: 90, textAlign: 'center' as const },

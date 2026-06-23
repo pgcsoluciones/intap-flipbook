@@ -36,6 +36,26 @@ function playFlipSound() {
   } catch (e) {}
 }
 
+// Aplica el encuadre manual de la hoja (cover_json) al <img> de fondo de una página.
+// Formato: { zoom>=1, fx 0..1, fy 0..1 }. fx/fy mueven qué parte se ve (pan) vía
+// object-position; zoom acerca con transform:scale anclado al punto focal. Esto
+// reproduce el recorte "cubrir" del editor (computeCover en EditPublication.tsx).
+function applyCoverStyle(img, coverJson) {
+  if (!coverJson) return
+  let fr
+  try { fr = typeof coverJson === 'string' ? JSON.parse(coverJson) : coverJson } catch (e) { return }
+  if (!fr) return
+  const zoom = Math.max(1, Number(fr.zoom) || 1)
+  const fx = Math.min(1, Math.max(0, fr.fx == null ? 0.5 : Number(fr.fx)))
+  const fy = Math.min(1, Math.max(0, fr.fy == null ? 0.5 : Number(fr.fy)))
+  const posX = (fx * 100).toFixed(2), posY = (fy * 100).toFixed(2)
+  img.style.objectPosition = `${posX}% ${posY}%`
+  if (zoom > 1.0001) {
+    img.style.transform = `scale(${zoom})`
+    img.style.transformOrigin = `${posX}% ${posY}%`
+  }
+}
+
 function waitForImages(container) {
   // Solo espera las primeras 2 imágenes de página (las visibles al abrir).
   // El resto tiene loading="lazy" y carga en diferido mientras el usuario hojea.
@@ -151,6 +171,10 @@ async function init() {
     img.src = page.image_url
     img.alt = page.title ?? `Página ${page.page_number}`
     img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;'
+    // Encuadre manual de la hoja (zoom + posición) elegido en el editor (cover_json).
+    // El overlay de elementos es un canvas hermano y NO se ve afectado por esto,
+    // igual que en el editor (donde reencuadrar el fondo no mueve los elementos).
+    applyCoverStyle(img, page.cover_json)
     // Las primeras 2 páginas cargan inmediatamente (portada visible); el resto en diferido
     if (idx >= 2) img.loading = 'lazy'
     div.appendChild(img)
