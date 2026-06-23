@@ -1061,24 +1061,56 @@ export default function EditPublication() {
     c.discardActiveObject(); c.requestRenderAll(); setSelected(null); setSelectVersion((v) => v + 1); scheduleAutosave()
   }
 
-  // Reemplazar la imagen seleccionada — abre el modal con banco + subir nueva.
+  // Reemplazar el elemento seleccionado — enruta al panel de origen según tipo.
   function replaceSelected() {
-    const o = fabricRef.current?.getActiveObject()
+    const c = fabricRef.current; const o = c?.getActiveObject()
     if (!o) return
+    const kind = o.data?.kind
+    // Imágenes → modal del banco de imágenes
+    if (kind === 'image' || o.type === 'image') { setReplaceModal(true); return }
+    // Iconos → panel Elementos
+    if (kind === 'icon') { selectTool('elements'); return }
+    // SVG de biblioteca → panel Biblioteca
+    if (kind === 'svglib') { selectTool('svglib'); return }
+    // Formas → panel Formas
+    if (kind === 'shape' || o.type === 'rect' || o.type === 'circle' || o.type === 'triangle' || o.type === 'path') {
+      selectTool('shapes'); return
+    }
+    // Botones → panel Botones
+    if (kind === 'button') { selectTool('buttons'); return }
+    // Texto → panel Texto
+    if (o.type === 'i-text' || o.type === 'textbox') { selectTool('text'); return }
+    // Fallback: abrir modal de imagen
     setReplaceModal(true)
   }
 
-  // Reemplaza el objeto activo con una URL nueva, preservando posición y tamaño.
+  // Reemplaza el objeto activo (fabric.Image) con una URL nueva, preservando posición y tamaño.
+  // fabric.Image.fromURL crea un objeto nuevo y lo intercambia por el existente para evitar el
+  // bug de setSrc que solo funciona en instancias directas de fabric.Image (no grupos ni paths).
   function doReplaceWithUrl(url: string) {
-    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
-    const prevLeft = o.left, prevTop = o.top
-    const prevScaleX = o.scaleX, prevScaleY = o.scaleY
+    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o || !c) return
+    const prevLeft = o.left ?? 0, prevTop = o.top ?? 0
+    const prevScaleX = o.scaleX ?? 1, prevScaleY = o.scaleY ?? 1
     const prevAngle = o.angle ?? 0
-    o.setSrc(url, () => {
-      o.set({ left: prevLeft, top: prevTop, scaleX: prevScaleX, scaleY: prevScaleY, angle: prevAngle })
-      o.data = { ...(o.data ?? {}), src: url }
-      o.setCoords(); c.requestRenderAll(); scheduleAutosave()
-    }, { crossOrigin: 'anonymous' })
+    const prevData = { ...(o.data ?? {}), src: url }
+    // Si el objeto es directamente una imagen Fabric usamos setSrc (más rápido)
+    if (o.type === 'image') {
+      ;(o as any).setSrc(url, () => {
+        o.set({ left: prevLeft, top: prevTop, scaleX: prevScaleX, scaleY: prevScaleY, angle: prevAngle })
+        o.data = prevData
+        o.setCoords(); c.requestRenderAll(); scheduleAutosave()
+      }, { crossOrigin: 'anonymous' })
+    } else {
+      // Para cualquier otro tipo creamos una nueva imagen y reemplazamos en el canvas
+      fabric.Image.fromURL(url, (img: any) => {
+        img.set({ left: prevLeft, top: prevTop, scaleX: prevScaleX, scaleY: prevScaleY, angle: prevAngle, crossOrigin: 'anonymous' })
+        img.data = prevData
+        c.remove(o)
+        c.add(img)
+        c.setActiveObject(img)
+        img.setCoords(); c.requestRenderAll(); scheduleAutosave()
+      }, { crossOrigin: 'anonymous' })
+    }
     addToBank(url)
     setReplaceModal(false)
   }
@@ -1318,7 +1350,7 @@ export default function EditPublication() {
             <ToolbarBtn icon="back"      title="Enviar al fondo"   onClick={sendToBack}       disabled={!selected} />
             <div style={s.toolSep} />
             <ToolbarBtn icon={selected?.data?.locked ? 'unlock' : 'lock'} title={selected?.data?.locked ? 'Desbloquear' : 'Bloquear'} onClick={toggleLock} disabled={!selected} />
-            <ToolbarBtn icon="replace"   title="Reemplazar imagen" onClick={replaceSelected}  disabled={!selected} />
+            <ToolbarBtn icon="replace"   title="Reemplazar elemento" onClick={replaceSelected}  disabled={!selected} />
             <div style={s.toolSep} />
             <div style={{ display: 'flex', border: '1px solid #e5e7eb', borderRadius: 7, overflow: 'hidden', fontSize: 10, fontWeight: 600 }}>
               <button
@@ -2448,6 +2480,19 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
         </div>
       </PropGroup>
 
+      {/* Relleno del fondo del botón (sólido o gradiente) — apunta al rect interno */}
+      {(() => {
+        const rect = (obj.getObjects?.() ?? []).find((o: any) => o.type === 'rect')
+        if (!rect) return null
+        return (
+          <FillControl
+            obj={obj} target={rect} canvas={canvas} onChange={onChange}
+            defaultColor={data.bg ?? '#4f46e5'} label="Fondo del botón (gradiente)"
+            afterApply={() => obj.addWithUpdate?.()}
+          />
+        )
+      })()}
+
       {data.svgIconId && (
         <PropGroup label="Tamaño del ícono">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3192,47 +3237,50 @@ function PropGroup({ label, children }: { label: string; children: React.ReactNo
   )
 }
 
+// Aplica un gradiente fabric nativo a un objeto, dimensionado a su caja.
+function applyGradientTo(target: any, c1: string, c2: string, type: 'linear' | 'radial', angle: number) {
+  const w = target.width ?? 100, h = target.height ?? 100
+  let coords: any
+  if (type === 'radial') {
+    coords = { x1: w / 2, y1: h / 2, r1: 0, x2: w / 2, y2: h / 2, r2: Math.max(w, h) / 2 }
+  } else {
+    const rad = (angle * Math.PI) / 180
+    const cx = w / 2, cy = h / 2
+    const dx = Math.cos(rad) * cx, dy = Math.sin(rad) * cy
+    coords = { x1: cx - dx, y1: cy - dy, x2: cx + dx, y2: cy + dy }
+  }
+  target.set('fill', new (fabric as any).Gradient({
+    type, coords, colorStops: [{ offset: 0, color: c1 }, { offset: 1, color: c2 }],
+  }))
+}
+
 // ─── Control universal de RELLENO: sólido o gradiente (lineal / radial) ───────
-// Reutilizable en formas, texto y otros objetos con `fill`. Aplica un
-// `fabric.Gradient` nativo (se serializa en canvas_json y lo renderiza el viewer).
-function FillControl({ obj, canvas, onChange, defaultColor = '#4f46e5' }: { obj: any; canvas: any; onChange: () => void; defaultColor?: string }) {
+// Reutilizable en formas, texto, botones (target = rect) y otros objetos con `fill`.
+// `obj` guarda la metadata; `target` (por defecto = obj) recibe el fill real.
+function FillControl({ obj, canvas, onChange, defaultColor = '#4f46e5', target, label = 'Relleno', afterApply }: { obj: any; canvas: any; onChange: () => void; defaultColor?: string; target?: any; label?: string; afterApply?: () => void }) {
+  const tgt = target ?? obj
   const data = (obj as any).data ?? {}
   const g = data.fillGradient ?? null
   const [mode, setMode] = React.useState<'solid' | 'gradient'>(g ? 'gradient' : 'solid')
-  const [c1, setC1] = React.useState<string>(g?.c1 ?? (typeof obj.fill === 'string' && obj.fill.startsWith('#') ? obj.fill : defaultColor))
+  const [c1, setC1] = React.useState<string>(g?.c1 ?? (typeof tgt.fill === 'string' && tgt.fill.startsWith('#') ? tgt.fill : defaultColor))
   const [c2, setC2] = React.useState<string>(g?.c2 ?? '#ec4899')
   const [gtype, setGtype] = React.useState<'linear' | 'radial'>(g?.type ?? 'linear')
   const [angle, setAngle] = React.useState<number>(g?.angle ?? 0)
 
   function applySolid(color: string) {
-    obj.set('fill', color)
+    tgt.set('fill', color)
     obj.data = { ...(obj.data ?? {}), fillGradient: undefined }
-    canvas?.requestRenderAll(); onChange()
+    obj.dirty = true; afterApply?.(); canvas?.requestRenderAll(); onChange()
   }
 
   function applyGradient(nextC1 = c1, nextC2 = c2, type = gtype, ang = angle) {
-    const w = obj.width ?? 100, h = obj.height ?? 100
-    let coords: any
-    if (type === 'radial') {
-      coords = { x1: w / 2, y1: h / 2, r1: 0, x2: w / 2, y2: h / 2, r2: Math.max(w, h) / 2 }
-    } else {
-      // ángulo → vector de inicio/fin dentro de la caja del objeto
-      const rad = (ang * Math.PI) / 180
-      const cx = w / 2, cy = h / 2
-      const dx = Math.cos(rad) * cx, dy = Math.sin(rad) * cy
-      coords = { x1: cx - dx, y1: cy - dy, x2: cx + dx, y2: cy + dy }
-    }
-    const gradient = new (fabric as any).Gradient({
-      type, coords,
-      colorStops: [{ offset: 0, color: nextC1 }, { offset: 1, color: nextC2 }],
-    })
-    obj.set('fill', gradient)
+    applyGradientTo(tgt, nextC1, nextC2, type, ang)
     obj.data = { ...(obj.data ?? {}), fillGradient: { c1: nextC1, c2: nextC2, type, angle: ang } }
-    canvas?.requestRenderAll(); onChange()
+    obj.dirty = true; afterApply?.(); canvas?.requestRenderAll(); onChange()
   }
 
   return (
-    <PropGroup label="Relleno">
+    <PropGroup label={label}>
       <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
         <button style={{ ...s.alignBtn, flex: 1, fontSize: 11, ...(mode === 'solid' ? s.alignActive : {}) }}
           onClick={() => { setMode('solid'); applySolid(c1) }}>Sólido</button>
