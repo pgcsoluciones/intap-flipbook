@@ -21,8 +21,11 @@ svg.use('*', async (c, next) => {
 })
 
 // Sube el SVG sanitizado a R2 y devuelve su URL pública.
+// El slug ya es único en svg_resources, así que basta un sufijo corto (6 hex)
+// para evitar colisiones sin generar URLs gigantes.
 async function putSvgToR2(env: Env, slug: string, content: string): Promise<string> {
-  const key = `svg-library/${slug}-${crypto.randomUUID()}.svg`
+  const suffix = crypto.randomUUID().slice(0, 6)
+  const key = `svg-library/${slug}-${suffix}.svg`
   await env.MEDIA.put(key, content, { httpMetadata: { contentType: 'image/svg+xml' } })
   return `${env.R2_PUBLIC_BASE_URL}/${key}`
 }

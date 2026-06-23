@@ -91,9 +91,11 @@ export default function AdminSvg() {
         <div style={s.grid}>
           {resources.map((r) => (
             <div key={r.id} style={{ ...s.card, ...(r.status === 'archived' ? { opacity: 0.55 } : {}) }}>
-              {/* Miniatura inline: fetch del SVG y dangerouslySetInnerHTML evita
-                  problemas de xmlns/content-type que rompen <img src=svg_url> */}
-              <SvgThumb url={r.svg_url} />
+              {/* <img> carga cross-origin sin CORS (a diferencia de fetch).
+                  Requiere que el SVG en R2 sea válido: xmlns + content-type. */}
+              <div style={s.preview}>
+                <img src={r.svg_url} alt={r.name} style={s.previewImg} loading="lazy" />
+              </div>
               <div style={s.cardBody}>
                 <div style={s.cardName} title={r.name}>{r.name}</div>
                 <div style={s.cardMeta}>{r.family_name ?? 'Sin familia'} · v{r.version}</div>
@@ -392,29 +394,6 @@ function FamiliesModal({ families, onClose, onChange }: { families: any[]; onClo
   )
 }
 
-// ─── Miniatura SVG inline ─────────────────────────────────────────────────────
-// Fetch del archivo y renderizado via dangerouslySetInnerHTML: evita los
-// problemas de xmlns/content-type que rompen el elemento <img src=svg_url>.
-function SvgThumb({ url }: { url: string }) {
-  const [svg, setSvg] = useState('')
-  useEffect(() => {
-    if (!url) return
-    fetch(url).then((r) => r.text()).then((t) => {
-      // Quedarse solo con el bloque <svg>…</svg>
-      const m = t.match(/<svg[\s\S]*<\/svg>/i)
-      setSvg(m ? m[0] : '')
-    }).catch(() => setSvg(''))
-  }, [url])
-  return (
-    <div style={s.preview}>
-      {svg
-        ? <div style={s.previewSvg} dangerouslySetInnerHTML={{ __html: svg }} />
-        : <div style={{ color: '#d1d5db', fontSize: 11 }}>…</div>
-      }
-    </div>
-  )
-}
-
 // ─── Modal genérico ───────────────────────────────────────────────────────────
 function Modal({ title, children, onClose, wide }: { title: string; children: any; onClose: () => void; wide?: boolean }) {
   return (
@@ -447,7 +426,7 @@ const s: Record<string, React.CSSProperties> = {
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 },
   card: { border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden', background: '#fff' },
   preview: { height: 100, background: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 },
-  previewSvg: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  previewImg: { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' },
   cardBody: { padding: 10 },
   cardName: { fontSize: 13, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   cardMeta: { fontSize: 11, color: '#9ca3af', margin: '2px 0 6px' },
