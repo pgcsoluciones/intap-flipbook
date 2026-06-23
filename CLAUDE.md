@@ -173,7 +173,7 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 - Resize listener — recalcula dimensiones al rotar el dispositivo
 - Lazy loading — imágenes a partir de la pág. 3 cargan en diferido
 - Fabric.js 5.3 via CDN — renderiza `canvas_json` como overlay escalado
-- Acciones: `link`, `page`, `call`, `email`, `whatsapp`, `popup_text`, `popup_image`, `popup_video`, `download`
+- Acciones: `link`, `page`, `call`, `email`, `whatsapp`, `popup_text`, `popup_image`, `popup_video`, `popup_audio`, `download`
 - **`gallery_images`** — lightbox/carrusel de imágenes con flechas, miniaturas, Escape, swipe táctil ✅ nuevo
 - **`gallery_videos`** — carrusel de videos con misma UX ✅ nuevo
 - **Widgets** (11 tipos): mapa, video, audio, QR, tabla CSV, like, formulario de contacto, cuestionario, embed HTML, popup cintillo, download
@@ -304,6 +304,7 @@ npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NO
 | **Fase 3 — Plantilla vertical Inmobiliaria** (páginas tipo + CMS-céntrico + entidad Unidades) | ✅ Implementado |
 | Entidad Unidad (tabla `units`, widget `units_table` en viewer y editor, panel CMS en Settings) | ✅ Implementado |
 | **Analítica avanzada** — geoloc `request.cf`, tablet detection, url_destination, país/links/páginas en dashboard | ✅ Implementado |
+| Acción `popup_audio` (audio emergente en zona clicable) | ✅ Implementado |
 | Acción `show_hide` en viewer (elementos nombrados) | Pendiente |
 | Alinear claves de módulos frontend ↔ D1 | Pendiente |
 | AdminModules toggle — claves no coinciden | Pendiente |

@@ -185,7 +185,7 @@ const BUTTON_PRESETS: { label: string; variant: 'solid' | 'outline' | 'pill' }[]
 ]
 
 // Tipos de acción de un botón (qué ocurre al hacer clic en el viewer)
-type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos'
+type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'popup_audio' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos'
 const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'link',           label: 'Abrir Enlace',        icon: 'link' },
   { type: 'page',           label: 'Ir a Página',         icon: 'pages' },
@@ -195,6 +195,7 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'popup_text',     label: 'Texto emergente',     icon: 'text' },
   { type: 'popup_image',    label: 'Imagen emergente',    icon: 'image' },
   { type: 'popup_video',    label: 'Video emergente',     icon: 'video' },
+  { type: 'popup_audio',    label: 'Audio emergente',     icon: 'audio' },
   { type: 'download',       label: 'Descargar archivo',   icon: 'uploads' },
   { type: 'gallery_images', label: 'Galería de imágenes', icon: 'image' },
   { type: 'gallery_videos', label: 'Galería de videos',   icon: 'video' },
@@ -2189,6 +2190,12 @@ function ActionEditor({ data, pages, setData }: { data: any; pages: any[]; setDa
       {action.type === 'popup_video' && (
         <PropGroup label="URL del video (YouTube, Vimeo o .mp4)">
           <input style={s.propInput} placeholder="https://youtube.com/watch?v=..." defaultValue={action.url ?? ''} onChange={(e) => setAction({ url: e.target.value })} />
+        </PropGroup>
+      )}
+
+      {action.type === 'popup_audio' && (
+        <PropGroup label="Audio emergente">
+          <FileField value={action.url ?? ''} onChange={(url) => setAction({ url })} accept={ACCEPT_AUDIO} preview={false} hint="MP3, OGG, WAV, M4A · máx 50 MB" />
         </PropGroup>
       )}
 

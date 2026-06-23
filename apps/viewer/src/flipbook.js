@@ -303,6 +303,16 @@ async function init() {
         showPopup(iframe)
         break
       }
+      case 'popup_audio': {
+        if (!a.url) break
+        const audio = document.createElement('audio')
+        audio.src = a.url
+        audio.controls = true
+        audio.autoplay = true
+        audio.style.cssText = 'width:80vw;max-width:480px;display:block;'
+        showPopup(audio)
+        break
+      }
       case 'download': {
         if (!a.url) break
         const link = document.createElement('a')
