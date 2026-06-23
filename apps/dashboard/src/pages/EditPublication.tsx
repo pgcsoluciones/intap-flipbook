@@ -2227,13 +2227,25 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
   const namedTargets = (canvas?.getObjects?.() ?? [])
     .filter((o: any) => o !== obj && o.data?.name && o.data?.elementId)
     .map((o: any) => ({ id: o.data.elementId as string, name: o.data.name as string }))
-  // Reaplica estilo al grupo (rect + text internos)
+  // Pinta recursivamente todas las formas internas de un grupo SVG (icono).
+  function tintIcon(group: any, color: string) {
+    const paint = (o: any) => {
+      if (o.getObjects) { o.getObjects().forEach(paint); return }
+      // Solo recolorea formas con relleno; respeta las que solo tienen trazo.
+      if (o.fill && o.fill !== 'transparent' && o.fill !== '') o.set({ fill: color })
+      if (o.stroke && o.stroke !== 'transparent' && o.stroke !== '') o.set({ stroke: color })
+    }
+    group.getObjects?.().forEach(paint)
+  }
+
+  // Reaplica estilo al grupo (rect + icono + text internos)
   function restyle(patch: any) {
     const next = { ...data, ...patch }
     ;(obj as any).data = next
     const objs = obj.getObjects?.() ?? []
     const rect = objs.find((o: any) => o.type === 'rect')
     const txt = objs.find((o: any) => o.type === 'text' || o.type === 'i-text')
+    const icon = objs.find((o: any) => o.type === 'group' || o.type === 'path')
     if (rect) {
       const outline = next.variant === 'outline'
       rect.set({
@@ -2246,6 +2258,10 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
     }
     if (txt) {
       txt.set({ text: next.label, fill: next.variant === 'outline' ? next.bg : (next.textColor || '#fff') })
+    }
+    // Recolorea el icono si el usuario eligió un color de icono (o cae al color del texto)
+    if (icon && next.svgIconId && patch.iconColor !== undefined) {
+      tintIcon(icon, patch.iconColor)
     }
     obj.addWithUpdate?.()
     canvas?.requestRenderAll()
@@ -2278,6 +2294,12 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
           </div>
         </div>
       </PropGroup>
+
+      {data.svgIconId && (
+        <PropGroup label="Color del icono">
+          <input type="color" defaultValue={data.iconColor ?? '#ffffff'} onChange={(e) => restyle({ iconColor: e.target.value })} style={s.colorInput} />
+        </PropGroup>
+      )}
 
       <div style={s.actionDivider}>Acción al hacer clic</div>
       <ActionEditor data={data} pages={pages} setData={setData} targets={namedTargets} />
