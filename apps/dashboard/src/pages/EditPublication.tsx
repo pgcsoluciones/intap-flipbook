@@ -2105,6 +2105,9 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle }: { obj: any; 
           <input type="range" min={0} max={1} step={0.05} defaultValue={obj.opacity ?? 1} onChange={(e) => set({ opacity: +e.target.value })} style={{ width: '100%' }} />
         </PropGroup>
 
+        {/* Sombra — universal para cualquier elemento */}
+        <ShadowControl obj={obj} canvas={canvas} onChange={onChange} />
+
         {/* Nombre amigable del elemento. Internamente se le asigna un elementId único
             e inmutable (no editable) para que otra acción pueda apuntarlo de forma segura
             aunque dos elementos compartan el mismo nombre visible. */}
@@ -2163,18 +2166,14 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle }: { obj: any; 
                 ))}
               </div>
             </PropGroup>
-            <PropGroup label="Color de texto">
-              <input type="color" defaultValue={fill.startsWith('#') ? fill : '#111827'} onChange={(e) => set({ fill: e.target.value })} style={s.colorInput} />
-            </PropGroup>
+            <FillControl obj={obj} canvas={canvas} onChange={onChange} defaultColor="#111827" />
           </>
         )}
 
         {/* ── FORMA ── */}
         {kind === 'shape' && (
           <>
-            <PropGroup label="Color de relleno">
-              <input type="color" defaultValue={fill.startsWith('#') ? fill : '#4f46e5'} onChange={(e) => set({ fill: e.target.value })} style={s.colorInput} />
-            </PropGroup>
+            <FillControl obj={obj} canvas={canvas} onChange={onChange} defaultColor="#4f46e5" />
             <PropGroup label="Borde">
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <input type="color" defaultValue={(typeof obj.stroke === 'string' && obj.stroke) || '#111827'} onChange={(e) => set({ stroke: e.target.value })} style={{ ...s.colorInput, width: 48 }} />
@@ -3190,6 +3189,134 @@ function PropGroup({ label, children }: { label: string; children: React.ReactNo
       <span style={s.propLabel}>{label}</span>
       {children}
     </div>
+  )
+}
+
+// ─── Control universal de RELLENO: sólido o gradiente (lineal / radial) ───────
+// Reutilizable en formas, texto y otros objetos con `fill`. Aplica un
+// `fabric.Gradient` nativo (se serializa en canvas_json y lo renderiza el viewer).
+function FillControl({ obj, canvas, onChange, defaultColor = '#4f46e5' }: { obj: any; canvas: any; onChange: () => void; defaultColor?: string }) {
+  const data = (obj as any).data ?? {}
+  const g = data.fillGradient ?? null
+  const [mode, setMode] = React.useState<'solid' | 'gradient'>(g ? 'gradient' : 'solid')
+  const [c1, setC1] = React.useState<string>(g?.c1 ?? (typeof obj.fill === 'string' && obj.fill.startsWith('#') ? obj.fill : defaultColor))
+  const [c2, setC2] = React.useState<string>(g?.c2 ?? '#ec4899')
+  const [gtype, setGtype] = React.useState<'linear' | 'radial'>(g?.type ?? 'linear')
+  const [angle, setAngle] = React.useState<number>(g?.angle ?? 0)
+
+  function applySolid(color: string) {
+    obj.set('fill', color)
+    obj.data = { ...(obj.data ?? {}), fillGradient: undefined }
+    canvas?.requestRenderAll(); onChange()
+  }
+
+  function applyGradient(nextC1 = c1, nextC2 = c2, type = gtype, ang = angle) {
+    const w = obj.width ?? 100, h = obj.height ?? 100
+    let coords: any
+    if (type === 'radial') {
+      coords = { x1: w / 2, y1: h / 2, r1: 0, x2: w / 2, y2: h / 2, r2: Math.max(w, h) / 2 }
+    } else {
+      // ángulo → vector de inicio/fin dentro de la caja del objeto
+      const rad = (ang * Math.PI) / 180
+      const cx = w / 2, cy = h / 2
+      const dx = Math.cos(rad) * cx, dy = Math.sin(rad) * cy
+      coords = { x1: cx - dx, y1: cy - dy, x2: cx + dx, y2: cy + dy }
+    }
+    const gradient = new (fabric as any).Gradient({
+      type, coords,
+      colorStops: [{ offset: 0, color: nextC1 }, { offset: 1, color: nextC2 }],
+    })
+    obj.set('fill', gradient)
+    obj.data = { ...(obj.data ?? {}), fillGradient: { c1: nextC1, c2: nextC2, type, angle: ang } }
+    canvas?.requestRenderAll(); onChange()
+  }
+
+  return (
+    <PropGroup label="Relleno">
+      <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+        <button style={{ ...s.alignBtn, flex: 1, fontSize: 11, ...(mode === 'solid' ? s.alignActive : {}) }}
+          onClick={() => { setMode('solid'); applySolid(c1) }}>Sólido</button>
+        <button style={{ ...s.alignBtn, flex: 1, fontSize: 11, ...(mode === 'gradient' ? s.alignActive : {}) }}
+          onClick={() => { setMode('gradient'); applyGradient() }}>Gradiente</button>
+      </div>
+      {mode === 'solid' ? (
+        <input type="color" value={c1} onChange={(e) => { setC1(e.target.value); applySolid(e.target.value) }} style={s.colorInput} />
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <span style={s.miniLabel}>Color 1</span>
+              <input type="color" value={c1} onChange={(e) => { setC1(e.target.value); applyGradient(e.target.value, c2) }} style={s.colorInput} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <span style={s.miniLabel}>Color 2</span>
+              <input type="color" value={c2} onChange={(e) => { setC2(e.target.value); applyGradient(c1, e.target.value) }} style={s.colorInput} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <button style={{ ...s.alignBtn, flex: 1, fontSize: 11, ...(gtype === 'linear' ? s.alignActive : {}) }}
+              onClick={() => { setGtype('linear'); applyGradient(c1, c2, 'linear') }}>Lineal</button>
+            <button style={{ ...s.alignBtn, flex: 1, fontSize: 11, ...(gtype === 'radial' ? s.alignActive : {}) }}
+              onClick={() => { setGtype('radial'); applyGradient(c1, c2, 'radial') }}>Radial</button>
+          </div>
+          {gtype === 'linear' && (
+            <div style={{ marginTop: 6 }}>
+              <span style={s.miniLabel}>Ángulo: {angle}°</span>
+              <input type="range" min={0} max={360} step={5} value={angle}
+                onChange={(e) => { const a = +e.target.value; setAngle(a); applyGradient(c1, c2, 'linear', a) }}
+                style={{ width: '100%', accentColor: '#4F46E5' }} />
+            </div>
+          )}
+        </>
+      )}
+    </PropGroup>
+  )
+}
+
+// ─── Control universal de SOMBRA ──────────────────────────────────────────────
+// Aplica un `fabric.Shadow` nativo a cualquier objeto.
+function ShadowControl({ obj, canvas, onChange }: { obj: any; canvas: any; onChange: () => void }) {
+  const sh = obj.shadow
+  const [on, setOn] = React.useState<boolean>(!!sh)
+  const [color, setColor] = React.useState<string>(sh?.color ?? '#00000066')
+  const [blur, setBlur] = React.useState<number>(sh?.blur ?? 10)
+  const [offX, setOffX] = React.useState<number>(sh?.offsetX ?? 4)
+  const [offY, setOffY] = React.useState<number>(sh?.offsetY ?? 4)
+
+  function apply(enabled: boolean, c = color, b = blur, ox = offX, oy = offY) {
+    if (!enabled) { obj.set('shadow', null) }
+    else { obj.set('shadow', new (fabric as any).Shadow({ color: c, blur: b, offsetX: ox, offsetY: oy })) }
+    canvas?.requestRenderAll(); onChange()
+  }
+
+  return (
+    <PropGroup label="Sombra">
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer' }}>
+        <input type="checkbox" checked={on} onChange={(e) => { setOn(e.target.checked); apply(e.target.checked) }} style={{ accentColor: '#4F46E5' }} />
+        Activar sombra
+      </label>
+      {on && (
+        <>
+          <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
+            <input type="color" value={color.slice(0, 7)} onChange={(e) => { const c = e.target.value + '99'; setColor(c); apply(true, c) }} style={{ ...s.colorInput, width: 48 }} />
+            <div style={{ flex: 1 }}>
+              <span style={s.miniLabel}>Desenfoque: {blur}</span>
+              <input type="range" min={0} max={40} step={1} value={blur} onChange={(e) => { const b = +e.target.value; setBlur(b); apply(true, color, b) }} style={{ width: '100%', accentColor: '#4F46E5' }} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+            <div style={{ flex: 1 }}>
+              <span style={s.miniLabel}>Desp. X: {offX}</span>
+              <input type="range" min={-30} max={30} step={1} value={offX} onChange={(e) => { const v = +e.target.value; setOffX(v); apply(true, color, blur, v) }} style={{ width: '100%', accentColor: '#4F46E5' }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <span style={s.miniLabel}>Desp. Y: {offY}</span>
+              <input type="range" min={-30} max={30} step={1} value={offY} onChange={(e) => { const v = +e.target.value; setOffY(v); apply(true, color, blur, offX, v) }} style={{ width: '100%', accentColor: '#4F46E5' }} />
+            </div>
+          </div>
+        </>
+      )}
+    </PropGroup>
   )
 }
 
