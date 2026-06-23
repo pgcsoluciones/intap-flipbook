@@ -277,18 +277,27 @@ async function init() {
   const DESIGN_H = Math.round(DESIGN_W * 1.414)
   const overlayScale = pageWidth / DESIGN_W
 
+  // Registra una interacción respetando la config de seguimiento del elemento
+  // ({ enabled, event, category, label }). Si enabled===false, no registra nada.
+  function trackInteraction(tr, fallbackLabel, actionType, urlDest) {
+    if (tr && tr.enabled === false) return
+    sendEvent({
+      type: 'click',
+      page_number: trackedPage,
+      action_type: actionType,
+      label: (tr && tr.label) || fallbackLabel,
+      category: (tr && tr.category) || undefined,
+      event_name: (tr && tr.event) || undefined,
+      url_destination: urlDest || undefined,
+    })
+  }
+
   function runAction(a, fcanvas) {
     if (!a || !a.type || a.type === 'none') return
     // Extraer la URL destino según el tipo de acción (para analítica)
     const urlDest = a.url || a.phone || a.email || a.whatsapp || null
-    // Analítica: registrar el clic en este botón/enlace
-    sendEvent({
-      type: 'click',
-      page_number: trackedPage,
-      action_type: a.type,
-      label: a.label || a.text || a.url || a.phone || a.email || a.type,
-      url_destination: urlDest,
-    })
+    // Analítica: registrar el clic (respeta la config de seguimiento del elemento)
+    trackInteraction(a.tracking, a.label || a.text || a.url || a.phone || a.email || a.type, a.type, urlDest)
     switch (a.type) {
       case 'link':
         if (a.url) window.open(a.url, a.target === '_self' ? '_self' : '_blank')
@@ -722,7 +731,22 @@ async function init() {
         if (!query) return placeholderBox('Mapa (sin dirección)')
         // si es URL completa de Maps, usarla directo; si es dirección, embed
         const src = query.startsWith('http') ? query : `https://www.google.com/maps?q=${encodeURIComponent(query)}&z=${cfg.zoom || 14}&output=embed`
-        return widgetFrame(src)
+        const frame = widgetFrame(src)
+        if (cfg.openInApp === false) return frame
+        // Botón "Abrir en Google Maps" (rastreable) sobre el mapa
+        const wrap = document.createElement('div')
+        wrap.style.cssText = 'position:relative;width:100%;height:100%;'
+        wrap.appendChild(frame)
+        const openUrl = cfg.address
+          ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cfg.address)}`
+          : (cfg.mapsUrl || src)
+        const btn = document.createElement('a')
+        btn.href = openUrl; btn.target = '_blank'; btn.rel = 'noopener'
+        btn.textContent = '📍 Abrir en Google Maps'
+        btn.style.cssText = 'position:absolute;left:8px;bottom:8px;background:rgba(255,255,255,.95);color:#1f2937;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;text-decoration:none;font-family:Inter,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);'
+        btn.addEventListener('click', () => trackInteraction(cfg.tracking, cfg.address || 'Mapa', 'map_open', openUrl))
+        wrap.appendChild(btn)
+        return wrap
       }
       case 'video': {
         const yt = ytId(cfg.url), vm = vimeoId(cfg.url)
@@ -762,8 +786,10 @@ async function init() {
         const a = document.createElement('a')
         a.href = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(cfg.message || '')}` : 'javascript:void(0)'
         a.target = '_blank'
-        a.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:100%;background:#25D366;color:#fff;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;font-family:Inter,sans-serif;'
+        const bg = cfg.color || '#25D366'
+        a.style.cssText = `display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:100%;background:${bg};color:#fff;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;font-family:Inter,sans-serif;`
         a.innerHTML = `<span style="font-size:18px">✆</span> ${cfg.label || 'WhatsApp'}`
+        a.addEventListener('click', () => trackInteraction(cfg.tracking, cfg.label || 'WhatsApp', 'whatsapp', a.href))
         return a
       }
       case 'qr': {

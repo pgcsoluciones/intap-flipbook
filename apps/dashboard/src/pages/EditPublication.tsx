@@ -2929,30 +2929,77 @@ function MapWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void })
     : (address.trim() ? `https://www.google.com/maps?q=${encodeURIComponent(address.trim())}&z=${zoom}&output=embed` : '')
 
   return (
-    <>
-      <PropGroup label="Ingresa la ubicación">
-        <div style={{ display: 'flex', gap: 6 }}>
-          <input style={{ ...s.propInput, flex: 1 }} placeholder="Av. Lincoln 100, Santo Domingo" value={address}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <Collapsible title="Ubicación">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={s.propLabel}>Dirección</span>
+          <input style={s.propInput} placeholder="Av. Lincoln 100, Santo Domingo" value={address}
             onChange={(e) => { setAddress(e.target.value); setCfg({ address: e.target.value }) }} />
         </div>
-      </PropGroup>
-
-      {previewSrc && (
-        <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid #e5e7eb', marginBottom: 4 }}>
-          <iframe title="map-preview" src={previewSrc} style={{ width: '100%', height: 150, border: 0, display: 'block' }} loading="lazy" />
+        {previewSrc && (
+          <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
+            <iframe title="map-preview" src={previewSrc} style={{ width: '100%', height: 150, border: 0, display: 'block' }} loading="lazy" />
+          </div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={s.propLabel}>…o pega un link embebido de Google Maps</span>
+          <input style={s.propInput} placeholder="https://www.google.com/maps/embed?pb=..." value={mapsUrl}
+            onChange={(e) => { setMapsUrl(e.target.value); setCfg({ mapsUrl: e.target.value }) }} />
         </div>
-      )}
+        <p style={cp.hint}>Maps → Compartir → Insertar mapa → copia el src del iframe. El mapa de arriba es una vista previa en vivo.</p>
+      </Collapsible>
 
-      <PropGroup label="…o pega un link embebido de Google Maps">
-        <input style={s.propInput} placeholder="https://www.google.com/maps/embed?pb=..." value={mapsUrl}
-          onChange={(e) => { setMapsUrl(e.target.value); setCfg({ mapsUrl: e.target.value }) }} />
-      </PropGroup>
-      <PropGroup label="Zoom (1–20)">
-        <input style={s.propInput} type="number" min={1} max={20} value={zoom}
-          onChange={(e) => { setZoom(+e.target.value); setCfg({ zoom: +e.target.value }) }} />
-      </PropGroup>
-      <p style={cp.hint}>Para el link embebido: Maps → Compartir → Insertar mapa → copiá el src del iframe. El mapa de arriba es una vista previa en vivo.</p>
-    </>
+      <Collapsible title="Vista">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: '#6b7280' }}>Zoom</span>
+          <input type="range" min={1} max={20} step={1} value={zoom} style={{ flex: 1 }}
+            onChange={(e) => { setZoom(+e.target.value); setCfg({ zoom: +e.target.value }) }} />
+          <span style={{ fontSize: 11, color: '#374151', width: 24 }}>{zoom}</span>
+        </div>
+      </Collapsible>
+
+      <Collapsible title="Interacción" defaultOpen={false}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#374151', cursor: 'pointer' }}>
+          <input type="checkbox" checked={cfg.openInApp !== false} onChange={(e) => setCfg({ openInApp: e.target.checked })} />
+          Mostrar botón “Abrir en Google Maps”
+        </label>
+        <p style={cp.hint}>Agrega un botón sobre el mapa que abre la ubicación en Google Maps (rastreable por analítica).</p>
+      </Collapsible>
+
+      <TrackingControl value={cfg.tracking} onChange={(t) => setCfg({ tracking: t })} />
+    </div>
+  )
+}
+
+// Panel rico de WhatsApp (piloto del patrón del inspector): Contenido + Estilo + Tracking.
+function WhatsAppWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <Collapsible title="Contenido">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={s.propLabel}>Número (código de país sin +, ej: 18095551234)</span>
+          <input style={s.propInput} placeholder="18095551234" defaultValue={cfg.phone ?? ''} onChange={(e) => setCfg({ phone: e.target.value })} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={s.propLabel}>Mensaje prellenado</span>
+          <textarea style={{ ...s.propInput, height: 64, resize: 'vertical' } as any} defaultValue={cfg.message ?? ''} onChange={(e) => setCfg({ message: e.target.value })} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={s.propLabel}>Texto del botón</span>
+          <input style={s.propInput} defaultValue={cfg.label ?? 'Escríbenos'} onChange={(e) => setCfg({ label: e.target.value })} />
+        </div>
+      </Collapsible>
+
+      <Collapsible title="Estilo" defaultOpen={false}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={s.propLabel}>Color del botón</span>
+          <input type="color" value={cfg.color ?? '#25D366'} onChange={(e) => setCfg({ color: e.target.value })} style={s.colorInput} />
+          <button style={{ ...s.adjustReset, padding: '4px 10px' }} onClick={() => setCfg({ color: '#25D366' })}>WhatsApp</button>
+        </div>
+      </Collapsible>
+
+      <TrackingControl value={cfg.tracking} onChange={(t) => setCfg({ tracking: t })} />
+    </div>
   )
 }
 
@@ -3020,19 +3067,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
 
       {type === 'map' && <MapWidgetProps cfg={cfg} setCfg={setCfg} />}
 
-      {type === 'whatsapp' && (
-        <>
-          <Field label="Número (código de país sin +, ej: 18095551234)">
-            <input style={s.propInput} placeholder="18095551234" defaultValue={cfg.phone ?? ''} onChange={(e) => setCfg({ phone: e.target.value })} />
-          </Field>
-          <Field label="Mensaje prellenado">
-            <textarea style={{ ...s.propInput, height: 64, resize: 'vertical' } as any} defaultValue={cfg.message ?? ''} onChange={(e) => setCfg({ message: e.target.value })} />
-          </Field>
-          <Field label="Texto del botón">
-            <input style={s.propInput} defaultValue={cfg.label ?? 'Escríbenos'} onChange={(e) => setCfg({ label: e.target.value })} />
-          </Field>
-        </>
-      )}
+      {type === 'whatsapp' && <WhatsAppWidgetProps cfg={cfg} setCfg={setCfg} />}
 
       {type === 'contact' && (
         <>
@@ -3508,6 +3543,10 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
           </p>
         </PropGroup>
       )}
+
+      {current !== 'none' && (
+        <TrackingControl value={data.tracking} onChange={(t) => setData({ tracking: t })} />
+      )}
     </>
   )
 }
@@ -3662,6 +3701,57 @@ function PropGroup({ label, children }: { label: string; children: React.ReactNo
       <span style={s.propLabel}>{label}</span>
       {children}
     </div>
+  )
+}
+
+// Sección colapsable reutilizable del inspector (patrón del mockup).
+function Collapsible({ title, defaultOpen = true, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = React.useState(defaultOpen)
+  return (
+    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 11px', background: '#f8fafc', border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: '#374151', fontFamily: 'inherit' }}
+      >
+        <span>{title}</span>
+        <span style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s', color: '#9ca3af' }}><Icon name="chevron" size={14} /></span>
+      </button>
+      {open && <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '11px' }}>{children}</div>}
+    </div>
+  )
+}
+
+// Sección de seguimiento (analítica) reutilizable — patrón del mockup (sección 0/8).
+// value/onChange operan sobre un objeto { enabled, event, category, label }.
+// El viewer respeta enabled=false (no registra) y usa label/category al registrar el clic.
+function TrackingControl({ value, onChange }: { value: any; onChange: (t: any) => void }) {
+  const t = value ?? {}
+  const enabled = t.enabled !== false
+  const patch = (p: any) => onChange({ ...t, ...p })
+  return (
+    <Collapsible title="Seguimiento (analítica)" defaultOpen={false}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#374151', cursor: 'pointer' }}>
+        <input type="checkbox" checked={enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
+        Registrar interacciones de este elemento
+      </label>
+      {enabled && (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={s.propLabel}>Nombre del evento</span>
+            <input style={s.propInput} placeholder="ej: clic_whatsapp" defaultValue={t.event ?? ''} onChange={(e) => patch({ event: e.target.value })} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={s.propLabel}>Categoría</span>
+            <input style={s.propInput} placeholder="ej: Contacto" defaultValue={t.category ?? ''} onChange={(e) => patch({ category: e.target.value })} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={s.propLabel}>Etiqueta</span>
+            <input style={s.propInput} placeholder="ej: Botón flotante WhatsApp" defaultValue={t.label ?? ''} onChange={(e) => patch({ label: e.target.value })} />
+          </div>
+          <p style={cp.hint}>La etiqueta aparece en Estadísticas. Desmarca la casilla para no registrar este elemento.</p>
+        </>
+      )}
+    </Collapsible>
   )
 }
 
