@@ -381,6 +381,26 @@ export default function EditPublication() {
     })
   }, [id])
 
+  // Borra una imagen del banco: la elimina de R2, del estado y de localStorage.
+  const deleteFromBank = useCallback(async (url: string) => {
+    if (!url) return
+    const ok = window.confirm(
+      '¿Eliminar esta imagen?\n\nSe borrará del almacenamiento. Si está en uso en alguna página, dejará de mostrarse ahí.\n\nEsta acción no se puede deshacer.'
+    )
+    if (!ok) return
+    try {
+      await api.deleteUpload(url)
+    } catch (e: any) {
+      alert(e?.message ?? 'No se pudo eliminar la imagen.')
+      return
+    }
+    setImageBank((prev) => {
+      const next = prev.filter((u) => u !== url)
+      try { localStorage.setItem(`imgbank_${id}`, JSON.stringify(next)) } catch {}
+      return next
+    })
+  }, [id])
+
   // ── Autoguardado: guarda el canvas actual en segundo plano ──
   // Se llama tras cada cambio (debounce) y al cambiar de página.
   const persistCanvas = useCallback(async (pageId: string, canvas: any, flash = true) => {
@@ -976,6 +996,7 @@ export default function EditPublication() {
               setDefaultFont={setDefaultFont}
               imageBank={imageBank}
               addImageFromUrl={addImageFromUrl}
+              deleteFromBank={deleteFromBank}
               svgInputRef={svgInputRef}
               pdfPagesInputRef={pdfPagesInputRef}
             />
@@ -1262,9 +1283,18 @@ function ContextPanel(p: any) {
               <p style={cp.hint}>Hacé clic en una imagen para insertarla en la página actual sin volver a subirla.</p>
               <div style={cp.bankGrid}>
                 {p.imageBank.map((url: string) => (
-                  <button key={url} style={cp.bankItem} title="Insertar en la página" onClick={() => p.addImageFromUrl(url)}>
-                    <img src={url} alt="" style={cp.bankImg} loading="lazy" />
-                  </button>
+                  <div key={url} style={cp.bankItemWrap}>
+                    <button style={cp.bankItem} title="Insertar en la página" onClick={() => p.addImageFromUrl(url)}>
+                      <img src={url} alt="" style={cp.bankImg} loading="lazy" />
+                    </button>
+                    <button
+                      style={cp.bankDelBtn}
+                      title="Eliminar imagen"
+                      onClick={(e) => { e.stopPropagation(); p.deleteFromBank(url) }}
+                    >
+                      ✕
+                    </button>
+                  </div>
                 ))}
               </div>
             </>
@@ -2473,8 +2503,10 @@ const cp: Record<string, React.CSSProperties> = {
   iconBtn:    { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, height: 64, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', cursor: 'pointer', color: '#334155' },
   iconName:   { fontSize: 9, color: '#9ca3af', lineHeight: 1 },
   bankGrid:   { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginTop: 4 },
-  bankItem:   { padding: 0, border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden', cursor: 'pointer', background: '#fff', aspectRatio: '1', display: 'block' },
+  bankItemWrap: { position: 'relative' as const, aspectRatio: '1' },
+  bankItem:   { padding: 0, border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden', cursor: 'pointer', background: '#fff', width: '100%', height: '100%', display: 'block' },
   bankImg:    { width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block' },
+  bankDelBtn: { position: 'absolute' as const, top: 3, right: 3, width: 20, height: 20, padding: 0, border: 'none', borderRadius: '50%', background: 'rgba(220,38,38,.92)', color: '#fff', fontSize: 11, lineHeight: '20px', textAlign: 'center' as const, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,.3)' },
 }
 
 const cfg: Record<string, React.CSSProperties> = {

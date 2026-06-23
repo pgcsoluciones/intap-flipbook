@@ -75,4 +75,30 @@ upload.post('/', async (c) => {
   return c.json({ success: true, data: { url, key, size_bytes: file.size } }, 201)
 })
 
+// Borra un archivo de R2. Acepta el `key` directo o una `url` pública (de la que se
+// deriva el key). Guarda de propiedad: solo se permite borrar archivos dentro de
+// `uploads/<userId>/` del usuario autenticado — nadie puede borrar archivos de otro.
+upload.delete('/', async (c) => {
+  const userId = c.get('user').sub
+
+  const body = await c.req.json<{ key?: string; url?: string }>().catch(() => ({}))
+  let key = body.key?.trim()
+
+  // Si llega una URL pública, derivamos el key quitando el prefijo R2.
+  if (!key && body.url) {
+    const base = c.env.R2_PUBLIC_BASE_URL.replace(/\/+$/, '')
+    key = body.url.trim().replace(`${base}/`, '')
+  }
+
+  if (!key) return c.json({ success: false, error: 'key o url es requerido' }, 400)
+
+  const prefix = `uploads/${userId}/`
+  if (!key.startsWith(prefix)) {
+    return c.json({ success: false, error: 'No autorizado para borrar este archivo' }, 403)
+  }
+
+  await c.env.MEDIA.delete(key)
+  return c.json({ success: true })
+})
+
 export default upload

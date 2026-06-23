@@ -182,4 +182,11 @@ export const api = {
       body: form,
     }).then((r) => r.json()) as Promise<{ success: true; data: { url: string; key: string } }>
   },
+
+  // Borra un archivo subido a R2 a partir de su URL pública.
+  deleteUpload: (url: string) =>
+    request<{ success: true }>('/api/upload', {
+      method: 'DELETE',
+      body: JSON.stringify({ url }),
+    }),
 }
