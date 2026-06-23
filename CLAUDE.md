@@ -279,7 +279,8 @@ npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase14.sql --r
 | Migración Fase 3 — plantilla inmobiliaria | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase3_inmobiliaria_template.sql --remote` | ✅ Ejecutada |
 | Migración Fase 3 — campos CMS del proyecto | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase3_project_fields.sql --remote` | ✅ Ejecutada |
 | Migración analítica avanzada (country, city, referrer, url_destination) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_analytics_advanced.sql --remote` | ✅ Ejecutada |
-| Deploy Worker (siempre tras cambios en `apps/api/`) | `cd ~/intap-flipbook/apps/api && git pull && npx wrangler deploy` | ✅ Ejecutado (Worker `ed902d00`) |
+| Migración Biblioteca SVG (svg_families, svg_resources, svg_resource_versions) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_svg_library.sql --remote` | ✅ Ejecutada (7 queries) |
+| Deploy Worker (siempre tras cambios en `apps/api/`) | `cd ~/intap-flipbook/apps/api && git pull && npx wrangler deploy` | ✅ Ejecutado (Worker `5b74b7de` — incluye rutas SVG) |
 | Deploy Viewer (tras cambios en `apps/viewer/`) | `cd ~/intap-flipbook/apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer` | ✅ Ejecutado |
 | Crear tablas modules/plan_modules si no existen | Ver comandos más abajo | Pendiente verificar |
 
@@ -305,7 +306,14 @@ npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NO
 | Entidad Unidad (tabla `units`, widget `units_table` en viewer y editor, panel CMS en Settings) | ✅ Implementado |
 | **Analítica avanzada** — geoloc `request.cf`, tablet detection, url_destination, país/links/páginas en dashboard | ✅ Implementado |
 | Acción `popup_audio` (audio emergente en zona clicable) | ✅ Implementado |
-| Acción `show_hide` en viewer (elementos nombrados) | Pendiente |
+| Acción `show_hide` en viewer (elementos nombrados) | ✅ Implementado |
+| Borrar imágenes huérfanas del panel Cargas (Punto EE) | ✅ Implementado |
+| **Biblioteca SVG Fase 1** — backend (migración 3 tablas, rutas `/admin/svg` + `/api/svg`, sanitización HTMLRewriter en `lib/svg.ts`) | ✅ Implementado + desplegado (Worker `5b74b7de`) |
+| **Biblioteca SVG Fase 2** — gestor visual en Super Admin (`AdminSvg.tsx`: grilla, subida individual/lote drag&drop, familias, edición, gating por plan/módulo) | ✅ Implementado + desplegado |
+| Biblioteca SVG Fase 3 — selector en editor del tenant (candados premium, inserción como vector + metadata) | Pendiente |
+| Biblioteca SVG Fase 4 — panel de propiedades SVG (colores por capa, gradientes, trazo, voltear) | Pendiente |
+| Biblioteca SVG Fase 5 — SVG en botones + sync multi-página (`syncGroupId`) | Pendiente |
+| Biblioteca SVG Fase 6 — RBAC granular (resources_manager, tenant_editor, tenant_viewer) | Pendiente |
 | Alinear claves de módulos frontend ↔ D1 | Pendiente |
 | AdminModules toggle — claves no coinciden | Pendiente |
 | Multiusuario / permisos por sub-usuario (Punto E) | Backlog |
