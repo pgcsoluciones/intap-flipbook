@@ -34,6 +34,7 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
     case 'shapes':    return <svg {...p}><circle cx="8" cy="8" r="4.5"/><rect x="12" y="12" width="8" height="8" rx="1.5"/></svg>
     case 'buttons':   return <svg {...p}><rect x="3" y="8" width="18" height="8" rx="4"/><path d="M8 12h8"/></svg>
     case 'elements':  return <svg {...p}><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/></svg>
+    case 'svglib':    return <svg {...p}><path d="M3 5h12M3 10h12M3 15h7"/><path d="m16 13 5 5M21 13l-5 5"/></svg>
     case 'link':      return <svg {...p}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
     case 'widgets':   return <svg {...p}><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
     case 'uploads':   return <svg {...p}><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 20h14"/></svg>
@@ -69,7 +70,7 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
 // ─── Herramientas de la barra lateral (icon rail) ─────────────────────────────
 type ToolKey =
   | 'pages' | 'templates' | 'text' | 'image'
-  | 'shapes' | 'buttons' | 'elements' | 'link' | 'widgets' | 'uploads'
+  | 'shapes' | 'buttons' | 'elements' | 'svglib' | 'link' | 'widgets' | 'uploads'
 
 const RAIL: { key: ToolKey; label: string }[] = [
   { key: 'pages',     label: 'Páginas' },
@@ -79,6 +80,7 @@ const RAIL: { key: ToolKey; label: string }[] = [
   { key: 'shapes',    label: 'Formas' },
   { key: 'buttons',   label: 'Botones' },
   { key: 'elements',  label: 'Elementos' },
+  { key: 'svglib',    label: 'Biblioteca' },
   { key: 'link',      label: 'Enlace' },
   { key: 'widgets',   label: 'Widgets' },
   { key: 'uploads',   label: 'Cargas' },
@@ -306,6 +308,11 @@ export default function EditPublication() {
   const [templates, setTemplates]   = useState<any[]>([])
   const [tplQuery, setTplQuery]     = useState('')
   const [bgColor, setBgColor]       = useState('#ffffff')
+
+  // Biblioteca SVG (recursos vectoriales del super admin, filtrados por plan)
+  const [svgLib, setSvgLib]         = useState<any[]>([])
+  const [svgLibLoaded, setSvgLibLoaded] = useState(false)
+  const [svgLibQuery, setSvgLibQuery]   = useState('')
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
@@ -748,6 +755,39 @@ export default function EditPublication() {
     })
   }
 
+  // Carga (perezosa) la biblioteca SVG del módulo "Insertar en canvas".
+  async function loadSvgLibrary() {
+    if (svgLibLoaded) return
+    try {
+      const res = await api.svgLibrary('canvas_insert_svg')
+      setSvgLib(res.data ?? [])
+    } catch { /* silencioso: el panel muestra estado vacío */ }
+    finally { setSvgLibLoaded(true) }
+  }
+
+  // Inserta un SVG de la biblioteca como VECTOR editable. Pide el contenido a la
+  // API (no a r2.dev) para evitar CORS y validar el acceso por plan en el servidor.
+  async function addSvgFromLibrary(item: any) {
+    if (item.locked) {
+      alert(item.upgrade_message || `Este recurso requiere el plan ${item.required_plan ?? 'superior'}.`)
+      return
+    }
+    const c = fabricRef.current; if (!c) return
+    try {
+      const svgText = await api.svgRaw(item.id)
+      fabric.loadSVGFromString(svgText, (objects: any[], options: any) => {
+        if (!objects || !objects.length) { alert('No se pudo cargar el SVG.'); return }
+        const obj = fabric.util.groupSVGElements(objects, options)
+        obj.scaleToWidth(120)
+        obj.set({ left: 100, top: 100, data: { kind: 'svglib', svgResourceId: item.id, editable: item.editable } })
+        c.add(obj); c.setActiveObject(obj); c.requestRenderAll()
+        scheduleAutosave()
+      })
+    } catch (e: any) {
+      alert(e?.message ?? 'No se pudo insertar el SVG')
+    }
+  }
+
   // Inserta un widget como un marcador (placeholder) en el lienzo. El visor
   // lo convierte en el componente real (mapa, formulario, video, etc.).
   function addWidget(w: { type: WidgetType; label: string; premium: boolean }) {
@@ -905,6 +945,7 @@ export default function EditPublication() {
   function selectTool(key: ToolKey) {
     if (key === activeTool && panelOpen) { setPanelOpen(false); return }
     setActiveTool(key); setPanelOpen(true)
+    if (key === 'svglib') loadSvgLibrary()
   }
 
   const activePageIndex = activePage ? pages.findIndex((p) => p.id === activePage.id) : -1
@@ -992,6 +1033,11 @@ export default function EditPublication() {
               addIcon={addIcon}
               addHotspot={addHotspot}
               addWidget={addWidget}
+              svgLib={svgLib}
+              svgLibLoaded={svgLibLoaded}
+              svgLibQuery={svgLibQuery}
+              setSvgLibQuery={setSvgLibQuery}
+              addSvgFromLibrary={addSvgFromLibrary}
               defaultFont={defaultFont}
               setDefaultFont={setDefaultFont}
               imageBank={imageBank}
@@ -1376,6 +1422,46 @@ function ContextPanel(p: any) {
           </div>
         </>
       )
+
+    case 'svglib': {
+      const items = (p.svgLib as any[]).filter((it) =>
+        !p.svgLibQuery || it.name?.toLowerCase().includes(p.svgLibQuery.toLowerCase())
+      )
+      return (
+        <>
+          <PanelTitle title="Biblioteca SVG" />
+          <p style={cp.hint}>Íconos vectoriales editables. Hacé clic para insertarlos en la página. Los marcados con 🔒 requieren un plan superior.</p>
+          <input
+            style={cp.search}
+            placeholder="Buscar ícono…"
+            value={p.svgLibQuery}
+            onChange={(e) => p.setSvgLibQuery(e.target.value)}
+          />
+          {!p.svgLibLoaded ? (
+            <p style={cp.hint}>Cargando biblioteca…</p>
+          ) : items.length === 0 ? (
+            <p style={cp.hint}>No hay íconos disponibles todavía. El administrador puede agregarlos desde el panel “Biblioteca SVG”.</p>
+          ) : (
+            <div style={cp.iconGrid}>
+              {items.map((it) => (
+                <button
+                  key={it.id}
+                  title={it.locked ? (it.upgrade_message || `Requiere plan ${it.required_plan ?? 'superior'}`) : it.name}
+                  style={{ ...cp.iconBtn, position: 'relative', opacity: it.locked ? 0.55 : 1 }}
+                  onClick={() => p.addSvgFromLibrary(it)}
+                >
+                  {it.svg_url
+                    ? <img src={it.svg_url} alt={it.name} style={{ width: 30, height: 30, objectFit: 'contain' }} loading="lazy" />
+                    : <span style={{ fontSize: 22 }}>🔒</span>}
+                  <span style={cp.iconName}>{it.name}</span>
+                  {it.locked && <span style={{ position: 'absolute', top: 2, right: 4, fontSize: 11 }}>🔒</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )
+    }
 
     case 'link':
       return (

@@ -211,6 +211,23 @@ export const api = {
   svgLibrary: (module?: string) =>
     request<{ success: true; data: any[] }>(`/api/svg${module ? `?module=${encodeURIComponent(module)}` : ''}`),
 
+  // Contenido SVG crudo (texto) de un recurso — para insertar como vector en el editor.
+  // Se pide a la API (no a r2.dev) para evitar CORS y validar acceso por plan.
+  svgRaw: (id: number | string) => {
+    const token = getToken()
+    return fetch(`${API_BASE}/api/svg/${id}/raw`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }).then(async (r) => {
+      if (!r.ok) {
+        const t = await r.text().catch(() => '')
+        let msg = `Error ${r.status}`
+        try { msg = JSON.parse(t)?.error ?? msg } catch {}
+        throw new Error(msg)
+      }
+      return r.text()
+    })
+  },
+
   public: {
     feed: (tenantSlug: string) =>
       fetch(`${API_BASE}/public/${encodeURIComponent(tenantSlug)}`)

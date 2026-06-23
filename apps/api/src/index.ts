@@ -120,6 +120,45 @@ app.get('/api/svg', jwtMiddleware, async (c) => {
   return c.json({ success: true, data })
 })
 
+// Devuelve el contenido SVG (texto) de un recurso de la biblioteca, validando
+// que el plan del tenant tenga acceso. Se sirve a través de la API (no de R2
+// directo) para evitar CORS y para poder validar el acceso en el servidor.
+// El editor usa esto para insertar el SVG como VECTOR editable (loadSVGFromString).
+app.get('/api/svg/:id/raw', jwtMiddleware, async (c) => {
+  const userId = (c as any).get('user').sub
+  const { planId: plan } = await getUserPlan(c.env.DB, userId)
+  const id = c.req.param('id')
+
+  const r = await c.env.DB.prepare(
+    `SELECT plans, available_modules, visible_to_lower_plans, scope, tenant_id, svg_url, status
+     FROM svg_resources WHERE id = ?`
+  ).bind(id).first<any>()
+
+  if (!r || r.status !== 'active') return c.json({ success: false, error: 'Recurso no encontrado' }, 404)
+  if (r.scope === 'tenant' && r.tenant_id !== userId) {
+    return c.json({ success: false, error: 'Sin acceso' }, 403)
+  }
+
+  // Mismo cálculo de bloqueo por plan que en GET /api/svg
+  const RANK: Record<string, number> = { free: 0, basic: 1, pro: 2 }
+  const myRank = RANK[plan] ?? 0
+  const plans: string[] = safeParse(r.plans, [])
+  const allowed = plans.length === 0 || plans.includes(plan)
+  const minRank = plans.length ? Math.min(...plans.map((p) => RANK[p] ?? 99)) : 0
+  if (!allowed && minRank > myRank) {
+    return c.json({ success: false, error: 'Este recurso requiere un plan superior' }, 403)
+  }
+
+  // Leer el SVG desde R2 (vía binding, sin CORS) y devolverlo como texto.
+  const base = c.env.R2_PUBLIC_BASE_URL.replace(/\/+$/, '')
+  const key = (r.svg_url as string).replace(`${base}/`, '')
+  const obj = await c.env.MEDIA.get(key)
+  if (!obj) return c.json({ success: false, error: 'Archivo no encontrado en R2' }, 404)
+
+  const text = await obj.text()
+  return c.body(text, 200, { 'Content-Type': 'image/svg+xml; charset=utf-8' })
+})
+
 // Módulos activos para este tenant
 app.get('/api/me/modules', jwtMiddleware, async (c) => {
   const userId = (c as any).get('user').sub
