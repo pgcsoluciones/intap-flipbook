@@ -195,10 +195,10 @@ async function init() {
 
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
 
-  // Mostrar el flipbook y ocultar la pantalla de carga
+  // Ocultar la pantalla de carga. El flipbook-container siempre estuvo visible
+  // debajo (necesario para que StPageFlip pueda medir sus dimensiones con size:'stretch');
+  // el loading-screen es un overlay fixed que lo tapaba mientras se construía.
   const loadingScreen = document.getElementById('loading-screen')
-  const flipbookContainer = document.getElementById('flipbook-container')
-  flipbookContainer.style.display = ''
   if (loadingScreen) {
     loadingScreen.classList.add('hidden')
     setTimeout(() => loadingScreen.remove(), 450)
