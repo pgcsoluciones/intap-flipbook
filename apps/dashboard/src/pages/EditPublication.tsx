@@ -1561,8 +1561,8 @@ export default function EditPublication() {
                 <CtxItem icon="back"     label="Enviar al fondo" onClick={() => { sendToBack(); setCtxMenu(null) }} />
                 <div style={s.ctxSep} />
                 <CtxItem icon={selected?.data?.locked ? 'unlock' : 'lock'} label={selected?.data?.locked ? 'Desbloquear' : 'Bloquear'} onClick={() => { toggleLock(); setCtxMenu(null) }} />
-                {(selected?.data?.kind === 'image' || selected?.type === 'image') &&
-                  <CtxItem icon="replace" label="Reemplazar imagen" onClick={() => { setCtxMenu(null); replaceSelected() }} />}
+                {selected?.type !== 'activeSelection' &&
+                  <CtxItem icon="replace" label={replaceLabel(selected)} onClick={() => { setCtxMenu(null); replaceSelected() }} />}
                 <div style={s.ctxSep} />
                 <CtxItem icon="alignLeft"    label="Alinear izquierda" onClick={() => { alignSelected('left'); setCtxMenu(null) }} />
                 <CtxItem icon="alignCenterH" label="Centrar horizontal" onClick={() => { alignSelected('centerH'); setCtxMenu(null) }} />
@@ -1579,6 +1579,18 @@ export default function EditPublication() {
       )}
     </div>
   )
+}
+
+// Etiqueta de la opción "Reemplazar" del menú contextual según el tipo de elemento.
+function replaceLabel(sel: any): string {
+  const kind = sel?.data?.kind
+  if (kind === 'image' || sel?.type === 'image') return 'Reemplazar imagen'
+  if (kind === 'icon') return 'Reemplazar icono'
+  if (kind === 'svglib') return 'Reemplazar SVG'
+  if (kind === 'shape' || ['rect', 'circle', 'triangle', 'path'].includes(sel?.type)) return 'Reemplazar forma'
+  if (kind === 'button') return 'Reemplazar botón'
+  if (sel?.type === 'i-text' || sel?.type === 'textbox') return 'Reemplazar texto'
+  return 'Reemplazar elemento'
 }
 
 function CtxItem({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
