@@ -101,8 +101,18 @@ export async function sanitizeSvg(raw: string): Promise<SanitizeResult> {
     .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
     .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
 
-  if (!/<svg[\s\S]*<\/svg>/i.test(svg)) {
+  // Extraer solo el bloque <svg>…</svg> por si el parser HTML agregó
+  // envoltura (<html>/<body>) alrededor del contenido.
+  const match = svg.match(/<svg[\s\S]*<\/svg>/i)
+  if (!match) {
     return { ok: false, error: 'El SVG quedó vacío tras la sanitización' }
+  }
+  svg = match[0]
+
+  // Garantizar el namespace SVG: un .svg servido suelto SIN xmlns es XML
+  // inválido y el navegador no lo renderiza (miniatura rota en <img src>).
+  if (!/<svg[^>]*\sxmlns\s*=/i.test(svg)) {
+    svg = svg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"')
   }
 
   return { ok: true, svg }
