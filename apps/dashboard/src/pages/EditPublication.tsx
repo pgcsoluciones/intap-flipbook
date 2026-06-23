@@ -1130,15 +1130,17 @@ export default function EditPublication() {
     setReplaceModal(true)
   }
 
-  // Reemplaza la imagen activa por una URL nueva, conservando posición, ancho y orden-z.
-  // Crea siempre un objeto nuevo con fabric.Image.fromURL (igual que addImageFromUrl, la
-  // ruta que sí funciona) y lo intercambia por el existente. NO se fuerza crossOrigin:
-  // 'anonymous' porque si R2 no envía cabeceras CORS la imagen falla al cargar y queda
-  // con dimensiones 0 (se veía como una "línea"); la inserción normal tampoco lo usa.
+  // Reemplaza la imagen activa por una URL nueva, conservando el MISMO recuadro
+  // (posición, ancho y alto) de la imagen anterior. Modo "cubrir": la nueva imagen
+  // se recorta (cropX/cropY) para llenar el recuadro sin deformarse, sin importar su
+  // proporción. Se crea siempre con fabric.Image.fromURL (igual que addImageFromUrl,
+  // la ruta que sí funciona) y SIN crossOrigin: forzar crossOrigin:'anonymous' rompe
+  // la carga cuando R2 no envía cabeceras CORS (la imagen quedaba como una "línea").
   function doReplaceWithUrl(url: string) {
     const c = fabricRef.current; const o = c?.getActiveObject(); if (!o || !c) return
-    // Ancho mostrado actual: la nueva imagen se escala para ocupar el mismo ancho.
+    // Recuadro mostrado actual (ancho y alto ya escalados) que debemos replicar.
     const targetW = o.getScaledWidth?.() ?? (o.width ?? 0) * (o.scaleX ?? 1)
+    const targetH = o.getScaledHeight?.() ?? (o.height ?? 0) * (o.scaleY ?? 1)
     const prevLeft = o.left ?? 0, prevTop = o.top ?? 0
     const prevAngle = o.angle ?? 0
     const prevFlipX = !!o.flipX, prevFlipY = !!o.flipY
@@ -1147,8 +1149,21 @@ export default function EditPublication() {
     const idx = c.getObjects().indexOf(o)
     fabric.Image.fromURL(url, (img: any) => {
       if (!img || !img.width || !img.height) { alert('No se pudo cargar la imagen de reemplazo'); return }
-      const scale = targetW > 0 ? targetW / img.width : 1
+      const iw = img.width, ih = img.height
+      // Modo "cubrir": recorta el sobrante para que la región mostrada tenga la misma
+      // proporción que el recuadro destino, centrando el recorte.
+      const targetAspect = targetH > 0 ? targetW / targetH : iw / ih
+      let cropW = iw, cropH = ih, cropX = 0, cropY = 0
+      if (iw / ih > targetAspect) {
+        // Imagen más ancha que el recuadro → recortar lados
+        cropW = ih * targetAspect; cropX = (iw - cropW) / 2
+      } else {
+        // Imagen más alta → recortar arriba/abajo
+        cropH = iw / targetAspect; cropY = (ih - cropH) / 2
+      }
+      const scale = cropW > 0 ? targetW / cropW : 1
       img.set({
+        cropX, cropY, width: cropW, height: cropH,
         left: prevLeft, top: prevTop, scaleX: scale, scaleY: scale, angle: prevAngle,
         flipX: prevFlipX, flipY: prevFlipY, originX: prevOriginX, originY: prevOriginY,
       })
