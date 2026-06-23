@@ -374,6 +374,8 @@ export default function EditPublication() {
   const adjustModeRef = useRef(false)             // espejo de adjustMode para los listeners del canvas
   const [adjustMode, setAdjustMode] = useState(false)
   const [coverZoom, setCoverZoom] = useState(1)   // valor del slider (espejo de coverRef.zoom)
+  // Vista previa de la hoja activa (snapshot del canvas actual, no editable)
+  const [sheetPreview, setSheetPreview] = useState<{ imageUrl: string; cover: any; json: any } | null>(null)
   const rightPanelRef = useRef<HTMLDivElement>(null)
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
@@ -1240,6 +1242,15 @@ export default function EditPublication() {
     } catch { /* si falla, el encuadre queda solo en pantalla hasta el próximo guardado */ }
   }
 
+  // Abre la vista previa de la hoja activa: captura el estado actual del canvas
+  // (objetos + encuadre del fondo) para renderizarlo limpio, sin manijas de selección.
+  function openSheetPreview() {
+    const c = fabricRef.current; if (!c || !activePage) return
+    c.discardActiveObject(); c.requestRenderAll(); setSelected(null)
+    const json = c.toJSON(['data'])
+    setSheetPreview({ imageUrl: activePage.image_url, cover: { ...coverRef.current }, json })
+  }
+
   // Reemplazar el elemento seleccionado — enruta al panel de origen según tipo.
   // Imágenes: abren el modal del banco. Los demás tipos: se marcan para reemplazo
   // in-situ (replaceTargetRef) y se navega al panel; al insertar el nuevo elemento,
@@ -1451,6 +1462,9 @@ export default function EditPublication() {
           <span style={s.saveInd}>
             {saveState === 'saving' ? '⟳ Guardando…' : saveState === 'saved' ? '✓ Guardado' : 'Autoguardado activo'}
           </span>
+          <button style={s.btnOutlineWhite} onClick={openSheetPreview} disabled={!activePage} title="Ver cómo queda la hoja actual con los cambios">
+            Vista previa de hoja
+          </button>
           <Link to={`/publications/${id}/preview`}>
             <button style={s.btnOutlineWhite}>Vista previa</button>
           </Link>
@@ -1765,6 +1779,9 @@ export default function EditPublication() {
         </div>
       )}
 
+      {/* ── Vista previa de la hoja activa ── */}
+      {sheetPreview && <SheetPreviewModal data={sheetPreview} onClose={() => setSheetPreview(null)} />}
+
       {/* ── Menú contextual (clic derecho) ── */}
       {ctxMenu && (
         <>
@@ -1826,6 +1843,58 @@ function CtxItem({ icon, label, onClick }: { icon: string; label: string; onClic
       <Icon name={icon} size={15} />
       <span>{label}</span>
     </button>
+  )
+}
+
+// Modal de vista previa de la hoja activa. Renderiza el fondo (con su encuadre
+// "cubrir") + un StaticCanvas no editable con los objetos del diseño actual,
+// escalado desde el espacio de diseño (CANVAS_W×CANVAS_H) al tamaño del preview.
+function SheetPreviewModal({ data, onClose }: { data: { imageUrl: string; cover: any; json: any }; onClose: () => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const PH = Math.min(720, Math.round(window.innerHeight * 0.8))
+  const PW = Math.round(PH / 1.414)
+
+  useEffect(() => {
+    if (!canvasRef.current) return
+    const sc = new fabric.StaticCanvas(canvasRef.current, { width: PW, height: PH, backgroundColor: 'transparent' })
+    // Sin fondo en el canvas: el fondo lo pinta el <img> de abajo (igual que el viewer)
+    const objectsOnly = Object.assign({}, data.json, { background: '', backgroundImage: null })
+    sc.setZoom(PW / CANVAS_W)
+    sc.loadFromJSON(objectsOnly, () => sc.renderAll())
+    return () => { sc.dispose() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const zoom = Math.max(1, data.cover?.zoom ?? 1)
+  const fx = Math.min(1, Math.max(0, data.cover?.fx ?? 0.5))
+  const fy = Math.min(1, Math.max(0, data.cover?.fy ?? 0.5))
+  const posX = (fx * 100).toFixed(2), posY = (fy * 100).toFixed(2)
+  const imgStyle: React.CSSProperties = {
+    position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
+    objectPosition: `${posX}% ${posY}%`, display: 'block',
+    ...(zoom > 1.0001 ? { transform: `scale(${zoom})`, transformOrigin: `${posX}% ${posY}%` } : {}),
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.7)', zIndex: 1000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 16 }}
+      onClick={onClose}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#fff' }} onClick={(e) => e.stopPropagation()}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>Vista previa de la hoja</span>
+        <button onClick={onClose} style={{ background: '#fff', color: '#111827', border: 'none', borderRadius: 7, padding: '5px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Cerrar ✕</button>
+      </div>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ position: 'relative', width: PW, height: PH, overflow: 'hidden', background: '#fff', borderRadius: 4, boxShadow: '0 12px 48px rgba(0,0,0,0.4)' }}
+      >
+        <img src={data.imageUrl} alt="" style={imgStyle} />
+        <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
+      </div>
+      <span style={{ color: '#cbd5e1', fontSize: 11, maxWidth: PW + 80, textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+        Vista del diseño actual. Los widgets interactivos (mapa, video, formulario…) se ven en su forma final en la “Vista previa” global del proyecto.
+      </span>
+    </div>
   )
 }
 
