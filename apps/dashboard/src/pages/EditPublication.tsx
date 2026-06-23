@@ -313,6 +313,7 @@ export default function EditPublication() {
   const [svgLib, setSvgLib]         = useState<any[]>([])
   const [svgLibLoaded, setSvgLibLoaded] = useState(false)
   const [svgLibQuery, setSvgLibQuery]   = useState('')
+  const [svgLibFamily, setSvgLibFamily] = useState('') // '' = todas
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
@@ -1037,6 +1038,8 @@ export default function EditPublication() {
               svgLibLoaded={svgLibLoaded}
               svgLibQuery={svgLibQuery}
               setSvgLibQuery={setSvgLibQuery}
+              svgLibFamily={svgLibFamily}
+              setSvgLibFamily={setSvgLibFamily}
               addSvgFromLibrary={addSvgFromLibrary}
               defaultFont={defaultFont}
               setDefaultFont={setDefaultFont}
@@ -1424,40 +1427,81 @@ function ContextPanel(p: any) {
       )
 
     case 'svglib': {
-      const items = (p.svgLib as any[]).filter((it) =>
-        !p.svgLibQuery || it.name?.toLowerCase().includes(p.svgLibQuery.toLowerCase())
-      )
+      const all = p.svgLib as any[]
+      // Lista de familias presentes (únicas), ordenadas alfabéticamente.
+      const familyNames = Array.from(
+        new Set(all.map((it) => it.family_name).filter(Boolean))
+      ).sort() as string[]
+      const hasNoFamily = all.some((it) => !it.family_name)
+
+      const q = (p.svgLibQuery || '').toLowerCase()
+      const filtered = all.filter((it) => {
+        if (q && !it.name?.toLowerCase().includes(q) &&
+            !(it.tags ?? []).some((t: string) => t.toLowerCase().includes(q))) return false
+        if (p.svgLibFamily) {
+          if (p.svgLibFamily === '__none__') return !it.family_name
+          return it.family_name === p.svgLibFamily
+        }
+        return true
+      })
+
+      // Agrupar por familia para mostrar encabezados de sección.
+      const groups: { name: string; items: any[] }[] = []
+      const pushTo = (name: string, it: any) => {
+        let g = groups.find((x) => x.name === name)
+        if (!g) { g = { name, items: [] }; groups.push(g) }
+        g.items.push(it)
+      }
+      filtered.forEach((it) => pushTo(it.family_name || 'Sin familia', it))
+      groups.sort((a, b) => a.name === 'Sin familia' ? 1 : b.name === 'Sin familia' ? -1 : a.name.localeCompare(b.name))
+
       return (
         <>
           <PanelTitle title="Biblioteca SVG" />
           <p style={cp.hint}>Íconos vectoriales editables. Hacé clic para insertarlos en la página. Los marcados con 🔒 requieren un plan superior.</p>
           <input
             style={cp.search}
-            placeholder="Buscar ícono…"
+            placeholder="Buscar por nombre o etiqueta…"
             value={p.svgLibQuery}
             onChange={(e) => p.setSvgLibQuery(e.target.value)}
           />
+          {familyNames.length > 0 && (
+            <select
+              style={{ ...cp.search, marginTop: -4 }}
+              value={p.svgLibFamily}
+              onChange={(e) => p.setSvgLibFamily(e.target.value)}
+            >
+              <option value="">Todas las familias</option>
+              {familyNames.map((fn) => <option key={fn} value={fn}>{fn}</option>)}
+              {hasNoFamily && <option value="__none__">Sin familia</option>}
+            </select>
+          )}
           {!p.svgLibLoaded ? (
             <p style={cp.hint}>Cargando biblioteca…</p>
-          ) : items.length === 0 ? (
-            <p style={cp.hint}>No hay íconos disponibles todavía. El administrador puede agregarlos desde el panel “Biblioteca SVG”.</p>
+          ) : filtered.length === 0 ? (
+            <p style={cp.hint}>No hay íconos para este filtro. El administrador puede agregar más desde el panel “Biblioteca SVG”.</p>
           ) : (
-            <div style={cp.iconGrid}>
-              {items.map((it) => (
-                <button
-                  key={it.id}
-                  title={it.locked ? (it.upgrade_message || `Requiere plan ${it.required_plan ?? 'superior'}`) : it.name}
-                  style={{ ...cp.iconBtn, position: 'relative', opacity: it.locked ? 0.55 : 1 }}
-                  onClick={() => p.addSvgFromLibrary(it)}
-                >
-                  {it.svg_url
-                    ? <img src={it.svg_url} alt={it.name} style={{ width: 30, height: 30, objectFit: 'contain' }} loading="lazy" />
-                    : <span style={{ fontSize: 22 }}>🔒</span>}
-                  <span style={cp.iconName}>{it.name}</span>
-                  {it.locked && <span style={{ position: 'absolute', top: 2, right: 4, fontSize: 11 }}>🔒</span>}
-                </button>
-              ))}
-            </div>
+            groups.map((g) => (
+              <div key={g.name}>
+                <div style={cp.sectionLabel}>{g.name}</div>
+                <div style={cp.iconGrid}>
+                  {g.items.map((it) => (
+                    <button
+                      key={it.id}
+                      title={it.locked ? (it.upgrade_message || `Requiere plan ${it.required_plan ?? 'superior'}`) : it.name}
+                      style={{ ...cp.iconBtn, position: 'relative', opacity: it.locked ? 0.55 : 1 }}
+                      onClick={() => p.addSvgFromLibrary(it)}
+                    >
+                      {it.svg_url
+                        ? <img src={it.svg_url} alt={it.name} style={{ width: 30, height: 30, objectFit: 'contain' }} loading="lazy" />
+                        : <span style={{ fontSize: 22 }}>🔒</span>}
+                      <span style={cp.iconName}>{it.name}</span>
+                      {it.locked && <span style={{ position: 'absolute', top: 2, right: 4, fontSize: 11 }}>🔒</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))
           )}
         </>
       )
