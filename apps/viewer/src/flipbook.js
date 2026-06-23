@@ -254,7 +254,7 @@ async function init() {
   const overlayScale = pageWidth / DESIGN_W
 
   function runAction(a, fcanvas) {
-    if (!a || !a.type) return
+    if (!a || !a.type || a.type === 'none') return
     // Extraer la URL destino según el tipo de acción (para analítica)
     const urlDest = a.url || a.phone || a.email || a.whatsapp || null
     // Analítica: registrar el clic en este botón/enlace

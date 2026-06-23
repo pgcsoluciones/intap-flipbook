@@ -2187,7 +2187,8 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
   return (
     <>
       <PropGroup label="Tipo de acción">
-        <select style={s.propInput} value={action.type} onChange={(e) => setAction({ type: e.target.value })}>
+        <select style={s.propInput} value={action.type ?? 'none'} onChange={(e) => setAction({ type: e.target.value })}>
+          <option value="none">— Sin acción —</option>
           {ACTION_TYPES.map((a) => <option key={a.type} value={a.type}>{a.label}</option>)}
         </select>
       </PropGroup>
@@ -2286,27 +2287,22 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
       )}
 
       {action.type === 'show_hide' && (
-        <>
-          <PropGroup label="Elemento a mostrar u ocultar">
-            {targets.length === 0 ? (
-              <p style={cp.hint}>
-                Primero asigna un “Nombre del elemento” a otro elemento de esta página
-                (selecciónalo y completa el campo en su panel de propiedades).
-              </p>
-            ) : (
-              <select style={s.propInput} value={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })}>
-                <option value="">— Selecciona un elemento —</option>
-                {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            )}
-          </PropGroup>
-          <PropGroup label="Estado inicial">
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: '#374151' }}>
-              <input type="checkbox" checked={!!action.startHidden} onChange={(e) => setAction({ startHidden: e.target.checked })} />
-              El elemento empieza oculto (se revela al hacer clic)
-            </label>
-          </PropGroup>
-        </>
+        <PropGroup label=”Elemento a mostrar u ocultar”>
+          {targets.length === 0 ? (
+            <p style={cp.hint}>
+              Primero selecciona el elemento objetivo y asígnale un “Nombre del elemento”
+              en su panel de propiedades. Luego vuelve aquí a configurar la acción.
+            </p>
+          ) : (
+            <select style={s.propInput} value={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })}>
+              <option value=””>— Selecciona un elemento —</option>
+              {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          )}
+          <p style={cp.hint}>
+            Para que el elemento empiece oculto, selecciónalo y marca “Empieza oculto” en su panel de propiedades.
+          </p>
+        </PropGroup>
       )}
     </>
   )
