@@ -29,6 +29,10 @@ app.use('*', async (c, next) => {
     origin: (origin) => (allowedOrigins.includes(origin) ? origin : allowedOrigins[0]),
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
+    // navigator.sendBeacon() (analítica del viewer) siempre envía la petición en modo
+    // credentials:'include'. El navegador entonces exige Access-Control-Allow-Credentials:true
+    // en la respuesta del preflight, o bloquea la petición. Esta opción agrega ese header.
+    credentials: true,
     maxAge: 86400,
   })
   return corsMiddleware(c, next)
