@@ -320,6 +320,7 @@ export default function EditPublication() {
   const [panelOpen, setPanelOpen]   = useState(true)
   const [ctxMenu, setCtxMenu]       = useState<{ x: number; y: number } | null>(null)
   const [alignRef, setAlignRef]     = useState<'canvas' | 'selection'>('canvas')
+  const [replaceModal, setReplaceModal] = useState(false)
   const [templates, setTemplates]   = useState<any[]>([])
   const [tplQuery, setTplQuery]     = useState('')
   const [bgColor, setBgColor]       = useState('#ffffff')
@@ -722,15 +723,14 @@ export default function EditPublication() {
     }
   }
 
-  // Inserta la imagen como un objeto editable Fabric sobre el canvas actual (NO crea página nueva)
+  // Sube una imagen al banco del proyecto. El usuario la inserta desde el banco.
   async function addImageElement(file: File) {
-    const c = fabricRef.current; if (!c) return
     setUploading(true)
     try {
       const up = await api.upload(file)
       if (!up.success) throw new Error('Upload falló')
       addToBank(up.data.url)
-      addImageFromUrl(up.data.url)
+      // No insertamos en canvas — el usuario elige desde el banco del proyecto
     } finally { setUploading(false) }
   }
 
@@ -1061,26 +1061,46 @@ export default function EditPublication() {
     c.discardActiveObject(); c.requestRenderAll(); setSelected(null); setSelectVersion((v) => v + 1); scheduleAutosave()
   }
 
-  // Reemplazar la imagen seleccionada por otra (sube y cambia el src).
+  // Reemplazar la imagen seleccionada — abre el modal con banco + subir nueva.
   function replaceSelected() {
     const o = fabricRef.current?.getActiveObject()
-    const kind = o?.data?.kind
-    if (!o || (kind !== 'image' && o.type !== 'image')) { alert('Selecciona una imagen para reemplazarla.'); return }
-    replaceInputRef.current?.click()
+    if (!o) return
+    setReplaceModal(true)
   }
+
+  // Reemplaza el objeto activo con una URL nueva, preservando posición y tamaño.
+  function doReplaceWithUrl(url: string) {
+    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
+    const prevLeft = o.left, prevTop = o.top
+    const prevScaleX = o.scaleX, prevScaleY = o.scaleY
+    const prevAngle = o.angle ?? 0
+    o.setSrc(url, () => {
+      o.set({ left: prevLeft, top: prevTop, scaleX: prevScaleX, scaleY: prevScaleY, angle: prevAngle })
+      o.data = { ...(o.data ?? {}), src: url }
+      o.setCoords(); c.requestRenderAll(); scheduleAutosave()
+    }, { crossOrigin: 'anonymous' })
+    addToBank(url)
+    setReplaceModal(false)
+  }
+
   async function handleReplaceFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; e.target.value = ''
     if (!file) return
-    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
     setUploading(true)
     try {
       const up = await api.upload(file)
-      o.setSrc(up.data.url, () => {
-        o.data = { ...(o.data ?? {}), src: up.data.url }
-        c.requestRenderAll(); scheduleAutosave()
-      })
+      if (!up.success) throw new Error('Upload falló')
+      doReplaceWithUrl(up.data.url)
     } catch (err: any) { alert(err?.message ?? 'No se pudo reemplazar la imagen') }
     finally { setUploading(false) }
+  }
+
+  // Activar/desactivar sincronización multi-página de un SVG seleccionado.
+  function handleSvgSyncToggle(enabled: boolean) {
+    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
+    const syncId = enabled ? crypto.randomUUID() : undefined
+    o.data = { ...(o.data ?? {}), syncGroupId: syncId }
+    c.requestRenderAll(); scheduleAutosave()
   }
 
   // Alinear el objeto respecto al lienzo o a la selección múltiple.
@@ -1139,7 +1159,7 @@ export default function EditPublication() {
   function selectTool(key: ToolKey) {
     if (key === activeTool && panelOpen) { setPanelOpen(false); return }
     setActiveTool(key); setPanelOpen(true)
-    if (key === 'svglib') loadSvgLibrary()
+    if (key === 'svglib' || key === 'buttons') loadSvgLibrary()
   }
 
   const activePageIndex = activePage ? pages.findIndex((p) => p.id === activePage.id) : -1
@@ -1362,6 +1382,7 @@ export default function EditPublication() {
               canvas={fabricRef.current}
               pages={pages}
               onChange={() => { scheduleAutosave() }}
+              onSyncToggle={handleSvgSyncToggle}
             />
           ) : (
             <PageConfig bgColor={bgColor} applyBgColor={applyBgColor} />
@@ -1416,6 +1437,47 @@ export default function EditPublication() {
         style={{ display: 'none' }}
         onChange={handleReplaceFile}
       />
+
+      {/* ── Modal de reemplazo de imagen ── */}
+      {replaceModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setReplaceModal(false)}>
+          <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: 540, maxHeight: '80vh', display: 'flex', flexDirection: 'column', gap: 14, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Reemplazar imagen</h3>
+              <button style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6b7280' }} onClick={() => setReplaceModal(false)}>✕</button>
+            </div>
+            <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>La imagen sustituida conservará la misma posición y tamaño exactos.</p>
+            <button
+              style={{ background: '#4F46E5', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-start' }}
+              onClick={() => replaceInputRef.current?.click()}
+              disabled={uploading}
+            >
+              {uploading ? 'Subiendo…' : '📤 Subir nueva imagen'}
+            </button>
+            <div style={{ fontWeight: 700, fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', borderTop: '1px solid #f3f4f6', paddingTop: 12 }}>
+              Banco del proyecto ({imageBank.length} imágenes)
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {imageBank.length === 0 ? (
+                <p style={{ color: '#9ca3af', fontSize: 13 }}>Aún no hay imágenes en el banco. Subí algunas desde el panel Imagen.</p>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                  {imageBank.map((url) => (
+                    <button
+                      key={url}
+                      title="Usar esta imagen"
+                      style={{ padding: 0, border: '2px solid transparent', borderRadius: 8, overflow: 'hidden', cursor: 'pointer', background: '#f9fafb', aspectRatio: '1' }}
+                      onClick={() => doReplaceWithUrl(url)}
+                    >
+                      <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} loading="lazy" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Menú contextual (clic derecho) ── */}
       {ctxMenu && (
@@ -1588,10 +1650,11 @@ function ContextPanel(p: any) {
       return (
         <>
           <PanelTitle title={p.tool === 'image' ? 'Imagen' : 'Cargas'} />
-          {/* Insertar como elemento editable (NO crea página) */}
+          {/* Subir imagen al banco del proyecto */}
           <button style={cp.primaryBtn} onClick={() => p.imgInputRef.current?.click()} disabled={p.uploadingImg}>
-            {p.uploadingImg ? 'Subiendo...' : 'Insertar imagen en la página'}
+            {p.uploadingImg ? 'Subiendo al banco…' : '📤 Subir imagen al banco'}
           </button>
+          <p style={{ fontSize: 11, color: '#9ca3af', margin: '-4px 0 6px' }}>La imagen se guarda en "Mis imágenes". Luego hacé clic en ella para insertarla en la página.</p>
           <p style={cp.hint}>La imagen se agrega como elemento editable sobre la página actual. Podés moverla, escalarla y asignarle una acción.</p>
           <div style={{ height: 1, background: '#f3f4f6', margin: '14px 0' }} />
           <button style={cp.primaryBtn} onClick={() => p.svgInputRef?.current?.click()} disabled={p.uploadingImg}>
@@ -1793,17 +1856,7 @@ function ContextPanel(p: any) {
       return (
         <>
           <PanelTitle title="Biblioteca SVG" />
-          <p style={cp.hint}>Íconos vectoriales editables. Hacé clic para insertarlos en la página. Los marcados con 🔒 requieren un plan superior.</p>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', marginBottom: 8, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={p.svgSync}
-              onChange={(e) => p.setSvgSync(e.target.checked)}
-              style={{ accentColor: '#4F46E5', width: 15, height: 15 }}
-            />
-            <span>Sincronizar en todas las páginas</span>
-            <span title="Al activar esta opción, el SVG insertado se actualiza automáticamente en todas las páginas cuando lo modificas en una." style={{ color: '#9ca3af', fontSize: 11, cursor: 'help' }}>ⓘ</span>
-          </label>
+          <p style={cp.hint}>Íconos vectoriales editables. Hacé clic para insertarlos en la página. Los marcados con 🔒 requieren un plan superior. Al seleccionar un SVG en el canvas, activa "Sincronizar en páginas" desde el panel derecho.</p>
           <input
             style={cp.search}
             placeholder="Buscar por nombre o etiqueta…"
@@ -1964,7 +2017,7 @@ function CfgGroup({ label, children }: { label: string; children: React.ReactNod
 
 // ─── Panel de propiedades del elemento seleccionado ───────────────────────────
 // Cambia según el tipo: texto, forma, botón, imagen o zona de enlace.
-function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; pages: any[]; onChange: () => void }) {
+function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle }: { obj: any; canvas: any; pages: any[]; onChange: () => void; onSyncToggle?: (enabled: boolean) => void }) {
   const kind: string = (obj as any).data?.kind
     ?? (obj instanceof fabric.Textbox || obj instanceof fabric.Text ? 'text' : 'shape')
 
@@ -2130,7 +2183,7 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
 
         {/* ── GRÁFICO SVG de la biblioteca: recolorear, trazo, voltear ── */}
         {kind === 'svglib' && (
-          <SvgLibProps obj={obj} canvas={canvas} onChange={onChange} />
+          <SvgLibProps obj={obj} canvas={canvas} onChange={onChange} onSyncToggle={onSyncToggle} />
         )}
 
         {/* ── PUNTO ACTIVO: color de animación ── */}
@@ -2171,8 +2224,9 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
 // Propiedades de un gráfico SVG de la biblioteca: recolorear (global y por capa),
 // trazo y voltear. Respeta los permisos de edición definidos por el admin
 // (data.editable.colors / stroke / geometry).
-function SvgLibProps({ obj, canvas, onChange }: { obj: any; canvas: any; onChange: () => void }) {
+function SvgLibProps({ obj, canvas, onChange, onSyncToggle }: { obj: any; canvas: any; onChange: () => void; onSyncToggle?: (enabled: boolean) => void }) {
   const editable = (obj as any).data?.editable ?? { colors: true, stroke: true, geometry: true }
+  const hasSyncGroup = !!(obj as any).data?.syncGroupId
   // Capas = sub-objetos del grupo SVG (cada path/forma). Si no es grupo, el propio objeto.
   const layers: any[] = obj.getObjects ? obj.getObjects() : [obj]
 
@@ -2247,6 +2301,21 @@ function SvgLibProps({ obj, canvas, onChange }: { obj: any; canvas: any; onChang
           </div>
         </PropGroup>
       )}
+
+      {onSyncToggle && (
+        <PropGroup label="Sincronizar en páginas">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={hasSyncGroup}
+              onChange={(e) => onSyncToggle(e.target.checked)}
+              style={{ accentColor: '#4F46E5', width: 15, height: 15 }}
+            />
+            <span>Aplicar cambios en todas las páginas</span>
+          </label>
+          {hasSyncGroup && <p style={{ fontSize: 11, color: '#9ca3af', margin: '4px 0 0' }}>Este SVG tiene un ID de sincronización. Los cambios se propagarán al guardar.</p>}
+        </PropGroup>
+      )}
     </>
   )
 }
@@ -2254,6 +2323,7 @@ function SvgLibProps({ obj, canvas, onChange }: { obj: any; canvas: any; onChang
 // Propiedades específicas del botón: estilo + acción
 function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canvas: any; pages: any[]; setData: (p: any) => void; onChange: () => void }) {
   const data = (obj as any).data ?? {}
+  const [iconSizeDisplay, setIconSizeDisplay] = React.useState<number>(data.iconSize ?? 22)
   const namedTargets = (canvas?.getObjects?.() ?? [])
     .filter((o: any) => o !== obj && o.data?.name && o.data?.elementId)
     .map((o: any) => ({ id: o.data.elementId as string, name: o.data.name as string }))
@@ -2279,6 +2349,19 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
     }
     obj.addWithUpdate?.()
     canvas?.requestRenderAll()
+    onChange()
+  }
+
+  // Ajusta el tamaño del sub-objeto ícono SVG dentro del grupo del botón.
+  function resizeIcon(newSize: number) {
+    const objs = obj.getObjects?.() ?? []
+    const icon = objs.find((o: any) => o.type === 'group') ?? objs.find((o: any) => o.type === 'path')
+    if (!icon) return
+    icon.scaleToWidth(newSize)
+    obj.data = { ...(obj.data ?? {}), iconSize: newSize }
+    obj.addWithUpdate?.()
+    canvas?.requestRenderAll()
+    setIconSizeDisplay(newSize)
     onChange()
   }
 
@@ -2308,6 +2391,20 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
           </div>
         </div>
       </PropGroup>
+
+      {data.svgIconId && (
+        <PropGroup label="Tamaño del ícono">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="range" min={14} max={56} step={2}
+              defaultValue={data.iconSize ?? 22}
+              onChange={(e) => resizeIcon(+e.target.value)}
+              style={{ flex: 1, accentColor: '#4F46E5' }}
+            />
+            <span style={{ fontSize: 12, color: '#6b7280', minWidth: 30, textAlign: 'right' as const }}>{iconSizeDisplay}px</span>
+          </div>
+        </PropGroup>
+      )}
 
       {data.svgIconId && (() => {
         // Extraer el sub-objeto icono SVG (el sub-grupo con más paths, NO el rect ni el text)
