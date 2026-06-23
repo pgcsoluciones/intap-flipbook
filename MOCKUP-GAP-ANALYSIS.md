@@ -264,15 +264,29 @@ Cada elemento del canvas tendría esta forma general: `id`, `type`, `pageId`, bl
 
 ## 9. Gestión de recursos — puntos nuevos (no cubiertos hasta ahora)
 
+**Punto DD (definición formal — corrige un descuido del informe anterior, donde se referenciaba sin definirse):** El panel "Elementos" del editor (y también "Formas"/"Botones") hoy **no leen del sistema real de Recursos** que administra el superadmin — están conectados a una lista fija escrita directamente en el código (`ICON_LIBRARY`, `BUTTON_PRESETS`, en `EditPublication.tsx`). La única pestaña que sí lee de la base de datos es "Plantillas". Por eso, cualquier SVG/icono que un superadmin suba en el panel de Recursos **no tiene ningún camino para llegar al editor** — la conexión no existe. La corrección es construir esa conexión real: que "Elementos" (y los demás paneles relevantes) pidan los recursos al backend igual que ya hace "Plantillas", en vez de usar la lista fija del código.
+
 | # | Característica | Detalle | Tipo |
 |---|---|---|---|
+| DD | Conectar panel "Elementos" (y Formas/Botones) al sistema real de Recursos, en vez de lista fija en código | Ver definición completa arriba — bloquea que cualquier SVG/icono subido por el superadmin llegue al editor | Global — prioridad alta, varios otros puntos (GG, II, JJ) dependen de esto |
 | EE | **Bug:** imágenes subidas en "Cargas" no se pueden eliminar | Si se sube una imagen y luego se quita de una página, el archivo queda huérfano en el depósito (R2) sin forma de borrarlo desde la interfaz — ocupa espacio indefinidamente | Bug — relacionado con punto O (backup/limpieza) |
-| FF | Conexión a banco de imágenes libres de derecho (stock gratuito) | Requiere decidir proveedor (ej. Unsplash, Pexels tienen APIs gratuitas con límites) — es una integración externa nueva, evaluar términos de uso antes de comprometerse | Feature nueva — pendiente de decisión, no solo de código |
+| FF | Conexión a banco de imágenes libres de derecho — **decisión confirmada: integrar ahora, empezar con Pexels** | Ver detalle completo abajo | Feature nueva — lista para pasar a Code |
 | GG | Asignar cada recurso cargado a un módulo específico (Formas/Widgets/Elementos) | Amplía directamente el punto **DD** ya anotado (conectar "Elementos" al sistema real de Recursos) — agrega la necesidad de elegir el destino al subir | Extiende DD |
 | GG.1 | Edición avanzada de formas: degradados, edición de líneas/puntos, deformar, fusionar, vincular | Mucho más allá de lo que cubre la sección 8.4 (Forma) — esto es edición vectorial real, nivel Canva/Figma. Es la pieza de mayor esfuerzo de todo este informe — recomiendo dejarla en backlog hasta tener el resto del panel funcionando | Backlog (alto esfuerzo) |
 | HH | Carga de recursos por lote (varios archivos a la vez) | Hoy se sube de uno en uno (a confirmar con Code) | Feature nueva |
 | II | Botón "Agregar recursos" en el panel de edición (solo superadmin), que instala el recurso de inmediato en el módulo correspondiente de la barra de edición | Es una vía rápida para ti como superadmin, alternativa/complementaria al flujo normal de Recursos → Elementos (punto DD) | Feature nueva |
 | JJ | Biblioteca de iconos SVG completa, editables dentro del canvas (no solo insertados como imagen estática) | Un ícono SVG "editable" significa que sus propiedades (color, trazo, tamaño) se pueden cambiar después de insertado, no que sea una imagen congelada — esto se resuelve naturalmente si el ícono se inserta como elemento "Forma"/"Botón con ícono" del panel de la sección 8, en vez de como imagen importada | Conecta directo con 8.4 |
+
+**Detalle completo del punto FF (verificado en junio 2026, antes de pasar a Code):**
+
+**Proveedor elegido: Pexels.** Razones — términos más simples que Unsplash, mejor límite gratuito (200 solicitudes/hora, 20,000/mes vs. el modo demo de Unsplash de 50/hora), y soporta fotos **y videos** en la misma API (relevante porque el mockup también pide galerías de video).
+
+**Requisitos técnicos/legales que Code debe respetar:**
+- Necesita una cuenta de desarrollador en Pexels para obtener una API Key — esto lo gestionas tú (no Code), y la clave se guarda como variable de entorno secreta en el Worker (nunca expuesta en el frontend)
+- Mostrar atribución (nombre del fotógrafo + enlace) es recomendado por Pexels, aunque menos estricto que Unsplash — de todas formas, conviene implementarlo desde el inicio, ya que si más adelante se agrega Unsplash como segunda fuente, ahí sí es **obligatorio por contrato** mostrar "Foto de [nombre] en Unsplash" con enlace al perfil en cada imagen visible
+- El buscador de stock se integra como una pestaña nueva dentro del panel de Imágenes del editor (junto a "Subir imagen" y, eventualmente, "Elementos" del punto DD) — el tenant busca por palabra clave, ve resultados, y al elegir uno se inserta en el canvas igual que cualquier imagen
+- **No se debe descargar y almacenar la imagen en R2 de forma permanente al insertarla** (correcto para Pexels, y evita además ocupar tu propio almacenamiento con contenido de terceros) — se referencia la URL externa del proveedor
+- Si más adelante se agrega Unsplash, no se puede usar para entrenar modelos de IA ni para construir un servicio que compita con Unsplash/Pexels — no aplica a tu caso de uso, pero queda anotado por completitud
 
 **Nota sobre EE (bug de eliminación huérfana):** es el tercer bug de este tipo que encontramos en la sesión (junto a K y N) — vale la pena que, cuando le pidamos a Code el informe de K/N, le agreguemos también este.
 
