@@ -1096,11 +1096,43 @@ export default function EditPublication() {
   }
 
   // Activar/desactivar sincronización multi-página de un SVG seleccionado.
-  function handleSvgSyncToggle(enabled: boolean) {
+  // Al activar: marca el objeto con un syncGroupId y crea una copia en cada
+  // página que aún no la tenga. Las ediciones posteriores se propagan vía persistCanvas.
+  // Al desactivar: quita la marca (las copias quedan independientes).
+  async function handleSvgSyncToggle(enabled: boolean) {
     const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
-    const syncId = enabled ? crypto.randomUUID() : undefined
+    const pageId = pageIdRef.current
+
+    if (!enabled) {
+      o.data = { ...(o.data ?? {}), syncGroupId: undefined }
+      c.requestRenderAll(); scheduleAutosave(); setSelectVersion((v) => v + 1)
+      return
+    }
+
+    const syncId = crypto.randomUUID()
     o.data = { ...(o.data ?? {}), syncGroupId: syncId }
-    c.requestRenderAll(); scheduleAutosave()
+    c.requestRenderAll()
+    // Serializa el objeto marcado para clonarlo en las demás páginas.
+    const serialized = o.toObject(['data'])
+    setUploading(true)
+    try {
+      const otherPages = pagesRef.current.filter((p) => p.id !== pageId)
+      for (const page of otherPages) {
+        try {
+          const pj = page.canvas_json
+            ? (typeof page.canvas_json === 'string' ? JSON.parse(page.canvas_json) : page.canvas_json)
+            : { version: '5.3.0', objects: [] }
+          // Evita duplicar si ya existe una copia con el mismo syncGroupId
+          const exists = (pj.objects ?? []).some((x: any) => x?.data?.syncGroupId === syncId)
+          if (exists) continue
+          pj.objects = [...(pj.objects ?? []), serialized]
+          const newJson = JSON.stringify(pj)
+          await api.pages.saveCanvas(page.id, newJson)
+          setPages((prev) => prev.map((p) => (p.id === page.id ? { ...p, canvas_json: newJson } : p)))
+        } catch { /* página con JSON inválido — se ignora */ }
+      }
+    } finally { setUploading(false) }
+    scheduleAutosave(); setSelectVersion((v) => v + 1)
   }
 
   // Alinear el objeto respecto al lienzo o a la selección múltiple.
