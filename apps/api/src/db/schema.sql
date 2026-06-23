@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS pages (
   description TEXT,
   price TEXT,
   canvas_json TEXT,
+  cover_json TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 

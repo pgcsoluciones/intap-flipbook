@@ -284,7 +284,7 @@ app.get('/view/:slug', async (c) => {
 
   const [{ results: pages }, wmConfig] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT id, page_number, image_url, title, description, price, canvas_json
+      `SELECT id, page_number, image_url, title, description, price, canvas_json, cover_json
        FROM pages WHERE publication_id = ? ORDER BY page_number ASC`,
     ).bind(pub.id).all(),
     c.env.DB.prepare('SELECT text, link_url, position, opacity FROM watermark_config WHERE id = 1').first<{
