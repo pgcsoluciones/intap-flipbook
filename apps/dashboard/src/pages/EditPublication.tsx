@@ -1627,7 +1627,7 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
   const setData = (patch: any) => { (obj as any).data = { ...((obj as any).data ?? {}), ...patch }; onChange() }
 
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'
-  const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen', icon: 'Icono', widget: 'Widget', hotspot: 'Punto activo' }
+  const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen', icon: 'Icono', widget: 'Widget', hotspot: 'Punto activo', svglib: 'Gráfico SVG' }
 
   // Elementos de esta página que tienen nombre asignado (excepto el actual): posibles
   // objetivos para la acción "Mostrar / ocultar". Se muestra el nombre, se guarda el elementId.
@@ -1783,6 +1783,11 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
           </PropGroup>
         )}
 
+        {/* ── GRÁFICO SVG de la biblioteca: recolorear, trazo, voltear ── */}
+        {kind === 'svglib' && (
+          <SvgLibProps obj={obj} canvas={canvas} onChange={onChange} />
+        )}
+
         {/* ── PUNTO ACTIVO: color de animación ── */}
         {kind === 'hotspot' && (
           <PropGroup label="Color del punto">
@@ -1815,6 +1820,89 @@ function PropsPanel({ obj, canvas, pages, onChange }: { obj: any; canvas: any; p
         <button style={s.deleteBtn} onClick={() => { canvas?.remove(obj); canvas?.requestRenderAll(); onChange() }}>Eliminar elemento</button>
       </div>
     </div>
+  )
+}
+
+// Propiedades de un gráfico SVG de la biblioteca: recolorear (global y por capa),
+// trazo y voltear. Respeta los permisos de edición definidos por el admin
+// (data.editable.colors / stroke / geometry).
+function SvgLibProps({ obj, canvas, onChange }: { obj: any; canvas: any; onChange: () => void }) {
+  const editable = (obj as any).data?.editable ?? { colors: true, stroke: true, geometry: true }
+  // Capas = sub-objetos del grupo SVG (cada path/forma). Si no es grupo, el propio objeto.
+  const layers: any[] = obj.getObjects ? obj.getObjects() : [obj]
+
+  const rerender = () => { canvas?.requestRenderAll(); onChange() }
+
+  // Aplica un color de relleno a TODAS las capas con relleno visible.
+  const recolorAll = (col: string) => {
+    layers.forEach((o) => { if (o.fill && o.fill !== '' && o.fill !== 'transparent') o.set('fill', col) })
+    rerender()
+  }
+  // Aplica color de trazo a todas las capas que tengan trazo.
+  const strokeAll = (col: string) => {
+    layers.forEach((o) => { if (o.stroke && o.stroke !== '') o.set('stroke', col) })
+    rerender()
+  }
+  const strokeWidthAll = (w: number) => {
+    layers.forEach((o) => { if (o.stroke && o.stroke !== '') o.set('strokeWidth', w) })
+    rerender()
+  }
+
+  // Capas con relleno (para recoloreado individual). Limitamos a 12 para no saturar.
+  const fillLayers = layers
+    .map((o, i) => ({ o, i }))
+    .filter(({ o }) => o.fill && o.fill !== '' && o.fill !== 'transparent')
+    .slice(0, 12)
+
+  return (
+    <>
+      {editable.colors && (
+        <PropGroup label="Color (todo el gráfico)">
+          <input type="color" defaultValue="#334155"
+            onChange={(e) => recolorAll(e.target.value)} style={s.colorInput} />
+        </PropGroup>
+      )}
+
+      {editable.colors && fillLayers.length > 1 && (
+        <PropGroup label="Color por capa">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {fillLayers.map(({ o, i }) => (
+              <input
+                key={i}
+                type="color"
+                title={`Capa ${i + 1}`}
+                defaultValue={typeof o.fill === 'string' && o.fill.startsWith('#') ? o.fill : '#334155'}
+                onChange={(e) => { o.set('fill', e.target.value); rerender() }}
+                style={{ width: 34, height: 30, padding: 0, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer' }}
+              />
+            ))}
+          </div>
+          <p style={cp.hint}>Cada cuadrito recolorea una parte distinta del gráfico.</p>
+        </PropGroup>
+      )}
+
+      {editable.stroke && (
+        <>
+          <PropGroup label="Color del trazo">
+            <input type="color" defaultValue="#334155"
+              onChange={(e) => strokeAll(e.target.value)} style={s.colorInput} />
+          </PropGroup>
+          <PropGroup label="Grosor del trazo">
+            <input type="range" min={0} max={12} step={0.5} defaultValue={2}
+              onChange={(e) => strokeWidthAll(+e.target.value)} style={{ width: '100%' }} />
+          </PropGroup>
+        </>
+      )}
+
+      {editable.geometry !== false && (
+        <PropGroup label="Voltear">
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={cp.secondaryBtn} onClick={() => { obj.set('flipX', !obj.flipX); rerender() }}>↔ Horizontal</button>
+            <button style={cp.secondaryBtn} onClick={() => { obj.set('flipY', !obj.flipY); rerender() }}>↕ Vertical</button>
+          </div>
+        </PropGroup>
+      )}
+    </>
   )
 }
 
