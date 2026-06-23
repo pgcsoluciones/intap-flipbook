@@ -53,7 +53,8 @@ intap-flipbook/
 │   │   │       ├── migration_fase14.sql         # tabla page_events (analítica avanzada)
 │   │   │       ├── migration_softdelete.sql     # columna deleted_at en publications ✅ ejecutada
 │   │   │       ├── migration_perf.sql           # 7 índices de performance ✅ ejecutada
-│   │   │       └── migration_branding.sql       # logo_url + contacto en users ⚠️ pendiente ejecutar
+│   │   │       ├── migration_branding.sql       # logo_url + contacto en users ⚠️ pendiente ejecutar
+│   │   │       └── migration_cover.sql          # pages.cover_json (reencuadre de hoja) ⚠️ pendiente ejecutar
 │   │   └── wrangler.toml
 │   ├── dashboard/        # React/Vite (panel del cliente y admin)
 │   │   └── src/
@@ -134,6 +135,11 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 | *(reciente)* | Punto G — template_proposals: tenant propone, admin aprueba/rechaza (migration_tenant_templates.sql ✅ ejecutada) |
 | `dbc97f6` | Punto L frontend — TenantStats con PubDetailPanel (analítica individual por flipbook) |
 | `633cebb`→`58f8553` | **Sesión editor** — banco de imágenes por flipbook (subir va al banco, no al canvas), slider tamaño icono/texto en botones, `FillControl` (gradiente sólido/lineal/radial universal para formas/texto/fondo de botón), `ShadowControl` universal, sync multi-página (`syncGroupId` propaga SVG idéntico a todas las páginas), **fix Reemplazar** (detecta `kind` y navega al panel de origen correcto; usa `fabric.Image.fromURL` en vez de `setSrc`) |
+| `60b1541` | **Fix Reemplazar (menú contextual)** — la opción "Reemplazar" aparece para todos los tipos (icono/SVG/forma/botón/texto), no solo imagen; etiqueta dinámica vía `replaceLabel()` |
+| `f2502a9` | **Fix Reemplazar imagen (bug "línea")** — causa: `crossOrigin:'anonymous'` rompía la carga sin cabeceras CORS de R2 → imagen con dims 0. Ahora recrea con `fabric.Image.fromURL` sin crossOrigin. + **reemplazo in-situ** para icono/SVG/forma/botón/texto vía listener `object:added` (intercambia conservando caja/posición/orden-z) |
+| `b804416` | **Reemplazar imagen — modo "cubrir"** — la imagen nueva llena el mismo recuadro sin deformar, recortando el sobrante con `cropX/cropY` centrado |
+| `ded9811` | **Editor — fondo de página modo "cubrir"** — al importar una hoja llena el recuadro A4 sin deformar (recorte centrado), igual que el `object-fit:cover` del viewer (editor = publicado) |
+| `d6d4d4c`→`173bb66` | **Reencuadre manual de hoja (zoom + arrastrar)** — Fase 1 API (columna `pages.cover_json`, `migration_cover.sql`, `PUT /api/pages` y `/view/:slug` manejan `cover_json`) · Fase 2 editor (herramienta "Ajustar hoja": slider zoom 1x–3x + arrastrar, `computeCover()`, guarda `{zoom,fx,fy}` por página) · Fase 3 viewer (`applyCoverStyle()` con `object-position` + `transform:scale`). El overlay no se ve afectado |
 
 ---
 
@@ -315,6 +321,9 @@ npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_fase14.sql --r
 | Migración Biblioteca SVG (svg_families, svg_resources, svg_resource_versions) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_svg_library.sql --remote` | ✅ Ejecutada (7 queries) |
 | Deploy Worker (siempre tras cambios en `apps/api/`) | `cd ~/intap-flipbook/apps/api && git pull && npx wrangler deploy` | ✅ Ejecutado (Worker `5b74b7de` — incluye rutas SVG) |
 | Deploy Viewer (tras cambios en `apps/viewer/`) | `cd ~/intap-flipbook/apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer` | ✅ Ejecutado |
+| **Migración reencuadre de hoja (pages.cover_json)** — ⚠️ correr ANTES del deploy del Worker (`/view` ya consulta la columna) | `npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_cover.sql --remote` | ⚠️ **PENDIENTE** |
+| **Deploy Worker (reencuadre)** — DESPUÉS de la migración cover | `cd ~/intap-flipbook/apps/api && git pull && npx wrangler deploy` | ⚠️ **PENDIENTE** |
+| **Deploy Viewer (reencuadre)** — `applyCoverStyle` aplica zoom/posición | `cd ~/intap-flipbook/apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer` | ⚠️ **PENDIENTE** |
 | Crear tablas modules/plan_modules si no existen | Ver comandos más abajo | Pendiente verificar |
 
 ```bash
@@ -348,6 +357,9 @@ npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NO
 | Biblioteca SVG Fase 4 — organización por familias (agrupado + selector + búsqueda nombre/tags) y panel de propiedades SVG (color global, color por capa, trazo color/grosor, voltear) respetando permisos del admin | ✅ Implementado |
 | Biblioteca SVG Fase 5 — SVG en botones (acordeón por familia, capas editables, slider de tamaño) + sync multi-página real (`syncGroupId` clona a todas las páginas al activar y propaga ediciones vía persistCanvas) | ✅ Implementado |
 | Editor — reemplazo de imagen con modal (banco del proyecto + subir nueva, conserva posición/tamaño); subida de imagen al banco del flipbook (no inserta directo) | ✅ Implementado |
+| Editor — "Reemplazar" para todos los tipos (menú contextual + reemplazo in-situ de icono/SVG/forma/botón/texto); fix bug "línea" al reemplazar imagen (quitar crossOrigin) | ✅ Implementado |
+| Editor/Viewer — fondo de página modo "cubrir" (llena el recuadro A4 sin deformar, editor = publicado) | ✅ Implementado |
+| **Reencuadre manual de hoja** — herramienta "Ajustar hoja" (zoom 1x–3x + arrastrar), guardado por página en `cover_json`, reflejado en el viewer | ✅ Implementado (⚠️ requiere migración + deploys de Juan, ver tabla arriba) |
 | Biblioteca SVG Fase 6 — RBAC granular (resources_manager, tenant_editor, tenant_viewer) | Pendiente |
 | Alinear claves de módulos frontend ↔ D1 | Pendiente |
 | AdminModules toggle — claves no coinciden | Pendiente |
