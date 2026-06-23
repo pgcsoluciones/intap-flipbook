@@ -23,21 +23,22 @@ export const BLANK_PAGE_URL = 'data:image/svg+xml,' + encodeURIComponent(
 const CANVAS_W = 580
 const CANVAS_H = Math.round(CANVAS_W * 1.414)
 
-// Calcula el recorte "cubrir" de una hoja dentro del recuadro A4 según el encuadre
-// { zoom>=1, fx 0..1, fy 0..1 }. zoom=1 y fx=fy=0.5 → cubrir centrado estándar.
-// Devuelve el recorte en píxeles naturales de la imagen + la escala para llenar A4.
-function computeCover(iw: number, ih: number, fr: { zoom?: number; fx?: number; fy?: number }) {
+// Calcula el recorte "cubrir" de una imagen dentro de un recuadro destino según el
+// encuadre { zoom>=1, fx 0..1, fy 0..1 }. zoom=1 y fx=fy=0.5 → cubrir centrado.
+// Por defecto el recuadro es el lienzo A4; se puede pasar otro (ej. la caja de una
+// imagen seleccionada) para reencuadrar ese elemento con la misma lógica.
+function computeCover(iw: number, ih: number, fr: { zoom?: number; fx?: number; fy?: number }, targetW: number = CANVAS_W, targetH: number = CANVAS_H) {
   const zoom = Math.max(1, fr?.zoom ?? 1)
   const fx = Math.min(1, Math.max(0, fr?.fx ?? 0.5))
   const fy = Math.min(1, Math.max(0, fr?.fy ?? 0.5))
-  const targetAspect = CANVAS_W / CANVAS_H
+  const targetAspect = targetW / targetH
   let baseW: number, baseH: number
   if (iw / ih > targetAspect) { baseH = ih; baseW = ih * targetAspect }
   else { baseW = iw; baseH = iw / targetAspect }
   const cropW = baseW / zoom, cropH = baseH / zoom
   const cropX = (iw - cropW) * fx
   const cropY = (ih - cropH) * fy
-  return { cropX, cropY, cropW, cropH, scaleX: CANVAS_W / cropW, scaleY: CANVAS_H / cropH }
+  return { cropX, cropY, cropW, cropH, scaleX: targetW / cropW, scaleY: targetH / cropH }
 }
 
 // ─── Iconos SVG monocromáticos (estilo línea, 20px, stroke uniforme) ──────────
@@ -374,6 +375,12 @@ export default function EditPublication() {
   const adjustModeRef = useRef(false)             // espejo de adjustMode para los listeners del canvas
   const [adjustMode, setAdjustMode] = useState(false)
   const [coverZoom, setCoverZoom] = useState(1)   // valor del slider (espejo de coverRef.zoom)
+  const [adjustTarget, setAdjustTarget] = useState<'bg' | 'image'>('bg') // qué se reencuadra (UI)
+  const adjustTargetRef = useRef<'bg' | 'image'>('bg')                   // idem para los listeners
+  const imgAdjustRef = useRef<any>(null)                                 // imagen seleccionada a reencuadrar
+  const imgBoxRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 })     // su recuadro mostrado (px lienzo)
+  const imgNatRef = useRef<{ iw: number; ih: number }>({ iw: 0, ih: 0 }) // dims naturales de esa imagen
+  const imgCenterRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })  // centro a mantener fijo
   // Vista previa de la hoja activa (snapshot del canvas actual, no editable)
   const [sheetPreview, setSheetPreview] = useState<{ imageUrl: string; cover: any; json: any } | null>(null)
   const rightPanelRef = useRef<HTMLDivElement>(null)
@@ -715,8 +722,8 @@ export default function EditPublication() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage?.id])
 
-  // Activa/desactiva el modo "Ajustar hoja": mientras está activo se desactiva la
-  // selección de elementos (para arrastrar el fondo) y el cursor cambia a "grab".
+  // Activa/desactiva el modo de reencuadre (hoja o imagen): mientras está activo se
+  // desactiva la selección de elementos (para arrastrar) y el cursor cambia a "grab".
   useEffect(() => {
     adjustModeRef.current = adjustMode
     const c = fabricRef.current; if (!c) return
@@ -730,9 +737,26 @@ export default function EditPublication() {
       c.selection = true
       c.skipTargetFind = false
       c.defaultCursor = 'default'
+      // Al salir, persistir y volver el target a "fondo"
+      if (adjustTargetRef.current === 'image') scheduleAutosave()
+      adjustTargetRef.current = 'bg'; setAdjustTarget('bg'); imgAdjustRef.current = null
     }
     c.requestRenderAll()
   }, [adjustMode])
+
+  // Activa/desactiva el reencuadre del FONDO de la hoja (botón de la barra). Restaura
+  // el encuadre guardado de la página en coverRef antes de entrar.
+  function toggleBgAdjust() {
+    if (adjustMode) { setAdjustMode(false); return }
+    adjustTargetRef.current = 'bg'; setAdjustTarget('bg'); imgAdjustRef.current = null
+    try {
+      coverRef.current = activePage?.cover_json
+        ? { zoom: 1, fx: 0.5, fy: 0.5, ...JSON.parse(activePage.cover_json) }
+        : { zoom: 1, fx: 0.5, fy: 0.5 }
+    } catch { coverRef.current = { zoom: 1, fx: 0.5, fy: 0.5 } }
+    setCoverZoom(coverRef.current.zoom ?? 1)
+    setAdjustMode(true)
+  }
 
   // Guarda al cerrar/recargar la pestaña
   useEffect(() => {
@@ -1192,21 +1216,56 @@ export default function EditPublication() {
     c.discardActiveObject(); c.requestRenderAll(); setSelected(null); setSelectVersion((v) => v + 1); scheduleAutosave()
   }
 
-  // ── Reencuadre manual de la hoja ──
-  // Re-aplica el recorte "cubrir" a la imagen de fondo según coverRef.current.
+  // ── Reencuadre manual (cubrir + recorte) — funciona sobre el FONDO de la hoja o
+  // sobre una IMAGEN seleccionada, según adjustTargetRef. Misma lógica para ambos. ──
+
+  // Inicia el reencuadre de una imagen seleccionada (botón "Reencuadrar imagen").
+  function startImageReframe(o: any) {
+    const c = fabricRef.current; if (!c || !o) return
+    const el = o.getElement?.() ?? o._element
+    const iw = el?.naturalWidth || o.width || 0
+    const ih = el?.naturalHeight || o.height || 0
+    if (!iw || !ih) return
+    const center = o.getCenterPoint?.() ?? { x: o.left ?? 0, y: o.top ?? 0 }
+    imgAdjustRef.current = o
+    imgBoxRef.current = { w: o.getScaledWidth?.() ?? 0, h: o.getScaledHeight?.() ?? 0 }
+    imgNatRef.current = { iw, ih }
+    imgCenterRef.current = { x: center.x, y: center.y }
+    coverRef.current = { zoom: 1, fx: 0.5, fy: 0.5, ...(o.data?.imgCover ?? {}) }
+    setCoverZoom(coverRef.current.zoom ?? 1)
+    adjustTargetRef.current = 'image'; setAdjustTarget('image')
+    setAdjustMode(true)
+  }
+
+  // Re-aplica el recorte según coverRef.current al target activo.
   function applyCover() {
-    const c = fabricRef.current; const img = bgImgRef.current; const { iw, ih } = bgNatRef.current
-    if (!c || !img || !iw || !ih) return
+    const c = fabricRef.current; if (!c) return
+    if (adjustTargetRef.current === 'image') {
+      const o = imgAdjustRef.current; const { iw, ih } = imgNatRef.current; const box = imgBoxRef.current
+      if (!o || !iw || !ih || !box.w || !box.h) return
+      const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(iw, ih, coverRef.current, box.w, box.h)
+      o.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY })
+      o.setPositionByOrigin(new fabric.Point(imgCenterRef.current.x, imgCenterRef.current.y), 'center', 'center')
+      o.data = { ...(o.data ?? {}), imgCover: { ...coverRef.current } }
+      o.setCoords(); c.requestRenderAll()
+      return
+    }
+    const img = bgImgRef.current; const { iw, ih } = bgNatRef.current
+    if (!img || !iw || !ih) return
     const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(iw, ih, coverRef.current)
     img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, left: 0, top: 0, originX: 'left', originY: 'top' })
     c.requestRenderAll()
   }
 
-  // Mueve el encuadre (pan) según un arrastre en píxeles del lienzo. Arrastrar la
-  // hoja hacia un lado revela el lado contrario, por eso fx/fy se mueven en sentido inverso.
+  // Mueve el encuadre (pan) según un arrastre en píxeles del lienzo. Arrastrar hacia
+  // un lado revela el lado contrario, por eso fx/fy se mueven en sentido inverso.
   function panCover(dx: number, dy: number) {
-    const { iw, ih } = bgNatRef.current; if (!iw || !ih) return
-    const { cropW, cropH, scaleX, scaleY } = computeCover(iw, ih, coverRef.current)
+    const isImg = adjustTargetRef.current === 'image'
+    const { iw, ih } = isImg ? imgNatRef.current : bgNatRef.current
+    if (!iw || !ih) return
+    const box = imgBoxRef.current
+    const tW = isImg ? box.w : undefined, tH = isImg ? box.h : undefined
+    const { cropW, cropH, scaleX, scaleY } = computeCover(iw, ih, coverRef.current, tW, tH)
     const fr = coverRef.current
     const rangeX = iw - cropW, rangeY = ih - cropH
     if (rangeX > 0) fr.fx = Math.min(1, Math.max(0, fr.fx - (dx / scaleX) / rangeX))
@@ -1228,12 +1287,14 @@ export default function EditPublication() {
     applyCover(); scheduleCoverSave()
   }
 
-  // Guarda el encuadre (debounce) en la página actual vía PUT cover_json.
+  // Guarda el encuadre (debounce). Fondo → cover_json vía PUT; imagen → canvas_json
+  // (el recorte ya queda en data.imgCover + cropX/cropY que Fabric serializa).
   function scheduleCoverSave() {
     clearTimeout(coverSaveTimer.current)
     coverSaveTimer.current = setTimeout(saveCover, 700)
   }
   async function saveCover() {
+    if (adjustTargetRef.current === 'image') { scheduleAutosave(); return }
     const pid = pageIdRef.current; if (!pid) return
     const json = JSON.stringify(coverRef.current)
     try {
@@ -1568,7 +1629,7 @@ export default function EditPublication() {
             <div style={s.toolSep} />
             <ToolbarBtn icon={selected?.data?.locked ? 'unlock' : 'lock'} title={selected?.data?.locked ? 'Desbloquear' : 'Bloquear'} onClick={toggleLock} disabled={!selected} />
             <ToolbarBtn icon="replace"   title="Reemplazar elemento" onClick={replaceSelected}  disabled={!selected} />
-            <ToolbarBtn icon="crop"      title="Ajustar hoja (zoom y posición)" onClick={() => setAdjustMode((v) => !v)} active={adjustMode} disabled={!activePage} />
+            <ToolbarBtn icon="crop"      title="Ajustar hoja (zoom y posición)" onClick={toggleBgAdjust} active={adjustMode && adjustTarget === 'bg'} disabled={!activePage} />
             <div style={s.toolSep} />
             <div style={{ display: 'flex', border: '1px solid #e5e7eb', borderRadius: 7, overflow: 'hidden', fontSize: 10, fontWeight: 600 }}>
               <button
@@ -1600,8 +1661,8 @@ export default function EditPublication() {
 
           {adjustMode && activePage && (
             <div style={s.adjustBar}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>Ajustar hoja</span>
-              <span style={{ fontSize: 11, color: '#6b7280' }}>Arrastra la hoja para moverla</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{adjustTarget === 'image' ? 'Ajustar imagen' : 'Ajustar hoja'}</span>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>{adjustTarget === 'image' ? 'Arrastra la imagen para moverla' : 'Arrastra la hoja para moverla'}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 11, color: '#6b7280' }}>Zoom</span>
                 <input
@@ -1683,6 +1744,7 @@ export default function EditPublication() {
               pages={pages}
               onChange={() => { scheduleAutosave() }}
               onSyncToggle={handleSvgSyncToggle}
+              onReframeImage={startImageReframe}
             />
           ) : (
             <PageConfig bgColor={bgColor} applyBgColor={applyBgColor} />
@@ -2387,7 +2449,7 @@ function CfgGroup({ label, children }: { label: string; children: React.ReactNod
 
 // ─── Panel de propiedades del elemento seleccionado ───────────────────────────
 // Cambia según el tipo: texto, forma, botón, imagen o zona de enlace.
-function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle }: { obj: any; canvas: any; pages: any[]; onChange: () => void; onSyncToggle?: (enabled: boolean) => void }) {
+function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage }: { obj: any; canvas: any; pages: any[]; onChange: () => void; onSyncToggle?: (enabled: boolean) => void; onReframeImage?: (o: any) => void }) {
   const kind: string = (obj as any).data?.kind
     ?? (obj instanceof fabric.Textbox || obj instanceof fabric.Text ? 'text' : 'shape')
 
@@ -2534,7 +2596,13 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle }: { obj: any; 
         {/* ── IMAGEN: sugerencia de uso ── */}
         {kind === 'image' && (
           <PropGroup label="Imagen">
-            <p style={cp.hint}>Usa las esquinas para redimensionar y rotar. Asigna una acción abajo.</p>
+            <button
+              style={{ width: '100%', padding: '9px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: '#eef2ff', color: '#4338ca', border: '1px solid #c7d2fe', borderRadius: 8 }}
+              onClick={() => onReframeImage?.(obj)}
+            >
+              ⤢ Reencuadrar imagen (zoom y posición)
+            </button>
+            <p style={cp.hint}>Ajusta qué parte de la imagen se ve dentro de su recuadro, sin deformarla — igual que “Ajustar hoja”. También puedes usar las esquinas para redimensionar y rotar.</p>
           </PropGroup>
         )}
 
