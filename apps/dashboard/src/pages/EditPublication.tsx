@@ -1649,7 +1649,57 @@ function ContextPanel(p: any) {
       )
 
     case 'buttons': {
-      const btnIcons = (p.svgLib as any[]).filter((it) => !it.locked).slice(0, 24)
+      // Acordeón por familia — cada familia empieza contraída.
+      // "useState en un case" no se puede directamente; usamos un componente interno.
+      const BtnIconAccordion = () => {
+        const [openFam, setOpenFam] = React.useState<string | null>(null)
+        const all = p.svgLib as any[]
+        // Agrupar por familia (igual que en Biblioteca)
+        const groups: { name: string; items: any[] }[] = []
+        all.forEach((it) => {
+          const fname = it.family_name || 'Sin familia'
+          let g = groups.find((x) => x.name === fname)
+          if (!g) { g = { name: fname, items: [] }; groups.push(g) }
+          g.items.push(it)
+        })
+        groups.sort((a, b) => a.name === 'Sin familia' ? 1 : b.name === 'Sin familia' ? -1 : a.name.localeCompare(b.name))
+        if (groups.length === 0) return null
+        return (
+          <>
+            <div style={cp.sectionLabel}>Botón con ícono SVG</div>
+            <p style={cp.hint}>Selecciona una familia, elige un ícono y se creará un botón listo para configurar.</p>
+            {groups.map((g) => (
+              <div key={g.name} style={{ marginBottom: 4 }}>
+                <button
+                  style={{ width: '100%', textAlign: 'left', background: openFam === g.name ? '#f0f0ff' : '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 7, padding: '7px 10px', fontSize: 12, fontWeight: 600, color: '#374151', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  onClick={() => setOpenFam(openFam === g.name ? null : g.name)}
+                >
+                  <span>{g.name}</span>
+                  <span style={{ fontSize: 10, color: '#9ca3af' }}>{openFam === g.name ? '▲' : '▼'} {g.items.length}</span>
+                </button>
+                {openFam === g.name && (
+                  <div style={{ ...cp.iconGrid, marginTop: 6, marginBottom: 6 }}>
+                    {g.items.map((it) => (
+                      <button
+                        key={it.id}
+                        title={it.locked ? (it.upgrade_message || `Requiere plan ${it.required_plan ?? 'superior'}`) : it.name}
+                        style={{ ...cp.iconBtn, position: 'relative', opacity: it.locked ? 0.55 : 1 }}
+                        onClick={() => p.addButtonWithIcon(it)}
+                      >
+                        {it.svg_url
+                          ? <img src={it.svg_url} alt={it.name} style={{ width: 28, height: 28, objectFit: 'contain' }} loading="lazy" />
+                          : <span style={{ fontSize: 20 }}>🔒</span>}
+                        <span style={cp.iconName}>{it.name}</span>
+                        {it.locked && <span style={{ position: 'absolute', top: 2, right: 4, fontSize: 11 }}>🔒</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </>
+        )
+      }
       return (
         <>
           <PanelTitle title="Botones" />
@@ -1671,27 +1721,7 @@ function ContextPanel(p: any) {
               </button>
             ))}
           </div>
-          {btnIcons.length > 0 && (
-            <>
-              <div style={cp.sectionLabel}>Botón con icono SVG</div>
-              <p style={cp.hint}>Elige un ícono de la biblioteca para crear un botón con icono.</p>
-              <div style={cp.iconGrid}>
-                {btnIcons.map((it) => (
-                  <button
-                    key={it.id}
-                    title={it.name}
-                    style={cp.iconBtn}
-                    onClick={() => p.addButtonWithIcon(it)}
-                  >
-                    {it.svg_url
-                      ? <img src={it.svg_url} alt={it.name} style={{ width: 28, height: 28, objectFit: 'contain' }} loading="lazy" />
-                      : <span style={{ fontSize: 20 }}>🔲</span>}
-                    <span style={cp.iconName}>{it.name}</span>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
+          <BtnIconAccordion />
         </>
       )
     }
@@ -2227,25 +2257,13 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
   const namedTargets = (canvas?.getObjects?.() ?? [])
     .filter((o: any) => o !== obj && o.data?.name && o.data?.elementId)
     .map((o: any) => ({ id: o.data.elementId as string, name: o.data.name as string }))
-  // Pinta recursivamente todas las formas internas de un grupo SVG (icono).
-  function tintIcon(group: any, color: string) {
-    const paint = (o: any) => {
-      if (o.getObjects) { o.getObjects().forEach(paint); return }
-      // Solo recolorea formas con relleno; respeta las que solo tienen trazo.
-      if (o.fill && o.fill !== 'transparent' && o.fill !== '') o.set({ fill: color })
-      if (o.stroke && o.stroke !== 'transparent' && o.stroke !== '') o.set({ stroke: color })
-    }
-    group.getObjects?.().forEach(paint)
-  }
-
-  // Reaplica estilo al grupo (rect + icono + text internos)
+  // Reaplica estilo al grupo (rect + text internos). El icono SVG se edita con SvgLibProps.
   function restyle(patch: any) {
     const next = { ...data, ...patch }
     ;(obj as any).data = next
     const objs = obj.getObjects?.() ?? []
     const rect = objs.find((o: any) => o.type === 'rect')
     const txt = objs.find((o: any) => o.type === 'text' || o.type === 'i-text')
-    const icon = objs.find((o: any) => o.type === 'group' || o.type === 'path')
     if (rect) {
       const outline = next.variant === 'outline'
       rect.set({
@@ -2258,10 +2276,6 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
     }
     if (txt) {
       txt.set({ text: next.label, fill: next.variant === 'outline' ? next.bg : (next.textColor || '#fff') })
-    }
-    // Recolorea el icono si el usuario eligió un color de icono (o cae al color del texto)
-    if (icon && next.svgIconId && patch.iconColor !== undefined) {
-      tintIcon(icon, patch.iconColor)
     }
     obj.addWithUpdate?.()
     canvas?.requestRenderAll()
@@ -2295,11 +2309,20 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
         </div>
       </PropGroup>
 
-      {data.svgIconId && (
-        <PropGroup label="Color del icono">
-          <input type="color" defaultValue={data.iconColor ?? '#ffffff'} onChange={(e) => restyle({ iconColor: e.target.value })} style={s.colorInput} />
-        </PropGroup>
-      )}
+      {data.svgIconId && (() => {
+        // Extraer el sub-objeto icono SVG (el sub-grupo con más paths, NO el rect ni el text)
+        const objs2 = obj.getObjects?.() ?? []
+        const iconObj = objs2.find((o: any) => o.type === 'group') ?? objs2.find((o: any) => o.type === 'path')
+        if (!iconObj) return null
+        // Aseguramos que el icono tenga editable activado para ver todas sus capas
+        if (!iconObj.data) iconObj.data = {}
+        if (!iconObj.data.editable) iconObj.data.editable = { colors: true, stroke: true, geometry: true }
+        return (
+          <PropGroup label="Ícono SVG — capas y color">
+            <SvgLibProps obj={iconObj} canvas={canvas} onChange={() => { obj.addWithUpdate?.(); canvas?.requestRenderAll(); onChange() }} />
+          </PropGroup>
+        )
+      })()}
 
       <div style={s.actionDivider}>Acción al hacer clic</div>
       <ActionEditor data={data} pages={pages} setData={setData} targets={namedTargets} />
