@@ -313,7 +313,8 @@ npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NO
 | Biblioteca SVG — fixes post-deploy (sanitización segura sin romper xmlns, try/catch con error real, validación FK familia, miniatura `<img>` sin CORS, URL corta, DELETE /:id borra D1+R2) | ✅ Resuelto — 14 SVG suben y renderizan OK |
 | Biblioteca SVG Fase 3 — selector en editor del tenant (panel "Biblioteca", candados premium 🔒, inserción como vector vía GET /api/svg/:id/raw, metadata svgResourceId+editable) | ✅ Implementado + desplegado (Worker `2435398d`) |
 | Biblioteca SVG Fase 4 — organización por familias (agrupado + selector + búsqueda nombre/tags) y panel de propiedades SVG (color global, color por capa, trazo color/grosor, voltear) respetando permisos del admin | ✅ Implementado |
-| Biblioteca SVG Fase 5 — SVG en botones + sync multi-página (`syncGroupId`) | Pendiente |
+| Biblioteca SVG Fase 5 — SVG en botones (acordeón por familia, capas editables, slider de tamaño) + sync multi-página real (`syncGroupId` clona a todas las páginas al activar y propaga ediciones vía persistCanvas) | ✅ Implementado |
+| Editor — reemplazo de imagen con modal (banco del proyecto + subir nueva, conserva posición/tamaño); subida de imagen al banco del flipbook (no inserta directo) | ✅ Implementado |
 | Biblioteca SVG Fase 6 — RBAC granular (resources_manager, tenant_editor, tenant_viewer) | Pendiente |
 | Alinear claves de módulos frontend ↔ D1 | Pendiente |
 | AdminModules toggle — claves no coinciden | Pendiente |
