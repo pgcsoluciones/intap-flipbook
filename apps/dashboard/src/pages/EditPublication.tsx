@@ -224,7 +224,7 @@ const BUTTON_PRESETS: { label: string; variant: 'solid' | 'outline' | 'pill' }[]
 ]
 
 // Tipos de acción de un botón (qué ocurre al hacer clic en el viewer)
-type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'popup_audio' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos'
+type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'popup_audio' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos' | 'popup_message' | 'show_comment' | 'copy_text' | 'play_effect'
 const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'link',           label: 'Abrir Enlace',        icon: 'link' },
   { type: 'page',           label: 'Ir a Página',         icon: 'pages' },
@@ -235,6 +235,10 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'popup_image',    label: 'Imagen emergente',    icon: 'image' },
   { type: 'popup_video',    label: 'Video emergente',     icon: 'video' },
   { type: 'popup_audio',    label: 'Audio emergente',     icon: 'audio' },
+  { type: 'popup_message',  label: 'Mensaje emergente',   icon: 'badge' },
+  { type: 'show_comment',   label: 'Mostrar comentario',  icon: 'contact' },
+  { type: 'play_effect',    label: 'Reproducir efecto',   icon: 'star' },
+  { type: 'copy_text',      label: 'Copiar texto',        icon: 'duplicate' },
   { type: 'download',       label: 'Descargar archivo',   icon: 'uploads' },
   { type: 'gallery_images', label: 'Galería de imágenes', icon: 'image' },
   { type: 'gallery_videos', label: 'Galería de videos',   icon: 'video' },
@@ -3542,6 +3546,70 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
             Para que el elemento empiece oculto, selecciónalo y marca “Empieza oculto” en su panel de propiedades.
           </p>
         </PropGroup>
+      )}
+
+      {action.type === 'popup_message' && (
+        <>
+          <PropGroup label="Mensaje">
+            <textarea style={{ ...s.propInput, height: 64, resize: 'vertical' } as any} placeholder="¡Gracias por tu interés!" defaultValue={action.message ?? ''} onChange={(e) => setAction({ message: e.target.value })} />
+          </PropGroup>
+          <PropGroup label="Estilo">
+            <select style={s.propInput} value={action.style ?? 'info'} onChange={(e) => setAction({ style: e.target.value })}>
+              <option value="info">Información (azul)</option>
+              <option value="success">Éxito (verde)</option>
+              <option value="warning">Advertencia (ámbar)</option>
+              <option value="promo">Promoción (índigo)</option>
+            </select>
+          </PropGroup>
+          <PropGroup label="Duración (segundos)">
+            <input style={s.propInput} type="number" min={1} max={15} defaultValue={action.duration ?? 4} onChange={(e) => setAction({ duration: +e.target.value })} />
+          </PropGroup>
+        </>
+      )}
+
+      {action.type === 'show_comment' && (
+        <>
+          <PropGroup label="Comentario">
+            <textarea style={{ ...s.propInput, height: 80, resize: 'vertical' } as any} defaultValue={action.text ?? ''} onChange={(e) => setAction({ text: e.target.value })} />
+          </PropGroup>
+          <PropGroup label="Autor (opcional)">
+            <input style={s.propInput} placeholder="Nombre" defaultValue={action.author ?? ''} onChange={(e) => setAction({ author: e.target.value })} />
+          </PropGroup>
+          <PropGroup label="Fecha (opcional)">
+            <input style={s.propInput} placeholder="ej: 12 jun 2026" defaultValue={action.date ?? ''} onChange={(e) => setAction({ date: e.target.value })} />
+          </PropGroup>
+        </>
+      )}
+
+      {action.type === 'play_effect' && (
+        <>
+          <PropGroup label="Efecto">
+            <select style={s.propInput} value={action.effect ?? 'pulse'} onChange={(e) => setAction({ effect: e.target.value })}>
+              <option value="pulse">Latido (pulse)</option>
+              <option value="flash">Destello (flash)</option>
+              <option value="shake">Sacudida (shake)</option>
+              <option value="bounce">Rebote (bounce)</option>
+            </select>
+          </PropGroup>
+          <PropGroup label="Elemento a animar">
+            <select style={s.propInput} value={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })}>
+              <option value="">Este mismo elemento</option>
+              {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <p style={cp.hint}>Para animar otro elemento, asígnale antes un “Nombre del elemento”.</p>
+          </PropGroup>
+        </>
+      )}
+
+      {action.type === 'copy_text' && (
+        <>
+          <PropGroup label="Texto a copiar">
+            <textarea style={{ ...s.propInput, height: 64, resize: 'vertical' } as any} placeholder="Ej: código de descuento, dirección…" defaultValue={action.text ?? ''} onChange={(e) => setAction({ text: e.target.value })} />
+          </PropGroup>
+          <PropGroup label="Confirmación (opcional)">
+            <input style={s.propInput} placeholder="¡Copiado!" defaultValue={action.confirm ?? ''} onChange={(e) => setAction({ confirm: e.target.value })} />
+          </PropGroup>
+        </>
       )}
 
       {current !== 'none' && (

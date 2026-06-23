@@ -292,7 +292,45 @@ async function init() {
     })
   }
 
-  function runAction(a, fcanvas) {
+  // Toast temporal (mensaje emergente / confirmaciones). style: info|success|warning|promo
+  function showToast(message, style, durationMs) {
+    if (!message) return
+    const colors = {
+      info:    { bg: '#2563eb', fg: '#fff' },
+      success: { bg: '#16a34a', fg: '#fff' },
+      warning: { bg: '#f59e0b', fg: '#1f2937' },
+      promo:   { bg: '#4F46E5', fg: '#fff' },
+    }
+    const c = colors[style] || colors.info
+    const t = document.createElement('div')
+    t.textContent = message
+    t.style.cssText = `position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99999;background:${c.bg};color:${c.fg};padding:12px 18px;border-radius:10px;font-family:Inter,sans-serif;font-size:14px;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.25);max-width:90vw;text-align:center;opacity:0;transition:opacity .2s;`
+    document.body.appendChild(t)
+    requestAnimationFrame(() => { t.style.opacity = '1' })
+    const dur = Math.max(1000, Math.min(15000, durationMs || 4000))
+    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 250) }, dur)
+  }
+
+  // Aplica un efecto de animación a un objeto Fabric del overlay (pulse/flash/shake/bounce).
+  function playEffect(obj, effect, fcanvas) {
+    if (!obj || !fcanvas) return
+    const baseScaleX = obj.scaleX || 1, baseScaleY = obj.scaleY || 1
+    const baseLeft = obj.left || 0, baseTop = obj.top || 0, baseOpacity = obj.opacity == null ? 1 : obj.opacity
+    const render = () => fcanvas.renderAll()
+    const anim = (prop, to, dur, after) => obj.animate(prop, to, { duration: dur, onChange: render, onComplete: after })
+    if (effect === 'flash') {
+      anim('opacity', 0.2, 180, () => anim('opacity', baseOpacity, 220))
+    } else if (effect === 'shake') {
+      anim('left', baseLeft - 8, 70, () => anim('left', baseLeft + 8, 70, () => anim('left', baseLeft, 70)))
+    } else if (effect === 'bounce') {
+      anim('top', baseTop - 14, 140, () => anim('top', baseTop, 220))
+    } else { // pulse
+      obj.animate('scaleX', baseScaleX * 1.12, { duration: 160, onChange: render, onComplete: () => obj.animate('scaleX', baseScaleX, { duration: 220, onChange: render }) })
+      obj.animate('scaleY', baseScaleY * 1.12, { duration: 160, onChange: render, onComplete: () => obj.animate('scaleY', baseScaleY, { duration: 220, onChange: render }) })
+    }
+  }
+
+  function runAction(a, fcanvas, selfObj) {
     if (!a || !a.type || a.type === 'none') return
     // Extraer la URL destino según el tipo de acción (para analítica)
     const urlDest = a.url || a.phone || a.email || a.whatsapp || null
@@ -380,6 +418,49 @@ async function init() {
           tgt.visible = !tgt.visible
           fcanvas.renderAll()
         }
+        break
+      }
+
+      case 'popup_message': {
+        showToast(a.message || '', a.style || 'info', (a.duration || 4) * 1000)
+        break
+      }
+
+      case 'show_comment': {
+        const box = document.createElement('div')
+        box.style.cssText = 'max-width:80vw;width:340px;text-align:left;'
+        const p = document.createElement('p')
+        p.style.cssText = 'margin:0 0 10px;color:#111;font-size:1rem;line-height:1.6;white-space:pre-wrap;'
+        p.textContent = a.text || ''
+        box.appendChild(p)
+        if (a.author || a.date) {
+          const meta = document.createElement('div')
+          meta.style.cssText = 'font-size:.8rem;color:#6b7280;font-weight:600;'
+          meta.textContent = [a.author, a.date].filter(Boolean).join(' · ')
+          box.appendChild(meta)
+        }
+        showPopup(box)
+        break
+      }
+
+      case 'copy_text': {
+        const txt = a.text || ''
+        const done = () => showToast(a.confirm || '¡Copiado!', 'success', 2000)
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(txt).then(done).catch(() => {})
+        } else {
+          const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select()
+          try { document.execCommand('copy') } catch (_) {}
+          ta.remove(); done()
+        }
+        break
+      }
+
+      case 'play_effect': {
+        const tgt = a.target
+          ? (fcanvas && fcanvas.getObjects().find((o) => (o.data || {}).elementId === a.target))
+          : selfObj
+        playEffect(tgt, a.effect || 'pulse', fcanvas)
         break
       }
 
@@ -1119,7 +1200,7 @@ async function init() {
           const hs = document.createElement('div')
           hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;pointer-events:auto;`
           hs.innerHTML = `<div class="${animClass}" style="width:36px;height:36px;border-radius:50%;background:${color}44;border:2.5px solid ${color};display:flex;align-items:center;justify-content:center;"><div style="width:14px;height:14px;border-radius:50%;background:${color};"></div></div>`
-          if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action, fcanvas) })
+          if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action, fcanvas, obj) })
           blockFlipDrag(hs)
           wrap.appendChild(hs)
           fcanvas.remove(obj)
@@ -1147,7 +1228,7 @@ async function init() {
         hot.href = 'javascript:void(0)'
         hot.title = ''
         hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;pointer-events:auto;`
-        hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action, fcanvas) })
+        hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action, fcanvas, obj) })
         blockFlipDrag(hot)
         wrap.appendChild(hot)
       })
