@@ -133,6 +133,7 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 | *(reciente)* | Puntos A/H/6 — gallery_images + gallery_videos como acciones de zona en editor y viewer; portada designada (CoverModal) |
 | *(reciente)* | Punto G — template_proposals: tenant propone, admin aprueba/rechaza (migration_tenant_templates.sql ✅ ejecutada) |
 | `dbc97f6` | Punto L frontend — TenantStats con PubDetailPanel (analítica individual por flipbook) |
+| `633cebb`→`58f8553` | **Sesión editor** — banco de imágenes por flipbook (subir va al banco, no al canvas), slider tamaño icono/texto en botones, `FillControl` (gradiente sólido/lineal/radial universal para formas/texto/fondo de botón), `ShadowControl` universal, sync multi-página (`syncGroupId` propaga SVG idéntico a todas las páginas), **fix Reemplazar** (detecta `kind` y navega al panel de origen correcto; usa `fabric.Image.fromURL` en vez de `setSrc`) |
 
 ---
 
@@ -211,6 +212,38 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 | Free | $0 | 1 | 10 | 50 MB | ❌ |
 | Basic | $9.99/mes | 5 | 50 | 500 MB | ✅ |
 | Pro | $29.99/mes | ilimitado | ilimitado | 5 GB | ✅ |
+
+---
+
+## 🔧 Metodología de commits y deploy
+
+### Reparto de responsabilidades
+| Componente | Quién deploya | Cómo |
+|-----------|---------------|------|
+| **Dashboard** (`apps/dashboard`) | **Automático** | Cada push a `claude/kind-shannon-udb4qo` dispara build en Cloudflare Pages → `studio.flip.intaprd.com` |
+| **Worker / API** (`apps/api`) | **Juan (manual desde su Mac)** | `git pull` + `npx wrangler deploy` |
+| **Viewer** (`apps/viewer`) | **Juan (manual desde su Mac)** | `npx wrangler pages deploy` |
+| **Migraciones D1** | **Juan (manual desde su Mac)** | `npx wrangler d1 execute ... --remote` |
+
+### Flujo de commit (lo que hace Claude)
+```bash
+git add apps/dashboard/src/pages/EditPublication.tsx   # solo los archivos del cambio
+git commit -m "Descripción clara del cambio"
+git push -u origin claude/kind-shannon-udb4qo
+```
+El **dashboard se despliega solo** al hacer push. El **Worker (API)** y el **Viewer** los deploya **Juan manualmente** desde su Mac (ver comandos abajo). Commits atómicos, mensaje claro en español, nunca push a `main` sin aprobación.
+
+### Comandos que ejecuta Juan manualmente
+```bash
+# Worker (API) — siempre git pull ANTES de deploy:
+cd ~/intap-flipbook/apps/api && git pull origin claude/kind-shannon-udb4qo && npx wrangler deploy
+
+# Viewer:
+cd ~/intap-flipbook/apps/viewer && npx wrangler pages deploy src --project-name=intap-flipbook-viewer
+
+# Migraciones D1 (base de datos):
+npx wrangler d1 execute intap-flipbook-db --file=src/db/migration_XXX.sql --remote
+```
 
 ---
 
