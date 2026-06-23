@@ -340,6 +340,9 @@ export default function EditPublication() {
   const svgInputRef = useRef<HTMLInputElement>(null)
   const pdfPagesInputRef = useRef<HTMLInputElement>(null)
   const replaceInputRef = useRef<HTMLInputElement>(null)
+  // Objeto que se va a reemplazar in-situ (icono/SVG/forma/botón/texto): al insertar
+  // el siguiente elemento desde el panel, se intercambia por éste conservando caja y posición.
+  const replaceTargetRef = useRef<any>(null)
   const rightPanelRef = useRef<HTMLDivElement>(null)
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
@@ -507,6 +510,8 @@ export default function EditPublication() {
     pageIdRef.current = activePage.id
     if (fabricRef.current) { fabricRef.current.dispose(); fabricRef.current = null }
     setSelected(null)
+    // Cancela cualquier reemplazo in-situ pendiente al cambiar de página
+    replaceTargetRef.current = null
 
     // Reinicia el historial al cambiar de página
     historyRef.current = []
@@ -586,6 +591,41 @@ export default function EditPublication() {
       if (!isUndoRedoRef.current) pushHistory(JSON.stringify(canvas.toJSON(['data'])))
       scheduleAutosave()
     }
+    // Reemplazo in-situ: si hay un objeto marcado para reemplazar y el usuario
+    // inserta uno nuevo desde el panel, lo intercambiamos conservando posición,
+    // tamaño (encajado en la misma caja), ángulo y orden-z. Se registra antes que
+    // onChange para que el autoguardado capture ya el elemento reubicado.
+    const onObjectAdded = (e: any) => {
+      if (isLoading) return
+      const target = replaceTargetRef.current
+      if (!target) return
+      const added = e?.target
+      if (!added || added === target) return
+      replaceTargetRef.current = null
+      try {
+        const tW = target.getScaledWidth?.() ?? (target.width ?? 0) * (target.scaleX ?? 1)
+        const tH = target.getScaledHeight?.() ?? (target.height ?? 0) * (target.scaleY ?? 1)
+        const center = target.getCenterPoint?.()
+        const nw = added.getScaledWidth?.() ?? (added.width ?? 0) * (added.scaleX ?? 1)
+        const nh = added.getScaledHeight?.() ?? (added.height ?? 0) * (added.scaleY ?? 1)
+        if (nw > 0 && nh > 0) {
+          const fit = Math.min(tW / nw, tH / nh) || 1
+          added.set({ scaleX: (added.scaleX ?? 1) * fit, scaleY: (added.scaleY ?? 1) * fit })
+        }
+        added.set({ angle: target.angle ?? 0 })
+        if (center && added.setPositionByOrigin) added.setPositionByOrigin(center, 'center', 'center')
+        const idx = canvas.getObjects().indexOf(target)
+        canvas.remove(target)
+        if (idx >= 0 && added.moveTo) added.moveTo(idx)
+        canvas.setActiveObject(added)
+        added.setCoords()
+        canvas.requestRenderAll()
+        setSelected(added); setSelectVersion((v) => v + 1)
+        scheduleAutosave()
+      } catch { /* si algo falla, se deja el elemento recién insertado tal cual */ }
+    }
+    canvas.on('object:added', onObjectAdded)
+
     canvas.on('object:modified', onChange)
     canvas.on('object:added', onChange)
     canvas.on('object:removed', onChange)
@@ -1062,12 +1102,17 @@ export default function EditPublication() {
   }
 
   // Reemplazar el elemento seleccionado — enruta al panel de origen según tipo.
+  // Imágenes: abren el modal del banco. Los demás tipos: se marcan para reemplazo
+  // in-situ (replaceTargetRef) y se navega al panel; al insertar el nuevo elemento,
+  // el listener object:added lo intercambia conservando posición y tamaño.
   function replaceSelected() {
     const c = fabricRef.current; const o = c?.getActiveObject()
     if (!o) return
     const kind = o.data?.kind
     // Imágenes → modal del banco de imágenes
     if (kind === 'image' || o.type === 'image') { setReplaceModal(true); return }
+    // Marca el objeto a reemplazar y abre el panel de origen correspondiente.
+    replaceTargetRef.current = o
     // Iconos → panel Elementos
     if (kind === 'icon') { selectTool('elements'); return }
     // SVG de biblioteca → panel Biblioteca
@@ -1080,37 +1125,41 @@ export default function EditPublication() {
     if (kind === 'button') { selectTool('buttons'); return }
     // Texto → panel Texto
     if (o.type === 'i-text' || o.type === 'textbox') { selectTool('text'); return }
-    // Fallback: abrir modal de imagen
+    // Tipo no reconocido: cancelamos el reemplazo in-situ y abrimos el modal de imagen
+    replaceTargetRef.current = null
     setReplaceModal(true)
   }
 
-  // Reemplaza el objeto activo (fabric.Image) con una URL nueva, preservando posición y tamaño.
-  // fabric.Image.fromURL crea un objeto nuevo y lo intercambia por el existente para evitar el
-  // bug de setSrc que solo funciona en instancias directas de fabric.Image (no grupos ni paths).
+  // Reemplaza la imagen activa por una URL nueva, conservando posición, ancho y orden-z.
+  // Crea siempre un objeto nuevo con fabric.Image.fromURL (igual que addImageFromUrl, la
+  // ruta que sí funciona) y lo intercambia por el existente. NO se fuerza crossOrigin:
+  // 'anonymous' porque si R2 no envía cabeceras CORS la imagen falla al cargar y queda
+  // con dimensiones 0 (se veía como una "línea"); la inserción normal tampoco lo usa.
   function doReplaceWithUrl(url: string) {
     const c = fabricRef.current; const o = c?.getActiveObject(); if (!o || !c) return
+    // Ancho mostrado actual: la nueva imagen se escala para ocupar el mismo ancho.
+    const targetW = o.getScaledWidth?.() ?? (o.width ?? 0) * (o.scaleX ?? 1)
     const prevLeft = o.left ?? 0, prevTop = o.top ?? 0
-    const prevScaleX = o.scaleX ?? 1, prevScaleY = o.scaleY ?? 1
     const prevAngle = o.angle ?? 0
-    const prevData = { ...(o.data ?? {}), src: url }
-    // Si el objeto es directamente una imagen Fabric usamos setSrc (más rápido)
-    if (o.type === 'image') {
-      ;(o as any).setSrc(url, () => {
-        o.set({ left: prevLeft, top: prevTop, scaleX: prevScaleX, scaleY: prevScaleY, angle: prevAngle })
-        o.data = prevData
-        o.setCoords(); c.requestRenderAll(); scheduleAutosave()
-      }, { crossOrigin: 'anonymous' })
-    } else {
-      // Para cualquier otro tipo creamos una nueva imagen y reemplazamos en el canvas
-      fabric.Image.fromURL(url, (img: any) => {
-        img.set({ left: prevLeft, top: prevTop, scaleX: prevScaleX, scaleY: prevScaleY, angle: prevAngle, crossOrigin: 'anonymous' })
-        img.data = prevData
-        c.remove(o)
-        c.add(img)
-        c.setActiveObject(img)
-        img.setCoords(); c.requestRenderAll(); scheduleAutosave()
-      }, { crossOrigin: 'anonymous' })
-    }
+    const prevFlipX = !!o.flipX, prevFlipY = !!o.flipY
+    const prevOriginX = o.originX ?? 'left', prevOriginY = o.originY ?? 'top'
+    const prevData = { ...(o.data ?? {}), kind: 'image', src: url }
+    const idx = c.getObjects().indexOf(o)
+    fabric.Image.fromURL(url, (img: any) => {
+      if (!img || !img.width || !img.height) { alert('No se pudo cargar la imagen de reemplazo'); return }
+      const scale = targetW > 0 ? targetW / img.width : 1
+      img.set({
+        left: prevLeft, top: prevTop, scaleX: scale, scaleY: scale, angle: prevAngle,
+        flipX: prevFlipX, flipY: prevFlipY, originX: prevOriginX, originY: prevOriginY,
+      })
+      img.data = prevData
+      c.remove(o)
+      c.add(img)
+      if (idx >= 0 && img.moveTo) img.moveTo(idx)
+      c.setActiveObject(img)
+      img.setCoords(); c.requestRenderAll(); scheduleAutosave()
+      setSelected(img); setSelectVersion((v) => v + 1)
+    })
     addToBank(url)
     setReplaceModal(false)
   }
