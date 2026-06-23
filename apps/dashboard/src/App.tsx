@@ -29,6 +29,7 @@ import AdminPayments      from './pages/admin/AdminPayments'
 import AdminGateways      from './pages/admin/AdminGateways'
 import AdminModules       from './pages/admin/AdminModules'
 import AdminResources     from './pages/admin/AdminResources'
+import AdminSvg           from './pages/admin/AdminSvg'
 import AdminPromotions    from './pages/admin/AdminPromotions'
 import AdminReferrals     from './pages/admin/AdminReferrals'
 import AdminBranding      from './pages/admin/AdminBranding'
@@ -78,6 +79,7 @@ export default function App() {
         <Route path="/admin/gateways"      element={<AdminLayout><AdminGateways /></AdminLayout>} />
         <Route path="/admin/modules"       element={<AdminLayout><AdminModules /></AdminLayout>} />
         <Route path="/admin/resources"     element={<AdminLayout><AdminResources /></AdminLayout>} />
+        <Route path="/admin/svg"           element={<AdminLayout><AdminSvg /></AdminLayout>} />
         <Route path="/admin/promotions"    element={<AdminLayout><AdminPromotions /></AdminLayout>} />
         <Route path="/admin/referrals"     element={<AdminLayout><AdminReferrals /></AdminLayout>} />
         <Route path="/admin/branding"      element={<AdminLayout><AdminBranding /></AdminLayout>} />

@@ -166,6 +166,49 @@ export const api = {
       request<{ success: true }>(`/admin/template-proposals/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ admin_notes: adminNotes }) }),
   },
 
+  // Biblioteca SVG — administración (solo super admin)
+  adminSvg: {
+    list: (params?: { family?: string; status?: string; q?: string }) => {
+      const qs = new URLSearchParams(
+        Object.entries(params ?? {}).filter(([, v]) => v) as [string, string][]
+      ).toString()
+      return request<{ success: true; data: any[] }>(`/admin/svg${qs ? `?${qs}` : ''}`)
+    },
+    create: (data: any) =>
+      request<{ success: true; data: { id: number; slug: string; svg_url: string } }>('/admin/svg', {
+        method: 'POST', body: JSON.stringify(data),
+      }),
+    batch: (data: { items: { name: string; svg_content: string; tags?: string[] }[] } & Record<string, any>) =>
+      request<{ success: true; data: { created: any[]; errors: any[] } }>('/admin/svg/batch', {
+        method: 'POST', body: JSON.stringify(data),
+      }),
+    update: (id: number | string, data: any) =>
+      request<{ success: true }>(`/admin/svg/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    archive: (id: number | string) =>
+      request<{ success: true }>(`/admin/svg/${id}/archive`, { method: 'PATCH' }),
+    newVersion: (id: number | string, svg_content: string) =>
+      request<{ success: true; data: { version: number; svg_url: string } }>(`/admin/svg/${id}/version`, {
+        method: 'POST', body: JSON.stringify({ svg_content }),
+      }),
+    versions: (id: number | string) =>
+      request<{ success: true; data: any[] }>(`/admin/svg/${id}/versions`),
+    families: {
+      list: () => request<{ success: true; data: any[] }>('/admin/svg/families'),
+      create: (data: { name: string; category?: string; sort_order?: number }) =>
+        request<{ success: true; data: { id: number; slug: string } }>('/admin/svg/families', {
+          method: 'POST', body: JSON.stringify(data),
+        }),
+      update: (id: number | string, data: any) =>
+        request<{ success: true }>(`/admin/svg/families/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      remove: (id: number | string) =>
+        request<{ success: true }>(`/admin/svg/families/${id}`, { method: 'DELETE' }),
+    },
+  },
+
+  // Biblioteca SVG — consumo del tenant (filtrada por plan/módulo)
+  svgLibrary: (module?: string) =>
+    request<{ success: true; data: any[] }>(`/api/svg${module ? `?module=${encodeURIComponent(module)}` : ''}`),
+
   public: {
     feed: (tenantSlug: string) =>
       fetch(`${API_BASE}/public/${encodeURIComponent(tenantSlug)}`)

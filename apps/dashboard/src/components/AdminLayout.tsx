@@ -8,6 +8,7 @@ const NAV = [
   { to: '/admin/gateways',      icon: '🔌', label: 'Pasarelas' },
   { to: '/admin/modules',       icon: '🧩', label: 'Módulos' },
   { to: '/admin/resources',     icon: '🗂️',  label: 'Recursos' },
+  { to: '/admin/svg',           icon: '✒️', label: 'Biblioteca SVG' },
   { to: '/admin/promotions',    icon: '🎁', label: 'Promociones' },
   { to: '/admin/referrals',     icon: '🤝', label: 'Referidos' },
   { to: '/admin/branding',      icon: '🎨', label: 'Marca de agua' },
