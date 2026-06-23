@@ -2356,6 +2356,7 @@ function SvgLibProps({ obj, canvas, onChange, onSyncToggle }: { obj: any; canvas
 function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canvas: any; pages: any[]; setData: (p: any) => void; onChange: () => void }) {
   const data = (obj as any).data ?? {}
   const [iconSizeDisplay, setIconSizeDisplay] = React.useState<number>(data.iconSize ?? 22)
+  const [textSizeDisplay, setTextSizeDisplay] = React.useState<number>(data.textSize ?? 14)
   const namedTargets = (canvas?.getObjects?.() ?? [])
     .filter((o: any) => o !== obj && o.data?.name && o.data?.elementId)
     .map((o: any) => ({ id: o.data.elementId as string, name: o.data.name as string }))
@@ -2397,10 +2398,34 @@ function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canv
     onChange()
   }
 
+  // Ajusta el tamaño del texto del botón.
+  function resizeText(newSize: number) {
+    const objs = obj.getObjects?.() ?? []
+    const txt = objs.find((o: any) => o.type === 'text' || o.type === 'i-text')
+    if (!txt) return
+    txt.set('fontSize', newSize)
+    obj.data = { ...(obj.data ?? {}), textSize: newSize }
+    obj.addWithUpdate?.()
+    canvas?.requestRenderAll()
+    setTextSizeDisplay(newSize)
+    onChange()
+  }
+
   return (
     <>
       <PropGroup label="Texto del botón">
         <input style={s.propInput} defaultValue={data.label ?? ''} onChange={(e) => restyle({ label: e.target.value })} />
+      </PropGroup>
+      <PropGroup label="Tamaño del texto">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="range" min={8} max={40} step={1}
+            defaultValue={data.textSize ?? 14}
+            onChange={(e) => resizeText(+e.target.value)}
+            style={{ flex: 1, accentColor: '#4F46E5' }}
+          />
+          <span style={{ fontSize: 12, color: '#6b7280', minWidth: 30, textAlign: 'right' as const }}>{textSizeDisplay}px</span>
+        </div>
       </PropGroup>
       <PropGroup label="Estilo">
         <div style={{ display: 'flex', gap: 6 }}>
