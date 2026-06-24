@@ -1402,7 +1402,61 @@ async function init() {
     if (autoClose > 0) setTimeout(() => outer.remove(), autoClose * 1000)
   }
 
-  function buildOverlay(div, canvasJson) {
+  // ── Animaciones de entrada (estilo PowerPoint) ─────────────────────────────
+  const pageEntrancePlayers = {}   // índice de página del flipbook → fn que reproduce sus entradas
+  const playedEntrances = new Set() // páginas ya reproducidas (no repetir al volver)
+
+  // Deja el objeto en su estado inicial "oculto" según el tipo de entrada.
+  function setEntranceInitial(obj, t, ent) {
+    obj.set('opacity', 0)
+    const dir = ent.direction || 'up'
+    const d = 90
+    if (ent.type === 'slide' || ent.type === 'bounce') {
+      if (ent.type === 'bounce') obj.set('top', t.top - 70)
+      else if (dir === 'left') obj.set('left', t.left - d)
+      else if (dir === 'right') obj.set('left', t.left + d)
+      else if (dir === 'down') obj.set('top', t.top + d)
+      else obj.set('top', t.top - d)
+    } else if (ent.type === 'zoom') {
+      obj.set({ scaleX: t.scaleX * 0.55, scaleY: t.scaleY * 0.55 })
+    } else if (ent.type === 'flip') {
+      obj.set('scaleX', 0.01)
+    }
+    obj.setCoords && obj.setCoords()
+  }
+
+  // Reproduce la entrada de un objeto: anima de su estado inicial al objetivo.
+  function playEntrance(fcanvas, obj, t, ent) {
+    const dur = ent.speed === 'slow' ? 1100 : ent.speed === 'fast' ? 350 : 650
+    const delay = Math.max(0, (parseFloat(ent.delay) || 0) * 1000)
+    const easing = ent.type === 'bounce'
+      ? (fabric.util.ease && fabric.util.ease.easeOutBounce)
+      : (fabric.util.ease && fabric.util.ease.easeOutCubic)
+    const to = { opacity: t.opacity }
+    if (ent.type === 'slide' || ent.type === 'bounce') { to.left = t.left; to.top = t.top }
+    if (ent.type === 'zoom' || ent.type === 'flip') { to.scaleX = t.scaleX; to.scaleY = t.scaleY }
+    setTimeout(() => {
+      Object.keys(to).forEach((prop) => {
+        fabric.util.animate({
+          startValue: obj[prop] == null ? 0 : obj[prop],
+          endValue: to[prop],
+          duration: dur,
+          easing: prop === 'opacity' ? undefined : easing,
+          onChange: (v) => { obj.set(prop, v); fcanvas.requestRenderAll() },
+          onComplete: () => { obj.set(prop, to[prop]); obj.setCoords && obj.setCoords(); fcanvas.requestRenderAll() },
+        })
+      })
+    }, delay)
+  }
+
+  // Dispara las entradas de la(s) página(s) visibles (el spread current y su pareja).
+  function triggerEntrances(idx) {
+    ;[idx, idx + 1, idx - 1].forEach((i) => {
+      if (pageEntrancePlayers[i] && !playedEntrances.has(i)) { playedEntrances.add(i); pageEntrancePlayers[i]() }
+    })
+  }
+
+  function buildOverlay(div, canvasJson, pageIndex) {
     if (!canvasJson || typeof fabric === 'undefined') return
     let parsed
     try { parsed = typeof canvasJson === 'string' ? JSON.parse(canvasJson) : canvasJson } catch { return }
@@ -1492,6 +1546,24 @@ async function init() {
         if ((obj.data || {}).startHidden) obj.visible = false
       })
 
+      // Animaciones de ENTRADA (data.entrance): se preparan ocultas y se reproducen al
+      // mostrarse la página. Se registra un "player" indexado por la página del flipbook.
+      const entranceObjs = []
+      fcanvas.getObjects().forEach((obj) => {
+        const ent = (obj.data || {}).entrance
+        if (!ent || !ent.type) return
+        const target = {
+          left: obj.left, top: obj.top,
+          scaleX: obj.scaleX == null ? 1 : obj.scaleX, scaleY: obj.scaleY == null ? 1 : obj.scaleY,
+          opacity: obj.opacity == null ? 1 : obj.opacity,
+        }
+        setEntranceInitial(obj, target, ent)
+        entranceObjs.push({ obj, target, ent })
+      })
+      if (entranceObjs.length && pageIndex != null) {
+        pageEntrancePlayers[pageIndex] = () => entranceObjs.forEach(({ obj, target, ent }) => playEntrance(fcanvas, obj, target, ent))
+      }
+
       // Animaciones continuas en bucle (data.anim) de esta página
       registerAnimations(fcanvas)
 
@@ -1502,8 +1574,9 @@ async function init() {
     })
   }
 
-  // Construye overlays para cada página real
-  pageDivs.forEach((div, i) => buildOverlay(div, data.pages[i] && data.pages[i].canvas_json))
+  // Construye overlays para cada página real (pasa el índice real dentro del flipbook
+  // = lead + i, para disparar las animaciones de entrada al mostrarse esa hoja).
+  pageDivs.forEach((div, i) => buildOverlay(div, data.pages[i] && data.pages[i].canvas_json, lead + i))
 
   // Centrado dinámico: cubre/contraportada centradas, spreads interiores sin desplazamiento
   let currentShift = 0
@@ -1557,9 +1630,12 @@ async function init() {
     updateNavButtons()
     updateActiveThumbnail()
     startPageTimer(pageNumOf(idx))
+    triggerEntrances(idx)
   }
 
   pageFlip.on('flip', onFlipChange)
+  // Entradas de la primera hoja visible (tras el fade-in del overlay).
+  setTimeout(() => triggerEntrances(pageFlip.getCurrentPageIndex()), 500)
   pageFlip.on('changeState', () => {
     updatePageInfo()
     applyCenter()

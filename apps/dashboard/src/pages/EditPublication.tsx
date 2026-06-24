@@ -2803,6 +2803,9 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
         {/* Animación continua (loop) — se reproduce en la vista previa y en el publicado */}
         <AnimationControl obj={obj} setData={setData} />
 
+        {/* Animación de ENTRADA (estilo PowerPoint) — se reproduce al mostrarse la página */}
+        <EntranceControl obj={obj} setData={setData} />
+
         {/* Nombre amigable del elemento. Internamente se le asigna un elementId único
             e inmutable (no editable) para que otra acción pueda apuntarlo de forma segura
             aunque dos elementos compartan el mismo nombre visible. */}
@@ -4287,6 +4290,58 @@ function AnimationControl({ obj, setData }: { obj: any; setData: (p: any) => voi
         </div>
       )}
       {type && <p style={cp.hint}>La animación se reproduce en bucle en el flipbook publicado y en la “Vista previa” del proyecto (no en el editor, para no estorbar la edición).</p>}
+    </PropGroup>
+  )
+}
+
+// Animación de ENTRADA (estilo PowerPoint): se reproduce una vez al mostrarse la página.
+// Aplica a cualquier elemento (texto, imagen, forma, icono, botón…). Config en data.entrance.
+const ENTRANCE_TYPES = [
+  { key: '', label: 'Sin animación' },
+  { key: 'fade', label: 'Aparecer (fade)' },
+  { key: 'slide', label: 'Deslizar' },
+  { key: 'zoom', label: 'Zoom' },
+  { key: 'flip', label: 'Voltear (flip)' },
+  { key: 'bounce', label: 'Rebote' },
+]
+function EntranceControl({ obj, setData }: { obj: any; setData: (p: any) => void }) {
+  const ent = (obj as any).data?.entrance ?? {}
+  const type = ent.type ?? ''
+  const patch = (p: any) => setData({ entrance: { ...ent, ...p } })
+  return (
+    <PropGroup label="Animación de entrada">
+      <select style={s.propInput} value={type} onChange={(e) => patch({ type: e.target.value })}>
+        {ENTRANCE_TYPES.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+      </select>
+      {(type === 'slide' || type === 'flip') && (
+        <div style={{ marginTop: 6 }}>
+          <span style={{ fontSize: 11, color: '#6b7280' }}>Dirección</span>
+          <select style={s.propInput} value={ent.direction ?? 'up'} onChange={(e) => patch({ direction: e.target.value })}>
+            <option value="up">Desde arriba</option>
+            <option value="down">Desde abajo</option>
+            <option value="left">Desde la izquierda</option>
+            <option value="right">Desde la derecha</option>
+          </select>
+        </div>
+      )}
+      {type && (
+        <>
+          <div style={{ marginTop: 6 }}>
+            <span style={{ fontSize: 11, color: '#6b7280' }}>Velocidad</span>
+            <select style={s.propInput} value={ent.speed ?? 'normal'} onChange={(e) => patch({ speed: e.target.value })}>
+              <option value="slow">Lenta</option>
+              <option value="normal">Normal</option>
+              <option value="fast">Rápida</option>
+            </select>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+            <span style={{ fontSize: 11, color: '#6b7280' }}>Retardo (orden de aparición)</span>
+            <input style={{ ...s.propInput, width: 70 }} type="number" min={0} max={20} step={0.1} defaultValue={ent.delay ?? 0} onChange={(e) => patch({ delay: +e.target.value })} />
+            <span style={{ fontSize: 11, color: '#6b7280' }}>seg</span>
+          </div>
+          <p style={cp.hint}>Se reproduce al mostrarse la página en el flipbook publicado y en la “Vista previa”. Usa el retardo para escalonar la aparición de varios elementos.</p>
+        </>
+      )}
     </PropGroup>
   )
 }
