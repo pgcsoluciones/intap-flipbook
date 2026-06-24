@@ -237,15 +237,19 @@ async function init() {
     setTimeout(() => loadingScreen.remove(), 450)
   }
 
-  // ── Flechas laterales de navegación (solo escritorio) ──────────────────────
-  if (!portrait) {
+  // ── Flechas laterales de navegación (escritorio + móvil/tablet) ────────────
+  // Discretas, centradas verticalmente, una a cada lado. Independientes de la barra
+  // inferior. En escritorio van fuera del spread; en móvil/tablet, fijas al borde.
+  {
+    const baseBg = portrait ? 'rgba(0,0,0,.30)' : 'rgba(0,0,0,.45)'
+    const size = portrait ? 36 : 44
     const arrowStyle = [
-      'position:absolute',
+      portrait ? 'position:fixed' : 'position:absolute',
       'top:50%',
       'transform:translateY(-50%)',
-      'width:44px', 'height:44px',
+      `width:${size}px`, `height:${size}px`,
       'border-radius:50%',
-      'background:rgba(0,0,0,.45)',
+      `background:${baseBg}`,
       'border:none',
       'cursor:pointer',
       'display:flex',
@@ -261,23 +265,27 @@ async function init() {
     const btnLeft = document.createElement('button')
     btnLeft.innerHTML = svgLeft
     btnLeft.title = 'Página anterior'
-    btnLeft.style.cssText = arrowStyle + ';left:-54px'
+    btnLeft.style.cssText = arrowStyle + (portrait ? ';left:6px' : ';left:-54px')
     btnLeft.addEventListener('click', () => document.getElementById('btn-prev').click())
-    btnLeft.addEventListener('mouseenter', () => { btnLeft.style.background = 'rgba(0,0,0,.72)' })
-    btnLeft.addEventListener('mouseleave', () => { btnLeft.style.background = 'rgba(0,0,0,.45)' })
 
     const btnRight = document.createElement('button')
     btnRight.innerHTML = svgRight
     btnRight.title = 'Página siguiente'
-    btnRight.style.cssText = arrowStyle + ';right:-54px'
+    btnRight.style.cssText = arrowStyle + (portrait ? ';right:6px' : ';right:-54px')
     btnRight.addEventListener('click', () => document.getElementById('btn-next').click())
-    btnRight.addEventListener('mouseenter', () => { btnRight.style.background = 'rgba(0,0,0,.72)' })
-    btnRight.addEventListener('mouseleave', () => { btnRight.style.background = 'rgba(0,0,0,.45)' })
+
+    if (!portrait) {
+      btnLeft.addEventListener('mouseenter', () => { btnLeft.style.background = 'rgba(0,0,0,.72)' })
+      btnLeft.addEventListener('mouseleave', () => { btnLeft.style.background = baseBg })
+      btnRight.addEventListener('mouseenter', () => { btnRight.style.background = 'rgba(0,0,0,.72)' })
+      btnRight.addEventListener('mouseleave', () => { btnRight.style.background = baseBg })
+    }
 
     const flipbookContainer = document.getElementById('flipbook-container')
     if (flipbookContainer.style.position !== 'relative') flipbookContainer.style.position = 'relative'
-    flipbookContainer.appendChild(btnLeft)
-    flipbookContainer.appendChild(btnRight)
+    const target = portrait ? document.body : flipbookContainer
+    target.appendChild(btnLeft)
+    target.appendChild(btnRight)
   }
 
   // ── Overlays de elementos del editor + acciones interactivas ──
@@ -1581,10 +1589,12 @@ async function init() {
   // Centrado dinámico: cubre/contraportada centradas, spreads interiores sin desplazamiento
   let currentShift = 0
   let currentScale = 1
+  let panX = 0, panY = 0          // desplazamiento al hacer zoom (pinch/doble toque)
+  let pinching = false
   function applyTransform() {
-    container.style.transform = `translateX(${currentShift}px) scale(${currentScale})`
+    container.style.transform = `translate(${currentShift + panX}px, ${panY}px) scale(${currentScale})`
     container.style.transformOrigin = 'center center'
-    container.style.transition = 'transform 0.35s ease'
+    container.style.transition = pinching ? 'none' : 'transform 0.3s ease'
   }
   // Convierte el índice del flipbook (con blanks) al número de página real (1..realCount)
   const pageNumOf = (idx) => Math.max(1, Math.min(idx - lead + 1, realCount))
@@ -1625,6 +1635,8 @@ async function init() {
     if (idx < firstIdx) { pageFlip.flip(firstIdx); return }
     if (idx > lastIdx) { pageFlip.flip(lastIdx); return }
     playFlipSound()
+    // Al cambiar de página, restablecer el zoom táctil para no quedar desplazado.
+    currentScale = 1; zoomIdx = 0; panX = 0; panY = 0
     updatePageInfo()
     applyCenter()
     updateNavButtons()
@@ -1695,8 +1707,57 @@ async function init() {
   document.getElementById('btn-zoom').addEventListener('click', () => {
     zoomIdx = (zoomIdx + 1) % zoomLevels.length
     currentScale = zoomLevels[zoomIdx]
+    panX = 0; panY = 0
     applyTransform()
   })
+
+  // ── Zoom táctil: pellizcar (pinch) + doble toque + arrastrar con zoom ───────
+  // Permite ampliar la página con los dedos para leer mejor. Cuando hay zoom, el
+  // arrastre con 1 dedo desplaza (pan); sin zoom, 1 dedo voltea la página (StPageFlip).
+  (function setupTouchZoom() {
+    const fbWrap = document.getElementById('flipbook-container')
+    if (!fbWrap) return
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+    let startDist = 0, startScale = 1
+    let panning = false, psx = 0, psy = 0
+    let lastTap = 0
+    const resetZoom = () => { currentScale = 1; zoomIdx = 0; panX = 0; panY = 0; pinching = false; applyTransform() }
+    window.__resetZoom = resetZoom
+
+    fbWrap.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        pinching = true; startDist = dist(e.touches); startScale = currentScale
+        e.stopPropagation()
+      } else if (e.touches.length === 1) {
+        const now = Date.now()
+        if (now - lastTap < 300) {           // doble toque → alternar zoom
+          if (currentScale > 1) resetZoom()
+          else { currentScale = 2; applyTransform() }
+          e.preventDefault(); e.stopPropagation()
+        }
+        lastTap = now
+        if (currentScale > 1) {              // con zoom: arrastrar = pan
+          panning = true; psx = e.touches[0].clientX - panX; psy = e.touches[0].clientY - panY
+          e.stopPropagation()
+        }
+      }
+    }, { capture: true, passive: false })
+
+    fbWrap.addEventListener('touchmove', (e) => {
+      if (pinching && e.touches.length === 2) {
+        currentScale = Math.min(4, Math.max(1, startScale * (dist(e.touches) / (startDist || 1))))
+        applyTransform(); e.stopPropagation(); e.preventDefault()
+      } else if (panning && currentScale > 1 && e.touches.length === 1) {
+        panX = e.touches[0].clientX - psx; panY = e.touches[0].clientY - psy
+        applyTransform(); e.stopPropagation(); e.preventDefault()
+      }
+    }, { capture: true, passive: false })
+
+    fbWrap.addEventListener('touchend', (e) => {
+      if (pinching && e.touches.length < 2) { pinching = false; if (currentScale <= 1.05) resetZoom(); else applyTransform() }
+      if (e.touches.length === 0) panning = false
+    }, { capture: true })
+  })()
 
   document.getElementById('btn-first').addEventListener('click', () => pageFlip.flip(firstIdx))
   document.getElementById('btn-last').addEventListener('click', () => pageFlip.flip(lastIdx))
