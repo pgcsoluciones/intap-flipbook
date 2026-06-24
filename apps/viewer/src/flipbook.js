@@ -1367,6 +1367,7 @@ async function init() {
       let widgetIdx = 0
       // slice(): vamos a remover widgets del canvas mientras iteramos
       fcanvas.getObjects().slice().forEach((obj) => {
+       try {
         const d = obj.data || {}
         const r = obj.getBoundingRect(true)
 
@@ -1410,6 +1411,11 @@ async function init() {
         hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action, fcanvas, obj) })
         blockFlipDrag(hot)
         wrap.appendChild(hot)
+       } catch (err) {
+        // Un widget con error no debe romper el resto de la página (p. ej. dejar el
+        // mapa como dibujo estático). Se omite ese elemento y se continúa.
+        console.warn('[viewer] elemento omitido por error:', err)
+       }
       })
 
       // Visibilidad inicial: cualquier elemento con data.startHidden = true arranca invisible.
