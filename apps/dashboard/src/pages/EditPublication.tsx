@@ -639,6 +639,7 @@ export default function EditPublication() {
   const coverSaveTimer = useRef<any>(null)
   const adjustModeRef = useRef(false)             // espejo de adjustMode para los listeners del canvas
   const [adjustMode, setAdjustMode] = useState(false)
+  const [oddWarnDismissed, setOddWarnDismissed] = useState(false)
   const [coverZoom, setCoverZoom] = useState(1)   // valor del slider (espejo de coverRef.zoom)
   const [adjustTarget, setAdjustTarget] = useState<'bg' | 'image'>('bg') // qué se reencuadra (UI)
   const adjustTargetRef = useRef<'bg' | 'image'>('bg')                   // idem para los listeners
@@ -1943,6 +1944,16 @@ export default function EditPublication() {
               </div>
               <button style={s.adjustReset} onClick={resetCover}>Restablecer</button>
               <button style={s.adjustDone} onClick={() => setAdjustMode(false)}>Listo</button>
+            </div>
+          )}
+
+          {pages.length > 1 && pages.length % 2 === 1 && !oddWarnDismissed && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 8px', padding: '8px 14px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, color: '#92400e', fontSize: 12.5 }}>
+              <span style={{ fontSize: 15 }}>⚠️</span>
+              <span style={{ flex: 1 }}>
+                Tu catálogo tiene <b>{pages.length} páginas (número impar)</b>. En escritorio el flipbook arma las hojas de a pares, así que una quedará sola. Para una mejor presentación, te recomendamos <b>agregar o quitar una página</b> (que quede par).
+              </span>
+              <button type="button" onClick={() => setOddWarnDismissed(true)} style={{ background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0 }} title="Descartar">✕</button>
             </div>
           )}
 
