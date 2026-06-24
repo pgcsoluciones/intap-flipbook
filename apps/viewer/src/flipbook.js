@@ -1030,6 +1030,65 @@ async function init() {
         a.addEventListener('click', () => trackInteraction(cfg.tracking, cfg.network || 'social', 'social', href))
         return a
       }
+      case 'gallery': {
+        const imgs = (cfg.images || []).filter(Boolean)
+        if (!imgs.length) return placeholderBox('Galería (sin imágenes)')
+        const transition = cfg.transition || 'fade'
+        const box = document.createElement('div')
+        box.style.cssText = 'position:relative;width:100%;height:100%;overflow:hidden;border-radius:8px;background:#0f172a;'
+        const slides = imgs.map((src) => {
+          const im = document.createElement('div')
+          im.style.cssText = `position:absolute;inset:0;background-image:url("${src}");background-size:cover;background-position:center;background-repeat:no-repeat;`
+          box.appendChild(im); return im
+        })
+        let cur = 0
+        const dotEls = []
+        const paintDots = () => dotEls.forEach((d, i) => { d.style.background = i === cur ? '#fff' : 'rgba(255,255,255,.5)' })
+        const layout = (animate) => {
+          slides.forEach((s, i) => {
+            s.style.transition = animate ? 'opacity .5s ease, transform .5s ease' : 'none'
+            if (transition === 'slide') { s.style.transform = `translateX(${(i - cur) * 100}%)`; s.style.opacity = '1' }
+            else if (transition === 'zoom') { s.style.opacity = i === cur ? '1' : '0'; s.style.transform = i === cur ? 'scale(1)' : 'scale(1.08)' }
+            else { s.style.opacity = i === cur ? '1' : '0'; s.style.transform = 'none' }
+          })
+        }
+        layout(false)
+        let timer = null
+        const restart = () => {
+          if (timer) clearInterval(timer)
+          if (cfg.autoplay !== false && imgs.length > 1) timer = setInterval(() => go(cur + 1), Math.max(1, cfg.interval || 4) * 1000)
+        }
+        const go = (n) => { cur = (n + imgs.length) % imgs.length; layout(true); paintDots() }
+        if (cfg.arrows !== false && imgs.length > 1) {
+          const mk = (txt, side) => {
+            const b = document.createElement('button')
+            b.textContent = txt
+            b.style.cssText = `position:absolute;${side}:8px;top:50%;transform:translateY(-50%);z-index:3;width:32px;height:32px;border-radius:50%;border:none;background:rgba(0,0,0,.45);color:#fff;font-size:20px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;`
+            return b
+          }
+          const bl = mk('‹', 'left'), br = mk('›', 'right')
+          bl.addEventListener('click', (e) => { e.stopPropagation(); go(cur - 1); restart() })
+          br.addEventListener('click', (e) => { e.stopPropagation(); go(cur + 1); restart() })
+          box.appendChild(bl); box.appendChild(br)
+        }
+        if (cfg.dots !== false && imgs.length > 1) {
+          const dwrap = document.createElement('div')
+          dwrap.style.cssText = 'position:absolute;bottom:8px;left:0;right:0;z-index:3;display:flex;gap:6px;justify-content:center;'
+          imgs.forEach((_, i) => {
+            const d = document.createElement('button')
+            d.style.cssText = 'width:8px;height:8px;border-radius:50%;border:none;cursor:pointer;padding:0;background:rgba(255,255,255,.5);'
+            d.addEventListener('click', (e) => { e.stopPropagation(); go(i); restart() })
+            dwrap.appendChild(d); dotEls.push(d)
+          })
+          box.appendChild(dwrap)
+        }
+        paintDots()
+        restart()
+        let sx = null
+        box.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX }, { passive: true })
+        box.addEventListener('touchend', (e) => { if (sx == null) return; const dx = e.changedTouches[0].clientX - sx; if (Math.abs(dx) > 40) { go(dx < 0 ? cur + 1 : cur - 1); restart() } sx = null })
+        return box
+      }
       case 'contact': return buildContactForm(cfg)
       case 'table': return buildTable(cfg.csv || '')
       case 'like': return buildLike(cfg, key)

@@ -245,7 +245,7 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
 ]
 
 // Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
-type WidgetType = 'map' | 'whatsapp' | 'social' | 'contact' | 'video' | 'audio' | 'qr' | 'barcode' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download' | 'units_table'
+type WidgetType = 'map' | 'whatsapp' | 'social' | 'contact' | 'video' | 'audio' | 'qr' | 'barcode' | 'gallery' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download' | 'units_table'
 
 // Redes sociales: slug de Simple Icons (logo) + color de marca + plantilla de URL.
 // El logo se carga como imagen desde el CDN de Simple Icons (cdn.simpleicons.org).
@@ -264,6 +264,7 @@ const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean
   { type: 'whatsapp',     label: 'WhatsApp',              icon: 'whatsapp', premium: false },
   { type: 'social',       label: 'Redes sociales',        icon: 'link',     premium: false },
   { type: 'contact',      label: 'Formulario',            icon: 'contact',  premium: false },
+  { type: 'gallery',      label: 'Galería / Slider',      icon: 'image',    premium: false },
   { type: 'video',        label: 'Video',                 icon: 'video',    premium: false },
   { type: 'audio',        label: 'Audio',                 icon: 'audio',    premium: false },
   { type: 'qr',           label: 'Código QR',             icon: 'qr',       premium: false },
@@ -282,6 +283,7 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   map:      { address: '', mapsUrl: '', zoom: 14 },
   whatsapp: { phone: '', message: 'Hola, vi tu catálogo y quiero más información', label: 'Escríbenos por WhatsApp' },
   social:   { network: 'instagram', value: '' },
+  gallery:  { images: [], autoplay: true, interval: 4, arrows: true, dots: true, transition: 'fade' },
   contact:  { title: 'Contáctanos', toEmail: '', button: 'Enviar', showPhone: true, showComment: true, nameRequired: true, emailRequired: true, phoneRequired: false },
   video:    { url: '', autoplay: false, controls: true, muted: false, poster: '', loop: false, playerStyle: 'native', playerColor: '#ef4444' },
   audio:    { url: '', playerColor: '#7c3aed', autoplay: false, loop: false, playerStyle: 'circle', label: '' },
@@ -324,6 +326,7 @@ const WIDGET_VISUAL: Record<WidgetType, { glyph: string; color: string; w: numbe
   map:          { glyph: '📍', color: '#0ea5e9', w: 260, h: 170, shape: 'card' },
   whatsapp:     { glyph: '💬', color: '#25D366', w: 220, h: 60,  shape: 'button' },
   social:       { glyph: '🌐', color: '#4f46e5', w: 96,  h: 96,  shape: 'square' },
+  gallery:      { glyph: '🖼️', color: '#0ea5e9', w: 280, h: 190, shape: 'card' },
   contact:      { glyph: '📝', color: '#4f46e5', w: 240, h: 180, shape: 'card' },
   video:        { glyph: '▶',  color: '#ef4444', w: 260, h: 150, shape: 'card' },
   audio:        { glyph: '🔊', color: '#7c3aed', w: 230, h: 76,  shape: 'card' },
@@ -487,8 +490,28 @@ function buildPopupPreview(): any {
   ])
 }
 
+function buildGalleryPreview(): any {
+  const W = 280, H = 190
+  return wGroup([
+    wRect(0, 0, W, H, { rx: 12, ry: 12, fill: '#0f172a' }),
+    // marco de "foto" central
+    wRect(20, 18, W - 40, H - 56, { rx: 8, ry: 8, fill: '#1e293b', stroke: '#334155', strokeWidth: 1 }),
+    new fabric.Triangle({ left: W / 2 - 28, top: H / 2 - 22, width: 26, height: 22, fill: '#64748b', angle: 0, originX: 'center', originY: 'center' }),
+    new fabric.Circle({ left: W / 2 + 26, top: H / 2 - 30, radius: 9, fill: '#facc15', originX: 'center', originY: 'center' }),
+    // flechas
+    wText('‹', 30, H / 2 - 30, { fontSize: 30, fontWeight: 'bold', fill: '#e2e8f0' }),
+    wText('›', W - 44, H / 2 - 30, { fontSize: 30, fontWeight: 'bold', fill: '#e2e8f0' }),
+    // puntos indicadores
+    new fabric.Circle({ left: W / 2 - 16, top: H - 22, radius: 4, fill: '#ffffff', originX: 'center', originY: 'center' }),
+    new fabric.Circle({ left: W / 2, top: H - 22, radius: 4, fill: '#64748b', originX: 'center', originY: 'center' }),
+    new fabric.Circle({ left: W / 2 + 16, top: H - 22, radius: 4, fill: '#64748b', originX: 'center', originY: 'center' }),
+    wText('Galería / Slider', W / 2, 20, { fontSize: 12, fontWeight: 'bold', fill: '#cbd5e1', originX: 'center' }),
+  ])
+}
+
 function makeWidgetCard(type: WidgetType, label: string): any {
   switch (type) {
+    case 'gallery':      return buildGalleryPreview()
     case 'contact':      return buildFormPreview()
     case 'whatsapp':     return buildWhatsappPreview()
     case 'map':          return buildMapPreview()
@@ -3376,6 +3399,67 @@ function SocialWidgetProps({ obj, cfg, setCfg }: { obj: any; cfg: any; setCfg: (
   )
 }
 
+// Panel del widget Galería / Slider: lista de imágenes + opciones de reproducción.
+function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) {
+  const images: string[] = cfg.images ?? []
+  const fileRefs = React.useRef<(HTMLInputElement | null)[]>([])
+  const setImages = (next: string[]) => setCfg({ images: next })
+  const addImage = () => { if (images.length < 30) setImages([...images, '']) }
+  const updateImage = (i: number, url: string) => { const n = [...images]; n[i] = url; setImages(n) }
+  const removeImage = (i: number) => setImages(images.filter((_, j) => j !== i))
+  const move = (i: number, d: number) => {
+    const j = i + d; if (j < 0 || j >= images.length) return
+    const n = [...images];[n[i], n[j]] = [n[j], n[i]]; setImages(n)
+  }
+  const uploadImage = async (i: number, file: File) => {
+    try { const res = await api.upload(file); updateImage(i, res.data.url) } catch (e: any) { alert('Error al subir: ' + (e.message ?? e)) }
+  }
+  return (
+    <>
+      <PropGroup label={`Imágenes del slider (${images.length}/30)`}>
+        {images.map((url, i) => (
+          <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 6 }}>
+            {url ? <img src={url} alt="" style={{ width: 30, height: 30, objectFit: 'cover', borderRadius: 4, flex: 'none', border: '1px solid #e5e7eb' }} /> : <div style={{ width: 30, height: 30, borderRadius: 4, background: '#f1f5f9', flex: 'none' }} />}
+            <input style={{ ...s.propInput, flex: 1, fontSize: 11 }} placeholder="https://..." value={url} onChange={(e) => updateImage(i, e.target.value)} />
+            <input ref={(el) => { fileRefs.current[i] = el }} type="file" accept={ACCEPT_IMAGE} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(i, f); e.target.value = '' }} />
+            <button type="button" style={{ ...s.alignBtn, fontSize: 11, padding: '4px 8px', flex: 'none' }} onClick={() => fileRefs.current[i]?.click()}>Subir</button>
+            <button type="button" title="Subir en orden" style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, padding: '0 2px' }} onClick={() => move(i, -1)}>▲</button>
+            <button type="button" title="Bajar en orden" style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, padding: '0 2px' }} onClick={() => move(i, 1)}>▼</button>
+            <button type="button" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }} onClick={() => removeImage(i)}>✕</button>
+          </div>
+        ))}
+        <button type="button" style={{ ...s.alignBtn, width: '100%', marginTop: 4, fontSize: 12 }} onClick={addImage}>+ Agregar imagen</button>
+      </PropGroup>
+      <PropGroup label="Transición">
+        <select style={s.propInput} value={cfg.transition ?? 'fade'} onChange={(e) => setCfg({ transition: e.target.value })}>
+          <option value="fade">Fundido (fade)</option>
+          <option value="slide">Deslizar (slide)</option>
+          <option value="zoom">Zoom</option>
+        </select>
+      </PropGroup>
+      <PropGroup label="Reproducción">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', marginBottom: 6 }}>
+          <input type="checkbox" checked={cfg.autoplay !== false} onChange={(e) => setCfg({ autoplay: e.target.checked })} /> Avance automático
+        </label>
+        {cfg.autoplay !== false && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>Cada</span>
+            <input style={{ ...s.propInput, width: 70 }} type="number" min={1} max={30} value={cfg.interval ?? 4} onChange={(e) => setCfg({ interval: +e.target.value })} />
+            <span style={{ fontSize: 12, color: '#6b7280' }}>segundos</span>
+          </div>
+        )}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', marginBottom: 6 }}>
+          <input type="checkbox" checked={cfg.arrows !== false} onChange={(e) => setCfg({ arrows: e.target.checked })} /> Flechas de navegación
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
+          <input type="checkbox" checked={cfg.dots !== false} onChange={(e) => setCfg({ dots: e.target.checked })} /> Puntos indicadores
+        </label>
+      </PropGroup>
+      <p style={cp.hint}>El slider real (auto-avance, flechas, deslizar con el dedo) se ve en la publicación. En el lienzo verás el recuadro de la galería para colocarlo y dimensionarlo.</p>
+    </>
+  )
+}
+
 // Propiedades de un widget: campos de configuración según su tipo
 function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) {
   const widget = (obj as any).data?.widget ?? { type: 'map', config: {} }
@@ -3396,7 +3480,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
   )
   const labels: Record<WidgetType, string> = {
     map: 'Mapa', whatsapp: 'WhatsApp', social: 'Redes sociales', contact: 'Formulario', video: 'Video',
-    audio: 'Audio', qr: 'Código QR', barcode: 'Código de barras', table: 'Tabla', like: 'Me gusta',
+    audio: 'Audio', qr: 'Código QR', barcode: 'Código de barras', gallery: 'Galería / Slider', table: 'Tabla', like: 'Me gusta',
     embed: 'Incrustar / HTML', quiz: 'Cuestionario', popup_banner: 'Pop-up emergente',
     download: 'Descargar archivo', units_table: 'Tabla de Unidades',
   }
@@ -3508,6 +3592,8 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
       {type === 'barcode' && <BarcodeWidgetProps obj={obj} cfg={cfg} setCfg={setCfg} />}
 
       {type === 'social' && <SocialWidgetProps obj={obj} cfg={cfg} setCfg={setCfg} />}
+
+      {type === 'gallery' && <GalleryWidgetProps cfg={cfg} setCfg={setCfg} />}
 
       {type === 'table' && (
         <Field label="Datos (fila por línea, columnas separadas por coma)">
