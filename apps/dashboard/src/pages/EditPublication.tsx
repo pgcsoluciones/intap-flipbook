@@ -537,6 +537,77 @@ function refreshCodeOnCanvas(obj: any) {
   obj.setSrc(codeImageUrl(w.type, w.config ?? {}), () => { obj.setCoords && obj.setCoords(); obj.canvas && obj.canvas.requestRenderAll() })
 }
 
+// ── Preview vivo en el lienzo (capa DOM real sobre Fabric) ──────────────────────
+// Tipos de widget que tienen preview vivo (piloto). Se irá ampliando.
+const LIVE_PREVIEW_TYPES = ['map', 'audio']
+
+function liveMsg(text: string): HTMLElement {
+  const d = document.createElement('div')
+  d.textContent = text
+  d.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;box-sizing:border-box;background:#eef2f7;color:#64748b;font-size:12px;font-family:Inter,sans-serif;border-radius:8px;'
+  return d
+}
+
+// Botón de reproducción (DOM) — réplica del makePlayButton del viewer (solo visual).
+function liveMakePlayButton(style: string, color: string, label: string): HTMLElement {
+  const P: Record<string, any> = {
+    circle:    { shape: 'circle', bg: color,         fg: '#fff',    icon: '▶' },
+    outline:   { shape: 'circle', bg: 'transparent', fg: color,     icon: '▶', border: `3px solid ${color}` },
+    noteDark:  { shape: 'circle', bg: '#1f2937',     fg: '#fff',    icon: '🎵' },
+    noteLight: { shape: 'circle', bg: '#ffffff',     fg: '#111827', icon: '🎵', border: '1px solid #e5e7eb' },
+    square:    { shape: 'square', bg: '#111827',     fg: '#fff',    icon: '🎵' },
+    gradient:  { shape: 'circle', bg: `linear-gradient(135deg, ${color}, #a855f7)`, fg: '#fff', icon: '🎵' },
+    minimal:   { shape: 'none',   bg: 'transparent', fg: color,     icon: '▶' },
+    pill:      { shape: 'pill',   bg: color,         fg: '#fff',    icon: '▶' },
+  }
+  const p = P[style] || P.circle
+  const el = document.createElement('div')
+  if (p.shape === 'pill') {
+    el.style.cssText = `display:inline-flex;align-items:center;gap:8px;background:${color};color:#fff;border-radius:999px;font-family:Inter,sans-serif;font-weight:700;font-size:16px;padding:12px 22px;box-shadow:0 6px 18px ${color}55;`
+    el.innerHTML = `<span>▶</span>${label ? `<span style="font-size:14px">${label}</span>` : ''}`
+    return el
+  }
+  const radius = p.shape === 'square' ? '16px' : '50%'
+  const dim = p.shape === 'none' ? 'auto' : 'min(72%,86px)'
+  const shadow = (p.shape === 'none' || p.bg === 'transparent') ? 'none' : `0 6px 18px ${color}55`
+  el.style.cssText = `display:flex;align-items:center;justify-content:center;background:${p.bg};color:${p.fg};border:${p.border || 'none'};border-radius:${radius};font-family:Inter,sans-serif;font-weight:700;font-size:${p.shape === 'none' ? '44px' : '30px'};width:${dim};height:${dim};aspect-ratio:${p.shape === 'none' ? 'auto' : '1/1'};box-shadow:${shadow};`
+  el.textContent = p.icon
+  return el
+}
+
+// Construye el widget VIVO (DOM real) que se ve en el lienzo del editor — igual que
+// en el publicado. Piloto: mapa (iframe con la ciudad configurada) y audio (reproductor).
+function buildLiveWidget(type: string, cfg: any): HTMLElement | null {
+  if (type === 'map') {
+    const addr = (cfg.address || '').trim()
+    if (!addr && !cfg.mapsUrl) return liveMsg('Mapa — escribe una dirección en el panel de propiedades')
+    const src = cfg.mapsUrl && String(cfg.mapsUrl).startsWith('http')
+      ? cfg.mapsUrl
+      : `https://www.google.com/maps?q=${encodeURIComponent(addr)}&z=${cfg.zoom || 14}&output=embed`
+    const wrap = document.createElement('div')
+    wrap.style.cssText = 'width:100%;height:100%;border-radius:8px;overflow:hidden;background:#e8edf0;'
+    const f = document.createElement('iframe')
+    f.src = src; f.loading = 'lazy'; f.style.cssText = 'width:100%;height:100%;border:0;display:block;'
+    wrap.appendChild(f)
+    return wrap
+  }
+  if (type === 'audio') {
+    const color = cfg.playerColor || '#7c3aed'
+    const style = cfg.playerStyle || 'circle'
+    const wrap = document.createElement('div')
+    wrap.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:12px;box-sizing:border-box;'
+    if (style === 'bar' || style === 'native') {
+      const a = document.createElement('audio'); a.src = cfg.url || ''; a.controls = true
+      a.style.cssText = 'width:92%;accent-color:' + color
+      wrap.style.background = `${color}14`
+      wrap.appendChild(a); return wrap
+    }
+    wrap.appendChild(liveMakePlayButton(style, color, cfg.label || ''))
+    return wrap
+  }
+  return null
+}
+
 // Plantillas prediseñadas para el pop-up emergente
 const POPUP_TEMPLATES: { key: string; label: string; defaults: Partial<typeof WIDGET_DEFAULTS['popup_banner']> }[] = [
   { key: 'offer',   label: '⚡ Oferta relámpago', defaults: { title: '¡Oferta relámpago!', text: 'Solo por hoy — 30% OFF en toda la tienda.', buttonText: 'Ver ofertas', bgColor: '#7c3aed', textColor: '#fff' } },
@@ -601,6 +672,8 @@ export default function EditPublication() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
   const pageIdRef = useRef<string | null>(null)
+  const liveLayerRef = useRef<HTMLDivElement | null>(null)   // capa DOM de preview vivo
+  const liveRefreshTimer = useRef<any>(null)                 // debounce del refresco en vivo
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imgInputRef  = useRef<HTMLInputElement>(null)
   const svgInputRef = useRef<HTMLInputElement>(null)
@@ -651,6 +724,45 @@ export default function EditPublication() {
     historyIndexRef.current = historyRef.current.length - 1
     updateUndoRedoState()
   }, [updateUndoRedoState])
+
+  // ── Preview vivo: posiciona el nodo DOM sobre la caja del objeto Fabric ──
+  const positionLiveActive = useCallback(() => {
+    const c = fabricRef.current, l = liveLayerRef.current
+    if (!c || !l) return
+    const holder = l.firstElementChild as HTMLElement | null
+    const o = c.getActiveObject()
+    if (!holder || !o) return
+    holder.style.left = o.left + 'px'
+    holder.style.top = o.top + 'px'
+    holder.style.width = o.getScaledWidth() + 'px'
+    holder.style.height = o.getScaledHeight() + 'px'
+    holder.style.transform = o.angle ? `rotate(${o.angle}deg)` : 'none'
+    holder.style.transformOrigin = 'top left'
+  }, [])
+
+  // Reconstruye el preview vivo del widget seleccionado (render perezoso: solo 1).
+  const syncLivePreview = useCallback(() => {
+    const c = fabricRef.current, l = liveLayerRef.current
+    if (!c || !l) return
+    l.innerHTML = ''
+    const o = c.getActiveObject()
+    if (!o || o.type === 'activeSelection') return
+    const wdg = (o as any).data?.widget
+    if (!wdg || !LIVE_PREVIEW_TYPES.includes(wdg.type)) return
+    const node = buildLiveWidget(wdg.type, wdg.config ?? {})
+    if (!node) return
+    const holder = document.createElement('div')
+    holder.style.cssText = 'position:absolute;pointer-events:none;overflow:hidden;'
+    holder.appendChild(node)
+    l.appendChild(holder)
+    positionLiveActive()
+  }, [positionLiveActive])
+
+  // Refresco con debounce (al editar propiedades, evita recargar el iframe en cada tecla).
+  const scheduleLiveRefresh = useCallback(() => {
+    if (liveRefreshTimer.current) clearTimeout(liveRefreshTimer.current)
+    liveRefreshTimer.current = setTimeout(() => syncLivePreview(), 280)
+  }, [syncLivePreview])
 
   const scheduleAutosaveRef = useRef<() => void>(() => {})
 
@@ -808,6 +920,15 @@ export default function EditPublication() {
     const canvas = new fabric.Canvas(canvasRef.current, { width: W, height: H, backgroundColor: bgColor, preserveObjectStacking: true })
     fabricRef.current = canvas
 
+    // Capa de PREVIEW VIVO: DOM real entre el lienzo de contenido y el de controles
+    // de Fabric, así no tapa los manejadores de selección. Escala con el zoom (CSS).
+    try {
+      const live = document.createElement('div')
+      live.style.cssText = `position:absolute;top:0;left:0;width:${W}px;height:${H}px;pointer-events:none;overflow:hidden;`
+      canvas.wrapperEl.insertBefore(live, canvas.upperCanvasEl)
+      liveLayerRef.current = live
+    } catch { liveLayerRef.current = null }
+
     // Inicializa el encuadre de esta página desde cover_json (o cubrir centrado).
     bgImgRef.current = null
     bgNatRef.current = { iw: 0, ih: 0 }
@@ -850,13 +971,18 @@ export default function EditPublication() {
       pushHistory(JSON.stringify(canvas.toJSON(['data'])))
     }
 
-    const onSel = (e: any) => { setSelected(e.selected?.[0] ?? canvas.getActiveObject() ?? null); setSelectVersion((v) => v + 1) }
+    const onSel = (e: any) => { setSelected(e.selected?.[0] ?? canvas.getActiveObject() ?? null); setSelectVersion((v) => v + 1); syncLivePreview() }
     canvas.on('selection:created', onSel)
     canvas.on('selection:updated', onSel)
     canvas.on('selection:cleared', (e: any) => {
+      if (liveLayerRef.current) liveLayerRef.current.innerHTML = ''
       if (rightPanelRef.current && e?.e?.target && rightPanelRef.current.contains(e.e.target as Node)) return
       setSelected(null)
     })
+    // Preview vivo: reposicionar el nodo DOM al mover/escalar/rotar el widget.
+    canvas.on('object:moving', positionLiveActive)
+    canvas.on('object:scaling', positionLiveActive)
+    canvas.on('object:rotating', positionLiveActive)
 
     // Arrastre para reencuadrar la hoja (solo en "Ajustar hoja").
     let panning = false, lastPX = 0, lastPY = 0
@@ -1985,7 +2111,7 @@ export default function EditPublication() {
               obj={selected}
               canvas={fabricRef.current}
               pages={pages}
-              onChange={() => { scheduleAutosave() }}
+              onChange={() => { scheduleAutosave(); scheduleLiveRefresh() }}
               onSyncToggle={handleSvgSyncToggle}
               onReframeImage={startImageReframe}
             />
