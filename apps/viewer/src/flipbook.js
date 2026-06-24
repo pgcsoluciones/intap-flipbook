@@ -873,13 +873,38 @@ async function init() {
       }
       case 'audio': {
         if (!cfg.url) return placeholderBox('Audio (sin URL)')
-        const box = centerBox()
         const color = cfg.playerColor || '#4F46E5'
+        const audioEl = document.createElement('audio')
+        audioEl.src = cfg.url
+        if (cfg.loop) audioEl.loop = true
+        // Estilo "botón": disparador personalizable (círculo/píldora/cuadrado) que
+        // reproduce/pausa al tocar. Estilo "bar": barra nativa (comportamiento previo).
+        if ((cfg.style || 'button') === 'button') {
+          const box = centerBox()
+          const shape = cfg.btnShape || 'circle'
+          const icon = cfg.icon || '▶'
+          const label = cfg.label || ''
+          const btn = document.createElement('button')
+          const radius = shape === 'circle' ? '50%' : shape === 'pill' ? '999px' : '14px'
+          const pad = shape === 'pill' ? '12px 22px' : '0'
+          const size = shape === 'pill' ? 'auto' : 'min(70%,84px)'
+          btn.style.cssText = `display:flex;align-items:center;justify-content:center;gap:8px;background:${color};color:#fff;border:none;border-radius:${radius};cursor:pointer;font-family:Inter,sans-serif;font-weight:700;font-size:20px;box-shadow:0 4px 14px ${color}55;width:${shape==='pill'?'auto':size};height:${shape==='pill'?'auto':size};aspect-ratio:${shape==='pill'?'auto':'1/1'};padding:${pad};`
+          const setIcon = () => { btn.innerHTML = `<span>${audioEl.paused ? icon : '⏸'}</span>${shape === 'pill' && label ? `<span style="font-size:14px">${label}</span>` : ''}` }
+          setIcon()
+          btn.addEventListener('click', () => {
+            if (audioEl.paused) { audioEl.play().catch(() => {}); trackInteraction(cfg.tracking, label || 'Audio', 'audio', cfg.url) }
+            else audioEl.pause()
+            setIcon()
+          })
+          audioEl.addEventListener('ended', setIcon)
+          box.appendChild(btn); box.appendChild(audioEl)
+          if (cfg.autoplay) { audioEl.autoplay = true; audioEl.play().then(setIcon).catch(() => {}) }
+          return box
+        }
+        const box = centerBox()
         box.style.cssText += `background:${color}18;border-radius:12px;`
-        const a = document.createElement('audio')
-        a.src = cfg.url; a.controls = true
+        const a = audioEl; a.controls = true
         if (cfg.autoplay) a.autoplay = true
-        if (cfg.loop) a.loop = true
         a.style.cssText = 'width:90%;accent-color:' + color
         box.appendChild(a)
         return box

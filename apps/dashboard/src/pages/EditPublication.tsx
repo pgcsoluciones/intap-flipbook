@@ -284,7 +284,7 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   social:   { network: 'instagram', value: '' },
   contact:  { title: 'Contáctanos', toEmail: '', button: 'Enviar', showPhone: true, showComment: true, nameRequired: true, emailRequired: true, phoneRequired: false },
   video:    { url: '', autoplay: false, controls: true, muted: false, poster: '', loop: false },
-  audio:    { url: '', playerColor: '#4F46E5', autoplay: false, loop: false },
+  audio:    { url: '', playerColor: '#4F46E5', autoplay: false, loop: false, style: 'button', btnShape: 'circle', icon: '▶', label: '' },
   qr:       { data: '', caption: 'Escanéame' },
   barcode:  { value: '123456789012', format: 'code128', showText: true },
   table:    { csv: 'Producto, Precio\nCafé, $2.50\nTé, $2.00' },
@@ -3262,10 +3262,41 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
           <Field label="Archivo de audio">
             <FileField value={cfg.url ?? ''} onChange={(url) => setCfg({ url })} accept={ACCEPT_AUDIO} preview={false} hint="MP3, OGG, WAV, M4A · máx 50 MB" />
           </Field>
+          <Field label="Estilo del reproductor">
+            <select style={s.propInput} value={cfg.style ?? 'button'} onChange={(e) => setCfg({ style: e.target.value })}>
+              <option value="button">Botón de reproducir (disparador)</option>
+              <option value="bar">Barra nativa</option>
+            </select>
+          </Field>
+          {(cfg.style ?? 'button') === 'button' && (
+            <>
+              <Field label="Forma del botón">
+                <select style={s.propInput} value={cfg.btnShape ?? 'circle'} onChange={(e) => setCfg({ btnShape: e.target.value })}>
+                  <option value="circle">Círculo</option>
+                  <option value="pill">Píldora (con texto)</option>
+                  <option value="square">Cuadrado redondeado</option>
+                </select>
+              </Field>
+              <Field label="Ícono del botón">
+                <select style={s.propInput} value={cfg.icon ?? '▶'} onChange={(e) => setCfg({ icon: e.target.value })}>
+                  <option value="▶">▶ Play</option>
+                  <option value="🔊">🔊 Altavoz</option>
+                  <option value="🎵">🎵 Nota</option>
+                  <option value="🎧">🎧 Audífonos</option>
+                  <option value="🎙">🎙 Micrófono</option>
+                </select>
+              </Field>
+              {(cfg.btnShape ?? 'circle') === 'pill' && (
+                <Field label="Texto del botón">
+                  <input style={s.propInput} placeholder="Escuchar" defaultValue={cfg.label ?? ''} onChange={(e) => setCfg({ label: e.target.value })} />
+                </Field>
+              )}
+            </>
+          )}
           <Field label="Color del reproductor">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input type="color" defaultValue={cfg.playerColor ?? '#4F46E5'} onChange={(e) => setCfg({ playerColor: e.target.value })} style={s.colorInput} />
-              <span style={{ fontSize: 11, color: '#6b7280' }}>Color del botón y barra de progreso</span>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>Color del botón / barra</span>
             </div>
           </Field>
           <Field label="Opciones">
