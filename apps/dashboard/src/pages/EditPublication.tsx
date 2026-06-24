@@ -1490,6 +1490,7 @@ export default function EditPublication() {
       o.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY })
       o.setPositionByOrigin(new fabric.Point(imgCenterRef.current.x, imgCenterRef.current.y), 'center', 'center')
       o.data = { ...(o.data ?? {}), imgCover: { ...coverRef.current } }
+      o.dirty = true   // invalida la caché interna → re-render en vivo del recorte
       o.setCoords(); c.requestRenderAll()
       return
     }
@@ -1497,6 +1498,8 @@ export default function EditPublication() {
     if (!img || !iw || !ih) return
     const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(iw, ih, coverRef.current)
     img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, left: 0, top: 0, originX: 'left', originY: 'top' })
+    img.dirty = true   // invalida la caché interna de Fabric → el zoom/recorte se ve al instante
+    img.setCoords && img.setCoords()
     c.requestRenderAll()
   }
 
