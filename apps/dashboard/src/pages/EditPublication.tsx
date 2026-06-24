@@ -298,6 +298,49 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   },
 }
 
+// Fase 1 — representación visual de cada widget en el lienzo (tarjeta con icono +
+// color de acento), en vez del rectángulo punteado genérico. `shape`:
+//   'card'   → tarjeta blanca con borde/tinte de acento (mapa, video, formulario…)
+//   'button' → botón relleno con el color de acento (WhatsApp, descargar, like…)
+//   'square' → cuadro (QR, código de barras)
+const WIDGET_VISUAL: Record<WidgetType, { glyph: string; color: string; w: number; h: number; shape: 'card' | 'button' | 'square' }> = {
+  map:          { glyph: '📍', color: '#0ea5e9', w: 260, h: 170, shape: 'card' },
+  whatsapp:     { glyph: '💬', color: '#25D366', w: 220, h: 60,  shape: 'button' },
+  contact:      { glyph: '📝', color: '#4f46e5', w: 240, h: 180, shape: 'card' },
+  video:        { glyph: '▶',  color: '#ef4444', w: 260, h: 150, shape: 'card' },
+  audio:        { glyph: '🔊', color: '#7c3aed', w: 230, h: 76,  shape: 'card' },
+  qr:           { glyph: 'QR', color: '#111827', w: 140, h: 140, shape: 'square' },
+  table:        { glyph: '▦',  color: '#0891b2', w: 260, h: 150, shape: 'card' },
+  like:         { glyph: '❤',  color: '#e11d48', w: 130, h: 60,  shape: 'button' },
+  download:     { glyph: '⬇',  color: '#16a34a', w: 210, h: 60,  shape: 'button' },
+  embed:        { glyph: '</>', color: '#334155', w: 240, h: 150, shape: 'card' },
+  quiz:         { glyph: '❓', color: '#f59e0b', w: 240, h: 170, shape: 'card' },
+  units_table:  { glyph: '🏢', color: '#0891b2', w: 280, h: 170, shape: 'card' },
+  popup_banner: { glyph: '🔔', color: '#4f46e5', w: 240, h: 120, shape: 'card' },
+}
+
+// Construye la tarjeta visual (fabric.Group) que representa un widget en el lienzo.
+// El tamaño del grupo define el tamaño del widget en el viewer.
+function makeWidgetCard(type: WidgetType, label: string): any {
+  const v = WIDGET_VISUAL[type] ?? { glyph: '▦', color: '#4f46e5', w: 230, h: 150, shape: 'card' as const }
+  const els: any[] = []
+  if (v.shape === 'button') {
+    els.push(new fabric.Rect({ width: v.w, height: v.h, rx: 12, ry: 12, fill: v.color, originX: 'center', originY: 'center' }))
+    els.push(new fabric.Text(`${v.glyph}  ${label}`, { fontSize: 15, fontWeight: 'bold', fill: '#ffffff', fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center' }))
+  } else if (v.shape === 'square') {
+    els.push(new fabric.Rect({ width: v.w, height: v.h, rx: 10, ry: 10, fill: '#ffffff', stroke: v.color, strokeWidth: 2, originX: 'center', originY: 'center' }))
+    els.push(new fabric.Text(v.glyph, { fontSize: 30, fontWeight: 'bold', fill: v.color, fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: -12 }))
+    els.push(new fabric.Text(label, { fontSize: 11, fill: '#6b7280', fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: v.h / 2 - 16 }))
+  } else {
+    els.push(new fabric.Rect({ width: v.w, height: v.h, rx: 12, ry: 12, fill: v.color, opacity: 0.08, originX: 'center', originY: 'center' }))
+    els.push(new fabric.Rect({ width: v.w, height: v.h, rx: 12, ry: 12, fill: 'rgba(0,0,0,0)', stroke: v.color, strokeWidth: 2, originX: 'center', originY: 'center' }))
+    els.push(new fabric.Text(v.glyph, { fontSize: 34, fill: v.color, fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: -v.h * 0.18 }))
+    els.push(new fabric.Text(label, { fontSize: 15, fontWeight: 'bold', fill: v.color, fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: v.h * 0.08 }))
+    els.push(new fabric.Text('Configura en el panel derecho →', { fontSize: 10, fill: '#6b7280', fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: v.h * 0.26 }))
+  }
+  return new fabric.Group(els, { originX: 'left', originY: 'top' })
+}
+
 // Plantillas prediseñadas para el pop-up emergente
 const POPUP_TEMPLATES: { key: string; label: string; defaults: Partial<typeof WIDGET_DEFAULTS['popup_banner']> }[] = [
   { key: 'offer',   label: '⚡ Oferta relámpago', defaults: { title: '¡Oferta relámpago!', text: 'Solo por hoy — 30% OFF en toda la tienda.', buttonText: 'Ver ofertas', bgColor: '#7c3aed', textColor: '#fff' } },
@@ -1045,27 +1088,13 @@ export default function EditPublication() {
   function addWidget(w: { type: WidgetType; label: string; premium: boolean }) {
     const c = fabricRef.current; if (!c) return
     if (w.premium) { alert(`"${w.label}" es una función premium. Estará disponible al activar el plan correspondiente.`); return }
-    const W = 230, H = 150
-    const rect = new fabric.Rect({
-      width: W, height: H, fill: 'rgba(79,70,229,0.06)', stroke: '#4F46E5',
-      strokeDashArray: [6, 4], strokeWidth: 1.5, rx: 10, ry: 10, originX: 'center', originY: 'center',
-    })
-    const title = new fabric.Text(w.label, {
-      fontSize: 15, fontFamily: 'Inter, sans-serif', fontWeight: 'bold', fill: '#4F46E5',
-      originX: 'center', originY: 'center', top: -14,
-    })
-    const hint = new fabric.Text('Configura en el panel derecho →', {
-      fontSize: 11, fontFamily: 'Inter, sans-serif', fill: '#6b7280',
-      originX: 'center', originY: 'center', top: 14,
-    })
     const defaultCfg = { ...(WIDGET_DEFAULTS[w.type] ?? {}) }
     if (w.type === 'units_table' && id) defaultCfg.publication_id = id
-    const group = new fabric.Group([rect, title, hint], {
-      left: 100, top: 120,
-      data: { kind: 'widget', widget: { type: w.type, config: defaultCfg } },
-    })
+    const group = makeWidgetCard(w.type, w.label)
+    group.set({ left: 100, top: 120, data: { kind: 'widget', widget: { type: w.type, config: defaultCfg } } })
     c.add(group); c.setActiveObject(group); c.requestRenderAll()
     setActiveTool('widgets')
+    scheduleAutosave()
   }
 
   // ── Imágenes / páginas ──
