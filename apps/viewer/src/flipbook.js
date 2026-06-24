@@ -826,7 +826,7 @@ async function init() {
     return box
   }
 
-  function buildWidget(widget, w, h, key) {
+  function buildWidget(widget, w, h, key, ctx) {
     const cfg = widget.config || {}
     switch (widget.type) {
       case 'map': {
@@ -1039,8 +1039,9 @@ async function init() {
         return wrap
       }
       case 'popup_banner': {
-        // El banner global se registra y se muestra después del delay
-        scheduleBanner(cfg, key)
+        // El banner se registra y se muestra después del delay. Si la posición es
+        // "custom" se ancla al cuadro del widget (ctx) en vez de a un lateral fijo.
+        scheduleBanner(cfg, key, ctx)
         return null
       }
       case 'units_table': {
@@ -1149,13 +1150,58 @@ async function init() {
 
   // ── Banner popup emergente (cintillo) ──────────────────────────────────────
   const shownBanners = new Set()
-  function scheduleBanner(cfg, key) {
+  function scheduleBanner(cfg, key, ctx) {
     if (shownBanners.has(key)) return
     shownBanners.add(key)
     const delay = cfg.trigger === 'immediate' ? 0 : (parseInt(cfg.delay || '3', 10) * 1000)
-    setTimeout(() => showBanner(cfg), delay)
+    setTimeout(() => showBanner(cfg, ctx), delay)
   }
-  function showBanner(cfg) {
+
+  // Pop-up anclado al cuadro del widget (posición "personalizado"): aparece justo
+  // donde el usuario colocó la zona, dentro del overlay de la página.
+  function showBannerCustom(cfg, ctx) {
+    const r = ctx.rect
+    const bg = cfg.bgColor || '#1a1827'
+    const tc = cfg.textColor || '#fff'
+    const btnBg = cfg.buttonColor || '#4F46E5'
+    const holder = document.createElement('div')
+    const width = Math.max(r.width, 240)
+    holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${width}px;z-index:9;pointer-events:auto;opacity:0;transform:scale(.92);transition:opacity .25s ease,transform .25s ease;`
+    const card = document.createElement('div')
+    card.style.cssText = `position:relative;background:${bg};color:${tc};border-radius:14px;box-shadow:0 14px 44px rgba(0,0,0,.32);overflow:hidden;font-family:Inter,sans-serif;`
+    if (cfg.image) {
+      const img = document.createElement('img')
+      img.src = cfg.image
+      img.style.cssText = `width:100%;max-height:140px;object-fit:cover;object-position:${cfg.imagePosX ?? 50}% ${cfg.imagePosY ?? 50}%;transform:scale(${cfg.imageZoom || 1});`
+      card.appendChild(img)
+    }
+    const body = document.createElement('div')
+    body.style.cssText = 'padding:14px 16px;'
+    if (cfg.title) { const t = document.createElement('div'); t.textContent = cfg.title; t.style.cssText = 'font-weight:800;font-size:16px;margin-bottom:6px;'; body.appendChild(t) }
+    if (cfg.text)  { const t = document.createElement('div'); t.textContent = cfg.text;  t.style.cssText = 'font-size:13px;opacity:.92;line-height:1.4;'; body.appendChild(t) }
+    if (cfg.buttonText) {
+      const btn = document.createElement('button')
+      btn.textContent = cfg.buttonText
+      btn.style.cssText = `margin-top:12px;background:${btnBg};color:#fff;border:none;border-radius:9px;padding:9px 16px;font-weight:700;font-size:13px;cursor:pointer;font-family:Inter,sans-serif;`
+      if (cfg.buttonUrl) btn.addEventListener('click', () => window.open(cfg.buttonUrl, '_blank'))
+      body.appendChild(btn)
+    }
+    card.appendChild(body)
+    const close = document.createElement('button')
+    close.textContent = '✕'
+    close.style.cssText = `position:absolute;top:6px;right:8px;background:rgba(0,0,0,.25);color:#fff;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;`
+    close.addEventListener('click', () => holder.remove())
+    card.appendChild(close)
+    holder.appendChild(card)
+    ;['mousedown', 'touchstart', 'pointerdown'].forEach((ev) => holder.addEventListener(ev, (e) => e.stopPropagation(), { passive: true }))
+    ctx.wrap.appendChild(holder)
+    requestAnimationFrame(() => { holder.style.opacity = '1'; holder.style.transform = 'scale(1)' })
+    const autoClose = parseInt(cfg.autoClose ?? cfg.autoDismiss ?? 0, 10)
+    if (autoClose > 0) setTimeout(() => holder.remove(), autoClose * 1000)
+  }
+
+  function showBanner(cfg, ctx) {
+    if (cfg.position === 'custom' && ctx && ctx.wrap && ctx.rect) { showBannerCustom(cfg, ctx); return }
     if (document.getElementById('flipbook-banner')) return
 
     const side = cfg.position === 'right' ? 'right' : 'left'
@@ -1293,7 +1339,7 @@ async function init() {
 
         // Widget: renderiza el componente real y oculta el placeholder del editor
         if (d.widget) {
-          const node = buildWidget(d.widget, r.width, r.height, `${slug}_${widgetIdx++}`)
+          const node = buildWidget(d.widget, r.width, r.height, `${slug}_${widgetIdx++}`, { rect: r, wrap })
           if (node) {
             const holder = document.createElement('div')
             holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;pointer-events:auto;`

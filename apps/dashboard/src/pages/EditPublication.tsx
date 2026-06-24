@@ -3547,11 +3547,15 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
               ))}
             </div>
           </Field>
-          <Field label="Lado donde aparece">
+          <Field label="Ubicación">
             <select style={s.propInput} defaultValue={cfg.position ?? 'left'} onChange={(e) => setCfg({ position: e.target.value })}>
               <option value="left">Lateral izquierdo</option>
               <option value="right">Lateral derecho</option>
+              <option value="custom">Personalizado (donde está el cuadro)</option>
             </select>
+            {cfg.position === 'custom' && (
+              <p style={cp.hint}>El pop-up aparecerá exactamente donde colocaste y dimensionaste este cuadro en la página, no en un lateral.</p>
+            )}
           </Field>
           <Field label="Cuándo aparecer">
             <select style={s.propInput} defaultValue={cfg.trigger ?? 'delay'} onChange={(e) => setCfg({ trigger: e.target.value })}>
