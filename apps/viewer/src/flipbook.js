@@ -40,29 +40,36 @@ function playFlipSound() {
 // Formato: { zoom>=1, fx 0..1, fy 0..1 }. fx/fy mueven qué parte se ve (pan) vía
 // object-position; zoom acerca con transform:scale anclado al punto focal. Esto
 // reproduce el recorte "cubrir" del editor (computeCover en EditPublication.tsx).
-function applyCoverStyle(img, coverJson) {
-  if (!coverJson) return
-  let fr
-  try { fr = typeof coverJson === 'string' ? JSON.parse(coverJson) : coverJson } catch (e) { return }
-  if (!fr) return
-  const zoom = Math.max(1, Number(fr.zoom) || 1)
-  const fx = Math.min(1, Math.max(0, fr.fx == null ? 0.5 : Number(fr.fx)))
-  const fy = Math.min(1, Math.max(0, fr.fy == null ? 0.5 : Number(fr.fy)))
-  const posX = (fx * 100).toFixed(2), posY = (fy * 100).toFixed(2)
-  img.style.objectPosition = `${posX}% ${posY}%`
-  if (zoom > 1.0001) {
-    img.style.transform = `scale(${zoom})`
-    img.style.transformOrigin = `${posX}% ${posY}%`
+function applyCoverStyle(el, coverJson, src, boxAspect) {
+  let fr = null
+  if (coverJson) { try { fr = typeof coverJson === 'string' ? JSON.parse(coverJson) : coverJson } catch (e) { fr = null } }
+  const zoom = Math.max(1, (fr && Number(fr.zoom)) || 1)
+  const fx = fr ? Math.min(1, Math.max(0, fr.fx == null ? 0.5 : Number(fr.fx))) : 0.5
+  const fy = fr ? Math.min(1, Math.max(0, fr.fy == null ? 0.5 : Number(fr.fy))) : 0.5
+  el.style.backgroundPosition = `${(fx * 100).toFixed(2)}% ${(fy * 100).toFixed(2)}%`
+  // zoom = 1: "cover" estándar (se adapta a cualquier tamaño de hoja).
+  if (zoom <= 1.0001) { el.style.backgroundSize = 'cover'; return }
+  // zoom > 1: necesitamos el aspecto real de la imagen para calcular el tamaño exacto
+  // del fondo (cover × zoom). Se mide al cargar y se aplica como porcentajes (estables
+  // porque el aspecto de la hoja es constante). Réplica exacta de computeCover.
+  const probe = new Image()
+  probe.onload = () => {
+    const imgA = probe.naturalWidth / probe.naturalHeight
+    let sx, sy
+    if (imgA > boxAspect) { sy = 100 * zoom; sx = (imgA / boxAspect) * 100 * zoom }
+    else { sx = 100 * zoom; sy = (boxAspect / imgA) * 100 * zoom }
+    el.style.backgroundSize = `${sx.toFixed(2)}% ${sy.toFixed(2)}%`
   }
+  probe.src = src
 }
 
 function waitForImages(container) {
   // Solo espera las primeras 2 imágenes de página (las visibles al abrir).
   // El resto tiene loading="lazy" y carga en diferido mientras el usuario hojea.
   // Esto reduce el tiempo de inicio de varios segundos a <500 ms en la mayoría de conexiones.
-  const imgs = Array.from(container.querySelectorAll('.page img')).slice(0, 2)
+  const sheets = Array.from(container.querySelectorAll('.page [data-bg]')).slice(0, 2)
   return Promise.all(
-    imgs.map((img) => new Promise((r) => { if (img.complete) r(); else { img.onload = r; img.onerror = r } }))
+    sheets.map((el) => new Promise((r) => { const im = new Image(); im.onload = r; im.onerror = r; im.src = el.getAttribute('data-bg') }))
   )
 }
 
@@ -167,23 +174,19 @@ async function init() {
     const div = document.createElement('div')
     div.className = 'page'
     div.style.cssText = `width:${pageWidth}px;height:${pageHeight}px;overflow:hidden;background:#fff;position:relative;`
-    // Contenedor interno con overflow:hidden PROPIO: StPageFlip reescribe el estilo de
-    // la .page al voltear y el recorte por zoom se desbordaba. Este wrapper recorta la
-    // imagen escalada de forma fiable, pase lo que pase con la .page.
-    const coverWrap = document.createElement('div')
-    coverWrap.style.cssText = 'position:absolute;inset:0;overflow:hidden;'
-    const img = document.createElement('img')
-    img.src = page.image_url
-    img.alt = page.title ?? `Página ${page.page_number}`
-    img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;'
+    // La hoja se pinta como BACKGROUND-IMAGE (no <img> con transform). Motivo: StPageFlip
+    // usa transformaciones 3D (preserve-3d) para voltear, y bajo eso el overflow:hidden NO
+    // recorta el transform:scale → la imagen con zoom se desbordaba. Un background siempre
+    // se recorta a su caja, sin excepción 3D. El recorte/zoom se replica con
+    // background-size + background-position (idéntico a computeCover del editor).
+    const sheet = document.createElement('div')
+    sheet.style.cssText = 'position:absolute;inset:0;overflow:hidden;background-repeat:no-repeat;background-position:center;background-size:cover;'
+    sheet.style.backgroundImage = `url("${page.image_url}")`
+    sheet.setAttribute('data-bg', page.image_url)
     // Encuadre manual de la hoja (zoom + posición) elegido en el editor (cover_json).
-    // El overlay de elementos es un canvas hermano y NO se ve afectado por esto,
-    // igual que en el editor (donde reencuadrar el fondo no mueve los elementos).
-    applyCoverStyle(img, page.cover_json)
-    // Las primeras 2 páginas cargan inmediatamente (portada visible); el resto en diferido
-    if (idx >= 2) img.loading = 'lazy'
-    coverWrap.appendChild(img)
-    div.appendChild(coverWrap)
+    // El overlay de elementos es un canvas hermano y NO se ve afectado por esto.
+    applyCoverStyle(sheet, page.cover_json, page.image_url, pageWidth / pageHeight)
+    div.appendChild(sheet)
     pageDivs.push(div)
     if (page.title || page.price) {
       const label = document.createElement('div')
