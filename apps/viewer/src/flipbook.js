@@ -906,6 +906,18 @@ async function init() {
         if (cfg.caption) { const c = document.createElement('div'); c.textContent = cfg.caption; c.style.cssText = 'font-size:11px;color:#374151;font-family:Inter,sans-serif;'; box.appendChild(c) }
         return box
       }
+      case 'barcode': {
+        const fmt = cfg.format || 'code128'
+        const val = String(cfg.value || '123456789012')
+        const box = centerBox()
+        box.style.cssText += 'background:#fff;border-radius:8px;'
+        const img = document.createElement('img')
+        img.src = `https://barcodeapi.org/api/${encodeURIComponent(fmt)}/${encodeURIComponent(val)}`
+        img.alt = 'Código de barras'
+        img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;'
+        box.appendChild(img)
+        return box
+      }
       case 'contact': return buildContactForm(cfg)
       case 'table': return buildTable(cfg.csv || '')
       case 'like': return buildLike(cfg, key)

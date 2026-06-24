@@ -245,7 +245,7 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
 ]
 
 // Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
-type WidgetType = 'map' | 'whatsapp' | 'contact' | 'video' | 'audio' | 'qr' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download' | 'units_table'
+type WidgetType = 'map' | 'whatsapp' | 'contact' | 'video' | 'audio' | 'qr' | 'barcode' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download' | 'units_table'
 const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean }[] = [
   { type: 'map',          label: 'Mapa',                  icon: 'map',      premium: false },
   { type: 'whatsapp',     label: 'WhatsApp',              icon: 'whatsapp', premium: false },
@@ -253,6 +253,7 @@ const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean
   { type: 'video',        label: 'Video',                 icon: 'video',    premium: false },
   { type: 'audio',        label: 'Audio',                 icon: 'audio',    premium: false },
   { type: 'qr',           label: 'Código QR',             icon: 'qr',       premium: false },
+  { type: 'barcode',      label: 'Código de barras',      icon: 'table',    premium: false },
   { type: 'table',        label: 'Tabla',                 icon: 'table',    premium: false },
   { type: 'like',         label: 'Me gusta',              icon: 'like',     premium: false },
   { type: 'download',     label: 'Descargar archivo',     icon: 'uploads',  premium: false },
@@ -270,6 +271,7 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   video:    { url: '', autoplay: false, controls: true, muted: false, poster: '', loop: false },
   audio:    { url: '', playerColor: '#4F46E5', autoplay: false, loop: false },
   qr:       { data: '', caption: 'Escanéame' },
+  barcode:  { value: '123456789012', format: 'code128', showText: true },
   table:    { csv: 'Producto, Precio\nCafé, $2.50\nTé, $2.00' },
   like:     { label: 'Me gusta' },
   download: { url: '', filename: '', title: 'Descarga aquí', button: 'Descargar', buttonColor: '#4F46E5' },
@@ -310,6 +312,7 @@ const WIDGET_VISUAL: Record<WidgetType, { glyph: string; color: string; w: numbe
   video:        { glyph: '▶',  color: '#ef4444', w: 260, h: 150, shape: 'card' },
   audio:        { glyph: '🔊', color: '#7c3aed', w: 230, h: 76,  shape: 'card' },
   qr:           { glyph: 'QR', color: '#111827', w: 140, h: 140, shape: 'square' },
+  barcode:      { glyph: '|||', color: '#111827', w: 220, h: 90, shape: 'square' },
   table:        { glyph: '▦',  color: '#0891b2', w: 260, h: 150, shape: 'card' },
   like:         { glyph: '❤',  color: '#e11d48', w: 130, h: 60,  shape: 'button' },
   download:     { glyph: '⬇',  color: '#16a34a', w: 210, h: 60,  shape: 'button' },
@@ -339,6 +342,26 @@ function makeWidgetCard(type: WidgetType, label: string): any {
     els.push(new fabric.Text('Configura en el panel derecho →', { fontSize: 10, fill: '#6b7280', fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: v.h * 0.26 }))
   }
   return new fabric.Group(els, { originX: 'left', originY: 'top' })
+}
+
+// URL de la imagen real de un código (QR o barras) según su config. Misma fuente
+// que usa el viewer, para que el lienzo y el publicado muestren lo mismo.
+function codeImageUrl(type: WidgetType, cfg: any): string {
+  if (type === 'barcode') {
+    const fmt = cfg.format || 'code128'
+    const val = String(cfg.value || '123456789012')
+    return `https://barcodeapi.org/api/${encodeURIComponent(fmt)}/${encodeURIComponent(val)}`
+  }
+  const data = cfg.data && String(cfg.data).trim() ? String(cfg.data).trim() : 'https://intaprd.com'
+  return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(data)}`
+}
+
+// Recarga la imagen del código (QR/barras) en el lienzo según su config actual,
+// conservando posición y tamaño. La llaman los paneles de QR y Código de barras.
+function refreshCodeOnCanvas(obj: any) {
+  if (!obj || !obj.setSrc) return
+  const w = obj.data?.widget; if (!w) return
+  obj.setSrc(codeImageUrl(w.type, w.config ?? {}), () => { obj.setCoords && obj.setCoords(); obj.canvas && obj.canvas.requestRenderAll() })
 }
 
 // Plantillas prediseñadas para el pop-up emergente
@@ -1090,6 +1113,18 @@ export default function EditPublication() {
     if (w.premium) { alert(`"${w.label}" es una función premium. Estará disponible al activar el plan correspondiente.`); return }
     const defaultCfg = { ...(WIDGET_DEFAULTS[w.type] ?? {}) }
     if (w.type === 'units_table' && id) defaultCfg.publication_id = id
+    // QR y código de barras: se insertan como la IMAGEN real del código (colocable
+    // y dimensionable en el lienzo), no como tarjeta.
+    if (w.type === 'qr' || w.type === 'barcode') {
+      const v = WIDGET_VISUAL[w.type]
+      fabric.Image.fromURL(codeImageUrl(w.type, defaultCfg), (img: any) => {
+        if (img.width) img.scaleToWidth(v.w)
+        img.set({ left: 100, top: 120, data: { kind: 'widget', widget: { type: w.type, config: defaultCfg } } })
+        c.add(img); c.setActiveObject(img); c.requestRenderAll(); scheduleAutosave()
+      })
+      setActiveTool('widgets')
+      return
+    }
     const group = makeWidgetCard(w.type, w.label)
     group.set({ left: 100, top: 120, data: { kind: 'widget', widget: { type: w.type, config: defaultCfg } } })
     c.add(group); c.setActiveObject(group); c.requestRenderAll()
@@ -3039,7 +3074,7 @@ function WhatsAppWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => vo
 }
 
 // QR con vista previa en vivo dentro del panel.
-function QrWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) {
+function QrWidgetProps({ obj, cfg, setCfg }: { obj: any; cfg: any; setCfg: (p: any) => void }) {
   const [data, setData] = React.useState<string>(cfg.data ?? '')
   const [caption, setCaption] = React.useState<string>(cfg.caption ?? '')
   const qrContent = data.trim() || 'https://intaprd.com'
@@ -3049,7 +3084,8 @@ function QrWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) 
     <>
       <PropGroup label="Contenido (URL o texto — vacío = link del flipbook)">
         <input style={s.propInput} placeholder="https://..." value={data}
-          onChange={(e) => { setData(e.target.value); setCfg({ data: e.target.value }) }} />
+          onChange={(e) => { setData(e.target.value); setCfg({ data: e.target.value }) }}
+          onBlur={() => refreshCodeOnCanvas(obj)} />
       </PropGroup>
       <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0' }}>
         <img src={qrSrc} alt="QR preview" width={130} height={130} style={{ border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', padding: 4 }} />
@@ -3058,6 +3094,37 @@ function QrWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) 
         <input style={s.propInput} placeholder="Escanéame" value={caption}
           onChange={(e) => { setCaption(e.target.value); setCfg({ caption: e.target.value }) }} />
       </PropGroup>
+      <p style={cp.hint}>La imagen del QR en el lienzo se actualiza al salir del campo.</p>
+    </>
+  )
+}
+
+// Panel de Código de barras: valor + formato; refresca la imagen del lienzo.
+function BarcodeWidgetProps({ obj, cfg, setCfg }: { obj: any; cfg: any; setCfg: (p: any) => void }) {
+  const [value, setValue] = React.useState<string>(cfg.value ?? '')
+  const fmt = cfg.format ?? 'code128'
+  const preview = `https://barcodeapi.org/api/${encodeURIComponent(fmt)}/${encodeURIComponent(value.trim() || '123456789012')}`
+  return (
+    <>
+      <PropGroup label="Valor / código">
+        <input style={s.propInput} placeholder="123456789012" value={value}
+          onChange={(e) => { setValue(e.target.value); setCfg({ value: e.target.value }) }}
+          onBlur={() => refreshCodeOnCanvas(obj)} />
+      </PropGroup>
+      <PropGroup label="Formato">
+        <select style={s.propInput} value={fmt} onChange={(e) => { setCfg({ format: e.target.value }); setTimeout(() => refreshCodeOnCanvas(obj), 0) }}>
+          <option value="code128">Code 128 (general)</option>
+          <option value="ean13">EAN-13 (productos)</option>
+          <option value="ean8">EAN-8</option>
+          <option value="upca">UPC-A</option>
+          <option value="code39">Code 39</option>
+          <option value="qr">QR</option>
+        </select>
+      </PropGroup>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0', background: '#fff', borderRadius: 8, border: '1px solid #e5e7eb' }}>
+        <img src={preview} alt="barcode preview" style={{ maxWidth: '100%', maxHeight: 80 }} />
+      </div>
+      <p style={cp.hint}>La imagen en el lienzo se actualiza al salir del campo o cambiar el formato.</p>
     </>
   )
 }
@@ -3082,7 +3149,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
   )
   const labels: Record<WidgetType, string> = {
     map: 'Mapa', whatsapp: 'WhatsApp', contact: 'Formulario', video: 'Video',
-    audio: 'Audio', qr: 'Código QR', table: 'Tabla', like: 'Me gusta',
+    audio: 'Audio', qr: 'Código QR', barcode: 'Código de barras', table: 'Tabla', like: 'Me gusta',
     embed: 'Incrustar / HTML', quiz: 'Cuestionario', popup_banner: 'Pop-up emergente',
     download: 'Descargar archivo', units_table: 'Tabla de Unidades',
   }
@@ -3169,7 +3236,9 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
         </>
       )}
 
-      {type === 'qr' && <QrWidgetProps cfg={cfg} setCfg={setCfg} />}
+      {type === 'qr' && <QrWidgetProps obj={obj} cfg={cfg} setCfg={setCfg} />}
+
+      {type === 'barcode' && <BarcodeWidgetProps obj={obj} cfg={cfg} setCfg={setCfg} />}
 
       {type === 'table' && (
         <Field label="Datos (fila por línea, columnas separadas por coma)">
