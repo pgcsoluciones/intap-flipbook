@@ -338,26 +338,177 @@ const WIDGET_VISUAL: Record<WidgetType, { glyph: string; color: string; w: numbe
   popup_banner: { glyph: '🔔', color: '#4f46e5', w: 240, h: 120, shape: 'card' },
 }
 
-// Construye la tarjeta visual (fabric.Group) que representa un widget en el lienzo.
-// El tamaño del grupo define el tamaño del widget en el viewer.
-function makeWidgetCard(type: WidgetType, label: string): any {
-  const v = WIDGET_VISUAL[type] ?? { glyph: '▦', color: '#4f46e5', w: 230, h: 150, shape: 'card' as const }
-  const els: any[] = []
-  if (v.shape === 'button') {
-    els.push(new fabric.Rect({ width: v.w, height: v.h, rx: 12, ry: 12, fill: v.color, originX: 'center', originY: 'center' }))
-    els.push(new fabric.Text(`${v.glyph}  ${label}`, { fontSize: 15, fontWeight: 'bold', fill: '#ffffff', fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center' }))
-  } else if (v.shape === 'square') {
-    els.push(new fabric.Rect({ width: v.w, height: v.h, rx: 10, ry: 10, fill: '#ffffff', stroke: v.color, strokeWidth: 2, originX: 'center', originY: 'center' }))
-    els.push(new fabric.Text(v.glyph, { fontSize: 30, fontWeight: 'bold', fill: v.color, fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: -12 }))
-    els.push(new fabric.Text(label, { fontSize: 11, fill: '#6b7280', fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: v.h / 2 - 16 }))
-  } else {
-    els.push(new fabric.Rect({ width: v.w, height: v.h, rx: 12, ry: 12, fill: v.color, opacity: 0.08, originX: 'center', originY: 'center' }))
-    els.push(new fabric.Rect({ width: v.w, height: v.h, rx: 12, ry: 12, fill: 'rgba(0,0,0,0)', stroke: v.color, strokeWidth: 2, originX: 'center', originY: 'center' }))
-    els.push(new fabric.Text(v.glyph, { fontSize: 34, fill: v.color, fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: -v.h * 0.18 }))
-    els.push(new fabric.Text(label, { fontSize: 15, fontWeight: 'bold', fill: v.color, fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: v.h * 0.08 }))
-    els.push(new fabric.Text('Configura en el panel derecho →', { fontSize: 10, fill: '#6b7280', fontFamily: 'Inter, sans-serif', originX: 'center', originY: 'center', top: v.h * 0.26 }))
+// Construye la previsualización visual (fabric.Group) que representa un widget en el
+// lienzo, tal como se verá publicado — no un cuadro placeholder. El tamaño del grupo
+// define el tamaño del widget en el viewer (que reemplaza esta vista por el componente
+// interactivo real).
+
+// Helpers de dibujo (coordenadas absolutas dentro del recuadro, origen arriba-izquierda)
+function wRect(x: number, y: number, w: number, h: number, o: any = {}): any {
+  return new fabric.Rect({ left: x, top: y, width: w, height: h, originX: 'left', originY: 'top', ...o })
+}
+function wText(str: string, x: number, y: number, o: any = {}): any {
+  return new fabric.Text(str, { left: x, top: y, originX: 'left', originY: 'top', fontFamily: 'Inter, sans-serif', ...o })
+}
+function wGroup(els: any[]): any { return new fabric.Group(els, { originX: 'left', originY: 'top' }) }
+
+// Logo de WhatsApp como vector (path de Simple Icons) — síncrono, sin red.
+const WHATSAPP_PATH = 'M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.149-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.71.306 1.263.489 1.694.625.712.227 1.36.195 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z'
+
+function buildFormPreview(): any {
+  const W = 260, H = 232, P = 14
+  const els: any[] = [
+    wRect(0, 0, W, H, { rx: 14, ry: 14, fill: '#ffffff', stroke: '#e5e7eb', strokeWidth: 1 }),
+    wText('Contáctanos', P, 16, { fontSize: 15, fontWeight: 'bold', fill: '#111827' }),
+  ]
+  ;[['Nombre *', 42], ['Email *', 76], ['Teléfono', 110]].forEach(([ph, y]: any) => {
+    els.push(wRect(P, y, W - 2 * P, 26, { rx: 7, ry: 7, fill: '#ffffff', stroke: '#d1d5db', strokeWidth: 1 }))
+    els.push(wText(ph, P + 10, y + 8, { fontSize: 11, fill: '#9ca3af' }))
+  })
+  els.push(wRect(P, 144, W - 2 * P, 42, { rx: 7, ry: 7, fill: '#ffffff', stroke: '#d1d5db', strokeWidth: 1 }))
+  els.push(wText('Comentario', P + 10, 150, { fontSize: 11, fill: '#9ca3af' }))
+  els.push(wRect(P, 194, W - 2 * P, 26, { rx: 8, ry: 8, fill: '#6d5cf5' }))
+  els.push(wText('Enviar', W / 2, 207, { fontSize: 12, fontWeight: 'bold', fill: '#ffffff', originX: 'center' }))
+  return wGroup(els)
+}
+
+function buildWhatsappPreview(): any {
+  const W = 210, H = 52
+  const logo = new fabric.Path(WHATSAPP_PATH, { left: 20, top: 13, originX: 'left', originY: 'top', fill: '#ffffff', scaleX: 1.08, scaleY: 1.08 })
+  return wGroup([
+    wRect(0, 0, W, H, { rx: 26, ry: 26, fill: '#25D366' }),
+    logo,
+    wText('WhatsApp', 58, H / 2, { fontSize: 16, fontWeight: 'bold', fill: '#ffffff', originY: 'center' }),
+  ])
+}
+
+function buildMapPreview(): any {
+  const W = 260, H = 180
+  return wGroup([
+    wRect(0, 0, W, H, { rx: 12, ry: 12, fill: '#e8edf0' }),
+    wRect(150, 28, 96, 74, { rx: 8, ry: 8, fill: '#d4ead4' }),
+    wRect(0, 72, W, 12, { fill: '#ffffff' }),
+    wRect(82, 0, 12, H, { fill: '#ffffff' }),
+    wRect(0, 118, W, 8, { fill: '#f3d9a0' }),
+    wText('📍', W / 2 - 12, H / 2 - 34, { fontSize: 34 }),
+    wRect(10, 10, 66, 24, { rx: 6, ry: 6, fill: '#ffffff', stroke: '#e5e7eb', strokeWidth: 1 }),
+    wText('Maps ↗', 18, 16, { fontSize: 12, fontWeight: 'bold', fill: '#1a73e8' }),
+    wRect(0, H - 30, W, 30, { fill: '#ffffff' }),
+    wText('Tu ubicación', 12, H - 22, { fontSize: 12, fontWeight: 'bold', fill: '#374151' }),
+  ])
+}
+
+function buildVideoPreview(): any {
+  const W = 260, H = 150
+  return wGroup([
+    wRect(0, 0, W, H, { rx: 12, ry: 12, fill: '#0b0b0f' }),
+    new fabric.Circle({ left: W / 2, top: H / 2, radius: 26, fill: 'rgba(255,255,255,0.16)', originX: 'center', originY: 'center' }),
+    new fabric.Triangle({ left: W / 2 + 2, top: H / 2, width: 22, height: 24, fill: '#ffffff', angle: 90, originX: 'center', originY: 'center' }),
+    wText('Video', 12, H - 22, { fontSize: 12, fontWeight: 'bold', fill: '#e5e7eb' }),
+  ])
+}
+
+function buildAudioPreview(): any {
+  const W = 240, H = 64
+  return wGroup([
+    wRect(0, 0, W, H, { rx: 14, ry: 14, fill: '#f3f0ff', stroke: '#e5e0fb', strokeWidth: 1 }),
+    new fabric.Circle({ left: 32, top: H / 2, radius: 18, fill: '#7c3aed', originX: 'center', originY: 'center' }),
+    new fabric.Triangle({ left: 34, top: H / 2, width: 14, height: 16, fill: '#ffffff', angle: 90, originX: 'center', originY: 'center' }),
+    wRect(60, H / 2 - 3, 162, 6, { rx: 3, ry: 3, fill: '#ddd6fe' }),
+    wRect(60, H / 2 - 3, 64, 6, { rx: 3, ry: 3, fill: '#7c3aed' }),
+    new fabric.Circle({ left: 124, top: H / 2, radius: 6, fill: '#7c3aed', originX: 'center', originY: 'center' }),
+  ])
+}
+
+function buildTablePreview(headerColor: string, title: string): any {
+  const W = 260, H = 150, rows = 4, rh = H / rows
+  const els: any[] = [
+    wRect(0, 0, W, H, { rx: 10, ry: 10, fill: '#ffffff', stroke: '#e5e7eb', strokeWidth: 1 }),
+    wRect(0, 0, W, rh, { rx: 10, ry: 10, fill: headerColor }),
+    wText(title, 12, rh / 2 - 7, { fontSize: 12, fontWeight: 'bold', fill: '#ffffff' }),
+    wText('Detalle', 160, rh / 2 - 7, { fontSize: 12, fontWeight: 'bold', fill: '#ffffff' }),
+  ]
+  for (let i = 1; i < rows; i++) {
+    els.push(wRect(0, i * rh, W, 1, { fill: '#eef2f5' }))
+    els.push(wText('————', 12, i * rh + rh / 2 - 8, { fontSize: 12, fill: '#9ca3af' }))
+    els.push(wText('——', 160, i * rh + rh / 2 - 8, { fontSize: 12, fill: '#9ca3af' }))
   }
-  return new fabric.Group(els, { originX: 'left', originY: 'top' })
+  return wGroup(els)
+}
+
+function buildLikePreview(): any {
+  const W = 140, H = 48
+  return wGroup([
+    wRect(0, 0, W, H, { rx: 24, ry: 24, fill: '#ffffff', stroke: '#e5e7eb', strokeWidth: 1 }),
+    wText('♥', 18, H / 2, { fontSize: 18, fill: '#ef4444', originY: 'center' }),
+    wText('Me gusta (0)', 42, H / 2, { fontSize: 13, fontWeight: 'bold', fill: '#374151', originY: 'center' }),
+  ])
+}
+
+function buildButtonPreview(glyph: string, label: string, color: string): any {
+  const W = 210, H = 52
+  return wGroup([
+    wRect(0, 0, W, H, { rx: 12, ry: 12, fill: color }),
+    wText(`${glyph}  ${label}`, W / 2, H / 2, { fontSize: 14, fontWeight: 'bold', fill: '#ffffff', originX: 'center', originY: 'center' }),
+  ])
+}
+
+function buildEmbedPreview(): any {
+  const W = 240, H = 150
+  return wGroup([
+    wRect(0, 0, W, H, { rx: 12, ry: 12, fill: '#0f172a' }),
+    wText('</>', W / 2, H / 2 - 12, { fontSize: 34, fontWeight: 'bold', fill: '#38bdf8', originX: 'center', originY: 'center' }),
+    wText('HTML incrustado', W / 2, H / 2 + 22, { fontSize: 12, fill: '#94a3b8', originX: 'center', originY: 'center' }),
+  ])
+}
+
+function buildQuizPreview(): any {
+  const W = 250, H = 170
+  return wGroup([
+    wRect(0, 0, W, H, { rx: 12, ry: 12, fill: '#ffffff', stroke: '#fde68a', strokeWidth: 2 }),
+    wText('❓ ¿Tu pregunta?', 16, 16, { fontSize: 14, fontWeight: 'bold', fill: '#92400e' }),
+    wRect(16, 52, W - 32, 34, { rx: 8, ry: 8, fill: '#fffbeb', stroke: '#fcd34d', strokeWidth: 1 }),
+    wText('Opción A', 28, 62, { fontSize: 12, fill: '#78350f' }),
+    wRect(16, 94, W - 32, 34, { rx: 8, ry: 8, fill: '#fffbeb', stroke: '#fcd34d', strokeWidth: 1 }),
+    wText('Opción B', 28, 104, { fontSize: 12, fill: '#78350f' }),
+    wRect(16, 136, 92, 24, { rx: 8, ry: 8, fill: '#f59e0b' }),
+    wText('Enviar', 62, 142, { fontSize: 12, fontWeight: 'bold', fill: '#ffffff', originX: 'center' }),
+  ])
+}
+
+function buildPopupPreview(): any {
+  const W = 240, H = 130
+  return wGroup([
+    wRect(0, 0, W, H, { rx: 14, ry: 14, fill: '#4f46e5' }),
+    wText('🔔  ¡Oferta!', 16, 16, { fontSize: 14, fontWeight: 'bold', fill: '#ffffff' }),
+    wText('Mensaje del pop-up emergente', 16, 46, { fontSize: 12, fill: '#e0e7ff' }),
+    wRect(16, 88, 112, 28, { rx: 8, ry: 8, fill: '#ffffff' }),
+    wText('Ver más', 72, 95, { fontSize: 12, fontWeight: 'bold', fill: '#4f46e5', originX: 'center' }),
+  ])
+}
+
+function makeWidgetCard(type: WidgetType, label: string): any {
+  switch (type) {
+    case 'contact':      return buildFormPreview()
+    case 'whatsapp':     return buildWhatsappPreview()
+    case 'map':          return buildMapPreview()
+    case 'video':        return buildVideoPreview()
+    case 'audio':        return buildAudioPreview()
+    case 'table':        return buildTablePreview('#0891b2', 'Tabla')
+    case 'units_table':  return buildTablePreview('#0891b2', '🏢 Unidades')
+    case 'like':         return buildLikePreview()
+    case 'download':     return buildButtonPreview('⬇', 'Descargar archivo', '#16a34a')
+    case 'embed':        return buildEmbedPreview()
+    case 'quiz':         return buildQuizPreview()
+    case 'popup_banner': return buildPopupPreview()
+    default: {
+      const v = WIDGET_VISUAL[type] ?? { glyph: '▦', color: '#4f46e5', w: 230, h: 150, shape: 'card' as const }
+      return wGroup([
+        wRect(0, 0, v.w, v.h, { rx: 12, ry: 12, fill: '#ffffff', stroke: v.color, strokeWidth: 2 }),
+        wText(`${v.glyph}  ${label}`, v.w / 2, v.h / 2, { fontSize: 15, fontWeight: 'bold', fill: v.color, originX: 'center', originY: 'center' }),
+      ])
+    }
+  }
 }
 
 // URL de la imagen real de un widget basado en imagen (QR, código de barras o logo
