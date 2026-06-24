@@ -245,10 +245,24 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
 ]
 
 // Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
-type WidgetType = 'map' | 'whatsapp' | 'contact' | 'video' | 'audio' | 'qr' | 'barcode' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download' | 'units_table'
+type WidgetType = 'map' | 'whatsapp' | 'social' | 'contact' | 'video' | 'audio' | 'qr' | 'barcode' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download' | 'units_table'
+
+// Redes sociales: slug de Simple Icons (logo) + color de marca + plantilla de URL.
+// El logo se carga como imagen desde el CDN de Simple Icons (cdn.simpleicons.org).
+const SOCIAL_NETWORKS: Record<string, { label: string; slug: string; color: string; tpl: string; ph: string }> = {
+  instagram: { label: 'Instagram', slug: 'instagram', color: 'E4405F', tpl: 'https://instagram.com/{v}', ph: 'usuario' },
+  facebook:  { label: 'Facebook',  slug: 'facebook',  color: '0866FF', tpl: 'https://facebook.com/{v}',  ph: 'usuario o página' },
+  tiktok:    { label: 'TikTok',    slug: 'tiktok',    color: '000000', tpl: 'https://tiktok.com/@{v}',   ph: 'usuario (sin @)' },
+  youtube:   { label: 'YouTube',   slug: 'youtube',   color: 'FF0000', tpl: 'https://youtube.com/@{v}',  ph: 'canal o URL' },
+  x:         { label: 'X / Twitter', slug: 'x',       color: '000000', tpl: 'https://x.com/{v}',         ph: 'usuario (sin @)' },
+  telegram:  { label: 'Telegram',  slug: 'telegram',  color: '26A5E4', tpl: 'https://t.me/{v}',          ph: 'usuario o canal' },
+  linkedin:  { label: 'LinkedIn',  slug: 'linkedin',  color: '0A66C2', tpl: 'https://linkedin.com/in/{v}', ph: 'perfil o URL' },
+  pinterest: { label: 'Pinterest', slug: 'pinterest', color: 'BD081C', tpl: 'https://pinterest.com/{v}', ph: 'usuario' },
+}
 const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean }[] = [
   { type: 'map',          label: 'Mapa',                  icon: 'map',      premium: false },
   { type: 'whatsapp',     label: 'WhatsApp',              icon: 'whatsapp', premium: false },
+  { type: 'social',       label: 'Redes sociales',        icon: 'link',     premium: false },
   { type: 'contact',      label: 'Formulario',            icon: 'contact',  premium: false },
   { type: 'video',        label: 'Video',                 icon: 'video',    premium: false },
   { type: 'audio',        label: 'Audio',                 icon: 'audio',    premium: false },
@@ -267,6 +281,7 @@ const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean
 const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   map:      { address: '', mapsUrl: '', zoom: 14 },
   whatsapp: { phone: '', message: 'Hola, vi tu catálogo y quiero más información', label: 'Escríbenos por WhatsApp' },
+  social:   { network: 'instagram', value: '' },
   contact:  { title: 'Contáctanos', toEmail: '', button: 'Enviar', showPhone: true, showComment: true, nameRequired: true, emailRequired: true, phoneRequired: false },
   video:    { url: '', autoplay: false, controls: true, muted: false, poster: '', loop: false },
   audio:    { url: '', playerColor: '#4F46E5', autoplay: false, loop: false },
@@ -308,6 +323,7 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
 const WIDGET_VISUAL: Record<WidgetType, { glyph: string; color: string; w: number; h: number; shape: 'card' | 'button' | 'square' }> = {
   map:          { glyph: '📍', color: '#0ea5e9', w: 260, h: 170, shape: 'card' },
   whatsapp:     { glyph: '💬', color: '#25D366', w: 220, h: 60,  shape: 'button' },
+  social:       { glyph: '🌐', color: '#4f46e5', w: 96,  h: 96,  shape: 'square' },
   contact:      { glyph: '📝', color: '#4f46e5', w: 240, h: 180, shape: 'card' },
   video:        { glyph: '▶',  color: '#ef4444', w: 260, h: 150, shape: 'card' },
   audio:        { glyph: '🔊', color: '#7c3aed', w: 230, h: 76,  shape: 'card' },
@@ -344,9 +360,13 @@ function makeWidgetCard(type: WidgetType, label: string): any {
   return new fabric.Group(els, { originX: 'left', originY: 'top' })
 }
 
-// URL de la imagen real de un código (QR o barras) según su config. Misma fuente
-// que usa el viewer, para que el lienzo y el publicado muestren lo mismo.
+// URL de la imagen real de un widget basado en imagen (QR, código de barras o logo
+// social). Misma fuente que usa el viewer, para que el lienzo y el publicado coincidan.
 function codeImageUrl(type: WidgetType, cfg: any): string {
+  if (type === 'social') {
+    const net = SOCIAL_NETWORKS[cfg.network] ?? SOCIAL_NETWORKS.instagram
+    return `https://cdn.simpleicons.org/${net.slug}/${net.color}`
+  }
   if (type === 'barcode') {
     const fmt = cfg.format || 'code128'
     const val = String(cfg.value || '123456789012')
@@ -1115,7 +1135,7 @@ export default function EditPublication() {
     if (w.type === 'units_table' && id) defaultCfg.publication_id = id
     // QR y código de barras: se insertan como la IMAGEN real del código (colocable
     // y dimensionable en el lienzo), no como tarjeta.
-    if (w.type === 'qr' || w.type === 'barcode') {
+    if (w.type === 'qr' || w.type === 'barcode' || w.type === 'social') {
       const v = WIDGET_VISUAL[w.type]
       fabric.Image.fromURL(codeImageUrl(w.type, defaultCfg), (img: any) => {
         if (img.width) img.scaleToWidth(v.w)
@@ -3129,6 +3149,27 @@ function BarcodeWidgetProps({ obj, cfg, setCfg }: { obj: any; cfg: any; setCfg: 
   )
 }
 
+// Panel de Redes sociales: red + usuario/URL. Refresca el logo en el lienzo.
+function SocialWidgetProps({ obj, cfg, setCfg }: { obj: any; cfg: any; setCfg: (p: any) => void }) {
+  const net = SOCIAL_NETWORKS[cfg.network] ?? SOCIAL_NETWORKS.instagram
+  const [value, setValue] = React.useState<string>(cfg.value ?? '')
+  return (
+    <>
+      <PropGroup label="Red social">
+        <select style={s.propInput} value={cfg.network ?? 'instagram'}
+          onChange={(e) => { setCfg({ network: e.target.value }); setTimeout(() => refreshCodeOnCanvas(obj), 0) }}>
+          {Object.entries(SOCIAL_NETWORKS).map(([k, n]) => <option key={k} value={k}>{n.label}</option>)}
+        </select>
+      </PropGroup>
+      <PropGroup label="Usuario o URL completa">
+        <input style={s.propInput} placeholder={net.ph} value={value}
+          onChange={(e) => { setValue(e.target.value); setCfg({ value: e.target.value }) }} />
+        <p style={cp.hint}>Pon tu usuario (ej. <b>{net.ph}</b>) o pega la URL completa. El logo se muestra en el lienzo y enlaza a tu perfil en el flipbook publicado.</p>
+      </PropGroup>
+    </>
+  )
+}
+
 // Propiedades de un widget: campos de configuración según su tipo
 function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) {
   const widget = (obj as any).data?.widget ?? { type: 'map', config: {} }
@@ -3148,7 +3189,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
     </label>
   )
   const labels: Record<WidgetType, string> = {
-    map: 'Mapa', whatsapp: 'WhatsApp', contact: 'Formulario', video: 'Video',
+    map: 'Mapa', whatsapp: 'WhatsApp', social: 'Redes sociales', contact: 'Formulario', video: 'Video',
     audio: 'Audio', qr: 'Código QR', barcode: 'Código de barras', table: 'Tabla', like: 'Me gusta',
     embed: 'Incrustar / HTML', quiz: 'Cuestionario', popup_banner: 'Pop-up emergente',
     download: 'Descargar archivo', units_table: 'Tabla de Unidades',
@@ -3239,6 +3280,8 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
       {type === 'qr' && <QrWidgetProps obj={obj} cfg={cfg} setCfg={setCfg} />}
 
       {type === 'barcode' && <BarcodeWidgetProps obj={obj} cfg={cfg} setCfg={setCfg} />}
+
+      {type === 'social' && <SocialWidgetProps obj={obj} cfg={cfg} setCfg={setCfg} />}
 
       {type === 'table' && (
         <Field label="Datos (fila por línea, columnas separadas por coma)">

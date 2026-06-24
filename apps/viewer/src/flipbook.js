@@ -918,6 +918,31 @@ async function init() {
         box.appendChild(img)
         return box
       }
+      case 'social': {
+        const NETS = {
+          instagram: { slug: 'instagram', color: 'E4405F', tpl: 'https://instagram.com/{v}' },
+          facebook:  { slug: 'facebook',  color: '0866FF', tpl: 'https://facebook.com/{v}' },
+          tiktok:    { slug: 'tiktok',    color: '000000', tpl: 'https://tiktok.com/@{v}' },
+          youtube:   { slug: 'youtube',   color: 'FF0000', tpl: 'https://youtube.com/@{v}' },
+          x:         { slug: 'x',         color: '000000', tpl: 'https://x.com/{v}' },
+          telegram:  { slug: 'telegram',  color: '26A5E4', tpl: 'https://t.me/{v}' },
+          linkedin:  { slug: 'linkedin',  color: '0A66C2', tpl: 'https://linkedin.com/in/{v}' },
+          pinterest: { slug: 'pinterest', color: 'BD081C', tpl: 'https://pinterest.com/{v}' },
+        }
+        const n = NETS[cfg.network] || NETS.instagram
+        const val = String(cfg.value || '').trim()
+        const href = !val ? 'javascript:void(0)' : (/^https?:\/\//.test(val) ? val : n.tpl.replace('{v}', encodeURIComponent(val.replace(/^@/, ''))))
+        const a = document.createElement('a')
+        a.href = href; a.target = '_blank'; a.rel = 'noopener'
+        a.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;'
+        const img = document.createElement('img')
+        img.src = `https://cdn.simpleicons.org/${n.slug}/${n.color}`
+        img.alt = cfg.network || 'red social'
+        img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;'
+        a.appendChild(img)
+        a.addEventListener('click', () => trackInteraction(cfg.tracking, cfg.network || 'social', 'social', href))
+        return a
+      }
       case 'contact': return buildContactForm(cfg)
       case 'table': return buildTable(cfg.csv || '')
       case 'like': return buildLike(cfg, key)
