@@ -830,6 +830,7 @@ export default function EditPublication() {
     const W = CANVAS_W
     const H = CANVAS_H
     const canvas = new fabric.Canvas(canvasRef.current, { width: W, height: H, backgroundColor: bgColor, preserveObjectStacking: true })
+    canvas.uniformScaling = true   // escalado uniforme por defecto: las esquinas no deforman
     fabricRef.current = canvas
 
     // Inicializa el encuadre de esta página desde cover_json (o cubrir centrado).
@@ -971,6 +972,17 @@ export default function EditPublication() {
     }
     canvas.on('object:added', onObjectAdded)
 
+    // Anti-deformación de texto: al soltar un Textbox escalado, "horneamos" la escala en
+    // tamaño de fuente + ancho y reseteamos scaleX/scaleY a 1 → el texto queda nítido y
+    // sin estirarse; el ancho reajusta (reenvuelve) el texto en vez de deformarlo.
+    canvas.on('object:modified', (e: any) => {
+      const o = e?.target
+      if (!o || o.type !== 'textbox') return
+      if (Math.abs((o.scaleX ?? 1) - 1) < 0.001 && Math.abs((o.scaleY ?? 1) - 1) < 0.001) return
+      const newFont = Math.max(6, Math.round((o.fontSize || 24) * (o.scaleY || 1)))
+      o.set({ fontSize: newFont, width: Math.max(20, (o.width || 100) * (o.scaleX || 1)), scaleX: 1, scaleY: 1 })
+      o.setCoords(); canvas.requestRenderAll()
+    })
     canvas.on('object:modified', onChange)
     canvas.on('object:added', onChange)
     canvas.on('object:removed', onChange)
@@ -2733,7 +2745,8 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
   const kind: string = (obj as any).data?.kind
     ?? (obj instanceof fabric.Textbox || obj instanceof fabric.Text ? 'text' : 'shape')
 
-  const set = (props: any) => { obj.set(props); canvas?.requestRenderAll(); onChange() }
+  const [, setTick] = React.useState(0)
+  const set = (props: any) => { obj.set(props); canvas?.requestRenderAll(); onChange(); setTick((t) => t + 1) }
   const setData = (patch: any) => { (obj as any).data = { ...((obj as any).data ?? {}), ...patch }; onChange() }
 
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'
@@ -2846,25 +2859,69 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
               </select>
             </PropGroup>
             <PropGroup label="Tamaño de fuente">
-              <input style={s.propInput} type="number" min={8} max={160} defaultValue={(obj as any).fontSize ?? 24} onChange={(e) => set({ fontSize: +e.target.value })} />
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <button style={s.stepBtn} onClick={() => { const v = Math.max(6, ((obj as any).fontSize ?? 24) - 2); set({ fontSize: v }); }}>−</button>
+                <input style={{ ...s.propInput, textAlign: 'center' }} type="number" min={6} max={300} value={(obj as any).fontSize ?? 24} onChange={(e) => set({ fontSize: +e.target.value })} />
+                <button style={s.stepBtn} onClick={() => { const v = Math.min(300, ((obj as any).fontSize ?? 24) + 2); set({ fontSize: v }); }}>+</button>
+              </div>
             </PropGroup>
             <PropGroup label="Estilo">
               <div style={{ display: 'flex', gap: 6 }}>
                 <StyleToggle active={(obj as any).fontWeight === 'bold'} onClick={() => set({ fontWeight: (obj as any).fontWeight === 'bold' ? 'normal' : 'bold' })} label="B" bold />
                 <StyleToggle active={(obj as any).fontStyle === 'italic'} onClick={() => set({ fontStyle: (obj as any).fontStyle === 'italic' ? 'normal' : 'italic' })} label="I" italic />
                 <StyleToggle active={(obj as any).underline} onClick={() => set({ underline: !(obj as any).underline })} label="U" underline />
+                <StyleToggle active={(obj as any).linethrough} onClick={() => set({ linethrough: !(obj as any).linethrough })} label="S" />
+              </div>
+            </PropGroup>
+            <PropGroup label="Mayúsculas / minúsculas">
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button style={s.alignBtn} title="MAYÚSCULAS" onClick={() => { set({ text: String((obj as any).text ?? '').toUpperCase() }); }}>AA</button>
+                <button style={s.alignBtn} title="minúsculas" onClick={() => { set({ text: String((obj as any).text ?? '').toLowerCase() }); }}>aa</button>
+                <button style={s.alignBtn} title="Capitalizar Cada Palabra" onClick={() => { set({ text: String((obj as any).text ?? '').toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase()) }); }}>Aa</button>
               </div>
             </PropGroup>
             <PropGroup label="Alineación">
               <div style={{ display: 'flex', gap: 6 }}>
-                {['left', 'center', 'right'].map((a) => (
+                {['left', 'center', 'right', 'justify'].map((a) => (
                   <button key={a} style={{ ...s.alignBtn, ...((obj as any).textAlign === a ? s.alignActive : {}) }} onClick={() => set({ textAlign: a })}>
-                    {a === 'left' ? '⟸' : a === 'center' ? '≡' : '⟹'}
+                    {a === 'left' ? '⟸' : a === 'center' ? '≡' : a === 'right' ? '⟹' : '☰'}
                   </button>
                 ))}
               </div>
             </PropGroup>
             <FillControl obj={obj} canvas={canvas} onChange={onChange} defaultColor="#111827" />
+            <PropGroup label="Resaltado (fondo del texto)">
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="color" value={(typeof (obj as any).textBackgroundColor === 'string' && (obj as any).textBackgroundColor) || '#ffff00'} onChange={(e) => set({ textBackgroundColor: e.target.value })} style={s.colorInput} />
+                <button style={{ ...s.alignBtn, flex: 1 }} onClick={() => set({ textBackgroundColor: '' })}>Sin resaltado</button>
+              </div>
+            </PropGroup>
+            <PropGroup label="Espaciado entre letras">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="range" min={-100} max={800} step={10} value={(obj as any).charSpacing ?? 0} onChange={(e) => set({ charSpacing: +e.target.value })} style={{ flex: 1 }} />
+                <span style={{ fontSize: 11, color: '#6b7280', width: 36, textAlign: 'right' }}>{(obj as any).charSpacing ?? 0}</span>
+              </div>
+            </PropGroup>
+            <PropGroup label="Interlineado (espaciado de líneas)">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="range" min={0.6} max={3} step={0.1} value={(obj as any).lineHeight ?? 1.16} onChange={(e) => set({ lineHeight: +e.target.value })} style={{ flex: 1 }} />
+                <span style={{ fontSize: 11, color: '#6b7280', width: 36, textAlign: 'right' }}>{((obj as any).lineHeight ?? 1.16).toFixed(1)}</span>
+              </div>
+            </PropGroup>
+            <PropGroup label="Lista con viñetas">
+              <button style={{ ...s.alignBtn, width: '100%' }} onClick={() => {
+                const t = String((obj as any).text ?? '')
+                const lines = t.split('\n')
+                const allBulleted = lines.every((l) => l.trim() === '' || l.startsWith('• '))
+                const next = lines.map((l) => l.trim() === '' ? l : (allBulleted ? l.replace(/^•\s/, '') : '• ' + l)).join('\n')
+                set({ text: next })
+              }}>• Alternar viñetas</button>
+            </PropGroup>
+            {(obj as any).type === 'textbox' && (
+              <PropGroup label="Cuadro de texto">
+                <p style={cp.hint}>Arrastra los tiradores laterales para cambiar el ancho: el texto se reajusta dentro del cuadro (no se deforma). Usa Enter en el contenido para separar párrafos.</p>
+              </PropGroup>
+            )}
           </>
         )}
 
@@ -4575,6 +4632,7 @@ const s: Record<string, React.CSSProperties> = {
   axisLabel: { fontSize: 11, color: '#9ca3af', textAlign: 'center' as const },
   alignBtn:  { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, padding: '7px 0', fontSize: 14, cursor: 'pointer', color: '#374151', flex: 1 },
   alignActive: { background: '#eef2ff', borderColor: '#4f46e5', color: '#4f46e5' },
+  stepBtn:   { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, width: 32, height: 34, fontSize: 18, lineHeight: 1, cursor: 'pointer', color: '#374151', flex: 'none' } as React.CSSProperties,
   actionDivider: { fontSize: 12, fontWeight: 700, color: '#4f46e5', borderTop: '1px solid #e5e7eb', paddingTop: 12, marginTop: 2 },
   deleteBtn: { background: '#fff', color: '#ef4444', border: '1px solid #fecaca', borderRadius: 8, padding: '9px 12px', cursor: 'pointer', width: '100%', fontSize: 13, fontWeight: 500, marginTop: 4 },
 }
