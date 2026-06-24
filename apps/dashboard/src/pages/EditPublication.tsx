@@ -3403,6 +3403,8 @@ function SocialWidgetProps({ obj, cfg, setCfg }: { obj: any; cfg: any; setCfg: (
 function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) {
   const images: string[] = cfg.images ?? []
   const fileRefs = React.useRef<(HTMLInputElement | null)[]>([])
+  const multiRef = React.useRef<HTMLInputElement | null>(null)
+  const [uploading, setUploading] = React.useState(false)
   const setImages = (next: string[]) => setCfg({ images: next })
   const addImage = () => { if (images.length < 30) setImages([...images, '']) }
   const updateImage = (i: number, url: string) => { const n = [...images]; n[i] = url; setImages(n) }
@@ -3413,6 +3415,18 @@ function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => voi
   }
   const uploadImage = async (i: number, file: File) => {
     try { const res = await api.upload(file); updateImage(i, res.data.url) } catch (e: any) { alert('Error al subir: ' + (e.message ?? e)) }
+  }
+  // Sube varias imágenes a la vez y las agrega al final, en orden.
+  const uploadMany = async (files: FileList) => {
+    const list = Array.from(files).slice(0, 30 - images.length)
+    if (!list.length) return
+    setUploading(true)
+    const urls: string[] = []
+    for (const f of list) {
+      try { const res = await api.upload(f); if (res?.data?.url) urls.push(res.data.url) } catch (e: any) { alert('Error al subir ' + f.name + ': ' + (e.message ?? e)) }
+    }
+    if (urls.length) setImages([...images, ...urls])
+    setUploading(false)
   }
   return (
     <>
@@ -3428,7 +3442,14 @@ function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => voi
             <button type="button" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }} onClick={() => removeImage(i)}>✕</button>
           </div>
         ))}
-        <button type="button" style={{ ...s.alignBtn, width: '100%', marginTop: 4, fontSize: 12 }} onClick={addImage}>+ Agregar imagen</button>
+        <input ref={multiRef} type="file" accept={ACCEPT_IMAGE} multiple style={{ display: 'none' }}
+          onChange={(e) => { if (e.target.files?.length) uploadMany(e.target.files); e.target.value = '' }} />
+        <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+          <button type="button" style={{ ...s.alignBtn, flex: 1, fontSize: 12, fontWeight: 700, background: '#eef2ff', color: '#4F46E5', borderColor: '#c7d2fe' }} disabled={uploading} onClick={() => multiRef.current?.click()}>
+            {uploading ? 'Subiendo…' : '⬆ Subir varias imágenes'}
+          </button>
+          <button type="button" style={{ ...s.alignBtn, fontSize: 12 }} onClick={addImage}>+ URL</button>
+        </div>
       </PropGroup>
       <PropGroup label="Transición">
         <select style={s.propInput} value={cfg.transition ?? 'fade'} onChange={(e) => setCfg({ transition: e.target.value })}>
