@@ -826,6 +826,40 @@ async function init() {
     return box
   }
 
+  // Botón de reproducción según el preset elegido. Compartido por audio y video.
+  // Devuelve { el, setPlaying(bool) }.
+  function makePlayButton(style, color, label) {
+    const P = {
+      circle:    { shape: 'circle', bg: color,        fg: '#fff',    icon: '▶' },
+      outline:   { shape: 'circle', bg: 'transparent', fg: color,    icon: '▶', border: `3px solid ${color}` },
+      noteDark:  { shape: 'circle', bg: '#1f2937',    fg: '#fff',    icon: '🎵' },
+      noteLight: { shape: 'circle', bg: '#ffffff',    fg: '#111827', icon: '🎵', border: '1px solid #e5e7eb' },
+      square:    { shape: 'square', bg: '#111827',    fg: '#fff',    icon: '🎵' },
+      gradient:  { shape: 'circle', bg: `linear-gradient(135deg, ${color}, #a855f7)`, fg: '#fff', icon: '🎵' },
+      minimal:   { shape: 'none',   bg: 'transparent', fg: color,    icon: '▶' },
+      pill:      { shape: 'pill',   bg: color,        fg: '#fff',    icon: '▶' },
+    }
+    const p = P[style] || P.circle
+    const el = document.createElement('button')
+    let playing = false
+    if (p.shape === 'pill') {
+      el.style.cssText = `display:inline-flex;align-items:center;gap:8px;background:${color};color:#fff;border:none;border-radius:999px;cursor:pointer;font-family:Inter,sans-serif;font-weight:700;font-size:16px;padding:12px 22px;box-shadow:0 6px 18px ${color}55;`
+      const paint = () => { el.innerHTML = `<span>${playing ? '⏸' : '▶'}</span>${label ? `<span style="font-size:14px">${label}</span>` : ''}` }
+      paint()
+      return { el, setPlaying(v) { playing = v; paint() } }
+    }
+    const radius = p.shape === 'square' ? '16px' : '50%'
+    const dim = p.shape === 'none' ? 'auto' : 'min(72%,86px)'
+    const shadow = (p.shape === 'none' || p.bg === 'transparent') ? 'none' : `0 6px 18px ${color}55`
+    el.style.cssText = `display:flex;align-items:center;justify-content:center;background:${p.bg};color:${p.fg};border:${p.border || 'none'};border-radius:${radius};cursor:pointer;font-family:Inter,sans-serif;font-weight:700;font-size:${p.shape === 'none' ? '44px' : '30px'};width:${dim};height:${dim};aspect-ratio:${p.shape === 'none' ? 'auto' : '1/1'};box-shadow:${shadow};transition:transform .12s;`
+    const paint = () => { el.textContent = playing ? '⏸' : p.icon }
+    paint()
+    el.addEventListener('mousedown', () => { el.style.transform = 'scale(.94)' })
+    el.addEventListener('mouseup', () => { el.style.transform = 'scale(1)' })
+    el.addEventListener('mouseleave', () => { el.style.transform = 'scale(1)' })
+    return { el, setPlaying(v) { playing = v; paint() } }
+  }
+
   function buildWidget(widget, w, h, key, ctx) {
     const cfg = widget.config || {}
     switch (widget.type) {
@@ -862,51 +896,66 @@ async function init() {
         if (yt) return widgetFrame(`https://www.youtube.com/embed/${yt}${qs}`)
         if (vm) return widgetFrame(`https://player.vimeo.com/video/${vm}${qs}`)
         if (cfg.url) {
+          const style = cfg.playerStyle || 'native'
+          // Modo nativo: controles del navegador (comportamiento previo)
+          if (style === 'native' || cfg.autoplay) {
+            const v = document.createElement('video')
+            v.src = cfg.url; v.controls = cfg.controls !== false; v.muted = !!cfg.muted
+            v.autoplay = !!cfg.autoplay; v.loop = !!cfg.loop
+            if (cfg.poster) v.poster = cfg.poster
+            v.style.cssText = 'width:100%;height:100%;border-radius:8px;background:#000;'
+            return v
+          }
+          // Botón disparador (preset): muestra el video con un botón de play encima;
+          // al tocarlo reproduce y muestra los controles.
+          const box = centerBox()
+          box.style.cssText += 'position:relative;background:#000;border-radius:8px;overflow:hidden;'
           const v = document.createElement('video')
-          v.src = cfg.url; v.controls = cfg.controls !== false; v.muted = !!cfg.muted
-          v.autoplay = !!cfg.autoplay; v.loop = !!cfg.loop
+          v.src = cfg.url; v.playsInline = true; v.muted = !!cfg.muted; v.loop = !!cfg.loop
           if (cfg.poster) v.poster = cfg.poster
-          v.style.cssText = 'width:100%;height:100%;border-radius:8px;background:#000;'
-          return v
+          v.style.cssText = 'width:100%;height:100%;object-fit:cover;background:#000;'
+          const overlay = document.createElement('div')
+          overlay.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;cursor:pointer;background:rgba(0,0,0,.15);'
+          const pb = makePlayButton(style, cfg.playerColor || '#ef4444', '')
+          overlay.appendChild(pb.el)
+          const play = () => { v.controls = true; v.play().catch(() => {}); overlay.style.display = 'none'; trackInteraction(cfg.tracking, 'Video', 'video', cfg.url) }
+          overlay.addEventListener('click', play)
+          box.appendChild(v); box.appendChild(overlay)
+          return box
         }
         return placeholderBox('Video (sin URL)')
       }
       case 'audio': {
         if (!cfg.url) return placeholderBox('Audio (sin URL)')
-        const color = cfg.playerColor || '#4F46E5'
+        const color = cfg.playerColor || '#7c3aed'
+        // playerStyle: preset elegido en la biblioteca. Compat con campos viejos
+        // (cfg.style 'bar' / cfg.btnShape 'pill').
+        let style = cfg.playerStyle
+        if (!style) style = cfg.style === 'bar' ? 'bar' : (cfg.btnShape === 'pill' ? 'pill' : 'circle')
         const audioEl = document.createElement('audio')
         audioEl.src = cfg.url
         if (cfg.loop) audioEl.loop = true
-        // Estilo "botón": disparador personalizable (círculo/píldora/cuadrado) que
-        // reproduce/pausa al tocar. Estilo "bar": barra nativa (comportamiento previo).
-        if ((cfg.style || 'button') === 'button') {
+        // Barra nativa
+        if (style === 'bar' || style === 'native') {
           const box = centerBox()
-          const shape = cfg.btnShape || 'circle'
-          const icon = cfg.icon || '▶'
-          const label = cfg.label || ''
-          const btn = document.createElement('button')
-          const radius = shape === 'circle' ? '50%' : shape === 'pill' ? '999px' : '14px'
-          const pad = shape === 'pill' ? '12px 22px' : '0'
-          const size = shape === 'pill' ? 'auto' : 'min(70%,84px)'
-          btn.style.cssText = `display:flex;align-items:center;justify-content:center;gap:8px;background:${color};color:#fff;border:none;border-radius:${radius};cursor:pointer;font-family:Inter,sans-serif;font-weight:700;font-size:20px;box-shadow:0 4px 14px ${color}55;width:${shape==='pill'?'auto':size};height:${shape==='pill'?'auto':size};aspect-ratio:${shape==='pill'?'auto':'1/1'};padding:${pad};`
-          const setIcon = () => { btn.innerHTML = `<span>${audioEl.paused ? icon : '⏸'}</span>${shape === 'pill' && label ? `<span style="font-size:14px">${label}</span>` : ''}` }
-          setIcon()
-          btn.addEventListener('click', () => {
-            if (audioEl.paused) { audioEl.play().catch(() => {}); trackInteraction(cfg.tracking, label || 'Audio', 'audio', cfg.url) }
-            else audioEl.pause()
-            setIcon()
-          })
-          audioEl.addEventListener('ended', setIcon)
-          box.appendChild(btn); box.appendChild(audioEl)
-          if (cfg.autoplay) { audioEl.autoplay = true; audioEl.play().then(setIcon).catch(() => {}) }
+          box.style.cssText += `background:${color}18;border-radius:12px;`
+          audioEl.controls = true
+          if (cfg.autoplay) audioEl.autoplay = true
+          audioEl.style.cssText = 'width:90%;accent-color:' + color
+          box.appendChild(audioEl)
           return box
         }
+        // Botón disparador (preset de la biblioteca)
         const box = centerBox()
-        box.style.cssText += `background:${color}18;border-radius:12px;`
-        const a = audioEl; a.controls = true
-        if (cfg.autoplay) a.autoplay = true
-        a.style.cssText = 'width:90%;accent-color:' + color
-        box.appendChild(a)
+        const pb = makePlayButton(style, color, cfg.label || '')
+        pb.el.addEventListener('click', () => {
+          if (audioEl.paused) { audioEl.play().catch(() => {}); trackInteraction(cfg.tracking, cfg.label || 'Audio', 'audio', cfg.url) }
+          else audioEl.pause()
+          pb.setPlaying(!audioEl.paused)
+        })
+        audioEl.addEventListener('ended', () => pb.setPlaying(false))
+        box.appendChild(pb.el); box.appendChild(audioEl)
+        if (cfg.autoplay) { audioEl.autoplay = true; audioEl.play().then(() => pb.setPlaying(true)).catch(() => {}) }
         return box
       }
       case 'whatsapp': {
@@ -961,7 +1010,7 @@ async function init() {
         a.href = href; a.target = '_blank'; a.rel = 'noopener'
         a.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;'
         const img = document.createElement('img')
-        img.src = `https://cdn.simpleicons.org/${n.slug}/${n.color}`
+        img.src = `https://api.iconify.design/simple-icons:${n.slug}.svg?color=%23${n.color}&width=240&height=240`
         img.alt = cfg.network || 'red social'
         img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;'
         a.appendChild(img)

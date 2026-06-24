@@ -516,7 +516,9 @@ function makeWidgetCard(type: WidgetType, label: string): any {
 function codeImageUrl(type: WidgetType, cfg: any): string {
   if (type === 'social') {
     const net = SOCIAL_NETWORKS[cfg.network] ?? SOCIAL_NETWORKS.instagram
-    return `https://cdn.simpleicons.org/${net.slug}/${net.color}`
+    // Iconify devuelve el SVG con width/height explícitos (240) → la imagen tiene
+    // dimensiones fiables y escala bien (cdn.simpleicons.org daba width=0 → gigante).
+    return `https://api.iconify.design/simple-icons:${net.slug}.svg?color=%23${net.color}&width=240&height=240`
   }
   if (type === 'barcode') {
     const fmt = cfg.format || 'code128'
@@ -1289,8 +1291,11 @@ export default function EditPublication() {
     if (w.type === 'qr' || w.type === 'barcode' || w.type === 'social') {
       const v = WIDGET_VISUAL[w.type]
       fabric.Image.fromURL(codeImageUrl(w.type, defaultCfg), (img: any) => {
-        if (img.width) img.scaleToWidth(v.w)
-        img.set({ left: 100, top: 120, data: { kind: 'widget', widget: { type: w.type, config: defaultCfg } } })
+        // Escalado robusto: algunos SVG no reportan dimensiones (img.width = 0) y
+        // scaleToWidth daría escala infinita. Usamos un fallback de 240px.
+        const nat = img.width && img.width > 1 ? img.width : 240
+        const scale = v.w / nat
+        img.set({ left: 100, top: 120, scaleX: scale, scaleY: scale, data: { kind: 'widget', widget: { type: w.type, config: defaultCfg } } })
         c.add(img); c.setActiveObject(img); c.requestRenderAll(); scheduleAutosave()
       })
       setActiveTool('widgets')
