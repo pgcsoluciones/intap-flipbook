@@ -881,26 +881,53 @@ async function init() {
     const cfg = widget.config || {}
     switch (widget.type) {
       case 'map': {
-        const query = cfg.mapsUrl || (cfg.address ? `https://www.google.com/maps?q=${encodeURIComponent(cfg.address)}&z=${cfg.zoom || 14}&output=embed` : null)
-        if (!query) return placeholderBox('Mapa (sin dirección)')
-        // si es URL completa de Maps, usarla directo; si es dirección, embed
-        const src = query.startsWith('http') ? query : `https://www.google.com/maps?q=${encodeURIComponent(query)}&z=${cfg.zoom || 14}&output=embed`
-        const frame = widgetFrame(src)
-        if (cfg.openInApp === false) return frame
-        // Botón "Abrir en Google Maps" (rastreable) sobre el mapa
-        const wrap = document.createElement('div')
-        wrap.style.cssText = 'position:relative;width:100%;height:100%;'
-        wrap.appendChild(frame)
-        const openUrl = cfg.address
-          ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cfg.address)}`
-          : (cfg.mapsUrl || src)
-        const btn = document.createElement('a')
-        btn.href = openUrl; btn.target = '_blank'; btn.rel = 'noopener'
-        btn.textContent = '📍 Abrir en Google Maps'
-        btn.style.cssText = 'position:absolute;left:8px;bottom:8px;background:rgba(255,255,255,.95);color:#1f2937;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;text-decoration:none;font-family:Inter,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);'
-        btn.addEventListener('click', () => trackInteraction(cfg.tracking, cfg.address || 'Mapa', 'map_open', openUrl))
-        wrap.appendChild(btn)
-        return wrap
+        // Mapa interactivo con OpenStreetMap (zoom/mover, gratis y SIN API key).
+        // Se geocodifica la dirección con Nominatim y se cachea en localStorage.
+        const addr = (cfg.address || '').trim()
+        if (!addr && !(cfg.lat && cfg.lon)) return placeholderBox('Mapa (sin dirección)')
+        const zoom = parseInt(cfg.zoom || 14, 10)
+        const box = document.createElement('div')
+        box.style.cssText = 'position:relative;width:100%;height:100%;border-radius:8px;overflow:hidden;background:#e8edf0;'
+        const renderOSM = (lat, lon) => {
+          const d = Math.max(0.004, 0.08 * Math.pow(2, 13 - zoom))   // medio-ancho del bbox según zoom
+          const bbox = `${lon - d},${lat - d * 0.6},${lon + d},${lat + d * 0.6}`
+          const f = document.createElement('iframe')
+          f.src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat},${lon}`
+          f.loading = 'lazy'
+          f.style.cssText = 'width:100%;height:100%;border:0;display:block;'
+          box.insertBefore(f, box.firstChild)
+        }
+        if (cfg.lat && cfg.lon) {
+          renderOSM(parseFloat(cfg.lat), parseFloat(cfg.lon))
+        } else {
+          const ck = 'geo_' + addr.toLowerCase()
+          let cached = null
+          try { cached = localStorage.getItem(ck) } catch (e) {}
+          if (cached) { const [la, lo] = cached.split(','); renderOSM(parseFloat(la), parseFloat(lo)) }
+          else {
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(addr)}`, { headers: { Accept: 'application/json' } })
+              .then((r) => r.json())
+              .then((arr) => {
+                if (arr && arr[0]) {
+                  const la = parseFloat(arr[0].lat), lo = parseFloat(arr[0].lon)
+                  try { localStorage.setItem(ck, la + ',' + lo) } catch (e) {}
+                  renderOSM(la, lo)
+                } else { box.appendChild(placeholderBox('No se encontró la dirección')) }
+              })
+              .catch(() => { box.appendChild(placeholderBox('Mapa no disponible')) })
+          }
+        }
+        // Botón "Abrir en mapa grande" (rastreable) — abre la app de mapas del usuario.
+        if (cfg.openInApp !== false) {
+          const openUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr || (cfg.lat + ',' + cfg.lon))}`
+          const btn = document.createElement('a')
+          btn.href = openUrl; btn.target = '_blank'; btn.rel = 'noopener'
+          btn.textContent = '📍 Abrir en mapa'
+          btn.style.cssText = 'position:absolute;left:8px;bottom:8px;z-index:2;background:rgba(255,255,255,.95);color:#1f2937;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;text-decoration:none;font-family:Inter,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);'
+          btn.addEventListener('click', (e) => { e.stopPropagation(); trackInteraction(cfg.tracking, addr || 'Mapa', 'map_open', openUrl) })
+          box.appendChild(btn)
+        }
+        return box
       }
       case 'video': {
         const yt = ytId(cfg.url), vm = vimeoId(cfg.url)
