@@ -224,7 +224,7 @@ const BUTTON_PRESETS: { label: string; variant: 'solid' | 'outline' | 'pill' }[]
 ]
 
 // Tipos de acción de un botón (qué ocurre al hacer clic en el viewer)
-type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'popup_audio' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos' | 'popup_message' | 'show_comment' | 'copy_text' | 'play_effect'
+type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'popup_audio' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos' | 'popup_message' | 'show_comment' | 'copy_text'
 const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'link',           label: 'Abrir Enlace',        icon: 'link' },
   { type: 'page',           label: 'Ir a Página',         icon: 'pages' },
@@ -237,7 +237,6 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'popup_audio',    label: 'Audio emergente',     icon: 'audio' },
   { type: 'popup_message',  label: 'Mensaje emergente',   icon: 'badge' },
   { type: 'show_comment',   label: 'Mostrar comentario',  icon: 'contact' },
-  { type: 'play_effect',    label: 'Reproducir efecto',   icon: 'star' },
   { type: 'copy_text',      label: 'Copiar texto',        icon: 'duplicate' },
   { type: 'download',       label: 'Descargar archivo',   icon: 'uploads' },
   { type: 'gallery_images', label: 'Galería de imágenes', icon: 'image' },
@@ -2524,6 +2523,9 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
         {/* Sombra — universal para cualquier elemento */}
         <ShadowControl obj={obj} canvas={canvas} onChange={onChange} />
 
+        {/* Animación continua (loop) — se reproduce en la vista previa y en el publicado */}
+        <AnimationControl obj={obj} setData={setData} />
+
         {/* Nombre amigable del elemento. Internamente se le asigna un elementId único
             e inmutable (no editable) para que otra acción pueda apuntarlo de forma segura
             aunque dos elementos compartan el mismo nombre visible. */}
@@ -3581,26 +3583,6 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
         </>
       )}
 
-      {action.type === 'play_effect' && (
-        <>
-          <PropGroup label="Efecto">
-            <select style={s.propInput} value={action.effect ?? 'pulse'} onChange={(e) => setAction({ effect: e.target.value })}>
-              <option value="pulse">Latido (pulse)</option>
-              <option value="flash">Destello (flash)</option>
-              <option value="shake">Sacudida (shake)</option>
-              <option value="bounce">Rebote (bounce)</option>
-            </select>
-          </PropGroup>
-          <PropGroup label="Elemento a animar">
-            <select style={s.propInput} value={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })}>
-              <option value="">Este mismo elemento</option>
-              {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-            <p style={cp.hint}>Para animar otro elemento, asígnale antes un “Nombre del elemento”.</p>
-          </PropGroup>
-        </>
-      )}
-
       {action.type === 'copy_text' && (
         <>
           <PropGroup label="Texto a copiar">
@@ -3786,6 +3768,37 @@ function Collapsible({ title, defaultOpen = true, children }: { title: string; d
       </button>
       {open && <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '11px' }}>{children}</div>}
     </div>
+  )
+}
+
+// Animación continua (loop) del elemento. Se guarda en data.anim = { type, speed }.
+// El viewer la reproduce en bucle; no depende de ningún clic.
+const ANIMATIONS: { key: string; label: string }[] = [
+  { key: '',       label: 'Sin animación' },
+  { key: 'pulse',  label: 'Latido (pulse)' },
+  { key: 'float',  label: 'Flotar (arriba/abajo)' },
+  { key: 'spin',   label: 'Girar (360°)' },
+  { key: 'shake',  label: 'Sacudida' },
+  { key: 'bounce', label: 'Rebote' },
+  { key: 'blink',  label: 'Parpadeo' },
+]
+function AnimationControl({ obj, setData }: { obj: any; setData: (p: any) => void }) {
+  const anim = (obj as any).data?.anim ?? {}
+  const type = anim.type ?? ''
+  const speed = anim.speed ?? 1
+  return (
+    <PropGroup label="Animación (continua)">
+      <select style={s.propInput} value={type} onChange={(e) => setData({ anim: { ...anim, type: e.target.value } })}>
+        {ANIMATIONS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+      </select>
+      {type && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+          <span style={{ fontSize: 11, color: '#6b7280' }}>Velocidad</span>
+          <input type="range" min={0.3} max={2.5} step={0.1} defaultValue={speed} onChange={(e) => setData({ anim: { ...anim, type, speed: +e.target.value } })} style={{ flex: 1 }} />
+        </div>
+      )}
+      {type && <p style={cp.hint}>La animación se reproduce en bucle en el flipbook publicado y en la “Vista previa” del proyecto (no en el editor, para no estorbar la edición).</p>}
+    </PropGroup>
   )
 }
 

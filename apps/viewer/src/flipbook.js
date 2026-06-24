@@ -311,23 +311,52 @@ async function init() {
     setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 250) }, dur)
   }
 
-  // Aplica un efecto de animación a un objeto Fabric del overlay (pulse/flash/shake/bounce).
-  function playEffect(obj, effect, fcanvas) {
-    if (!obj || !fcanvas) return
-    const baseScaleX = obj.scaleX || 1, baseScaleY = obj.scaleY || 1
-    const baseLeft = obj.left || 0, baseTop = obj.top || 0, baseOpacity = obj.opacity == null ? 1 : obj.opacity
-    const render = () => fcanvas.renderAll()
-    const anim = (prop, to, dur, after) => obj.animate(prop, to, { duration: dur, onChange: render, onComplete: after })
-    if (effect === 'flash') {
-      anim('opacity', 0.2, 180, () => anim('opacity', baseOpacity, 220))
-    } else if (effect === 'shake') {
-      anim('left', baseLeft - 8, 70, () => anim('left', baseLeft + 8, 70, () => anim('left', baseLeft, 70)))
-    } else if (effect === 'bounce') {
-      anim('top', baseTop - 14, 140, () => anim('top', baseTop, 220))
-    } else { // pulse
-      obj.animate('scaleX', baseScaleX * 1.12, { duration: 160, onChange: render, onComplete: () => obj.animate('scaleX', baseScaleX, { duration: 220, onChange: render }) })
-      obj.animate('scaleY', baseScaleY * 1.12, { duration: 160, onChange: render, onComplete: () => obj.animate('scaleY', baseScaleY, { duration: 220, onChange: render }) })
+  // ── Motor de animación continua (loop) de elementos del overlay ──
+  // Cada objeto con data.anim.type se anima en bucle (pulse/float/spin/shake/bounce/blink),
+  // sin depender de clics. Un único rAF actualiza todos y redibuja cada canvas una vez/frame.
+  const animEntries = []   // { obj, fcanvas, type, speed, base }
+  let animRunning = false
+
+  // Registra los objetos animados de un canvas. Convierte su origen a 'center' para que
+  // el giro/escala se hagan alrededor del centro sin desplazar el elemento.
+  function registerAnimations(fcanvas) {
+    fcanvas.getObjects().forEach((obj) => {
+      const an = (obj.data || {}).anim
+      if (!an || !an.type) return
+      const ctr = obj.getCenterPoint()
+      obj.set({ originX: 'center', originY: 'center', left: ctr.x, top: ctr.y })
+      obj.setCoords()
+      animEntries.push({
+        obj, fcanvas, type: an.type, speed: Math.max(0.3, Math.min(2.5, an.speed || 1)),
+        base: { sx: obj.scaleX || 1, sy: obj.scaleY || 1, angle: obj.angle || 0, left: obj.left || 0, top: obj.top || 0, opacity: obj.opacity == null ? 1 : obj.opacity },
+      })
+    })
+    if (animEntries.length && !animRunning) { animRunning = true; requestAnimationFrame(animTick) }
+  }
+
+  function animTick(now) {
+    const dirty = new Set()
+    for (const e of animEntries) {
+      const b = e.base
+      const w = (now / 1000) * e.speed            // tiempo escalado por velocidad
+      const TAU = Math.PI * 2
+      switch (e.type) {
+        case 'pulse': {
+          const k = 1 + 0.10 * Math.sin(w * TAU / 1.2)
+          e.obj.scaleX = b.sx * k; e.obj.scaleY = b.sy * k; break
+        }
+        case 'float':  e.obj.top  = b.top  + 8 * Math.sin(w * TAU / 2.0); break
+        case 'spin':   e.obj.angle = (b.angle + (w * 120)) % 360; break
+        case 'shake':  e.obj.left = b.left + 5 * Math.sin(w * TAU / 0.28); break
+        case 'bounce': e.obj.top  = b.top  - 14 * Math.abs(Math.sin(w * TAU / 1.0)); break
+        case 'blink':  e.obj.opacity = b.opacity * (0.35 + 0.65 * Math.abs(Math.sin(w * TAU / 1.2))); break
+        default: continue
+      }
+      e.obj.setCoords()
+      dirty.add(e.fcanvas)
     }
+    dirty.forEach((fc) => fc.requestRenderAll ? fc.requestRenderAll() : fc.renderAll())
+    requestAnimationFrame(animTick)
   }
 
   function runAction(a, fcanvas, selfObj) {
@@ -456,13 +485,6 @@ async function init() {
         break
       }
 
-      case 'play_effect': {
-        const tgt = a.target
-          ? (fcanvas && fcanvas.getObjects().find((o) => (o.data || {}).elementId === a.target))
-          : selfObj
-        playEffect(tgt, a.effect || 'pulse', fcanvas)
-        break
-      }
 
       case 'gallery_images': {
         const imgs = (a.images || []).filter(Boolean)
@@ -1238,6 +1260,9 @@ async function init() {
       fcanvas.getObjects().forEach((obj) => {
         if ((obj.data || {}).startHidden) obj.visible = false
       })
+
+      // Animaciones continuas en bucle (data.anim) de esta página
+      registerAnimations(fcanvas)
 
       fcanvas.renderAll()
       // Fade-in del overlay una vez que Fabric.js terminó de renderizar —
