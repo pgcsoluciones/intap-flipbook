@@ -262,17 +262,26 @@ async function init() {
     const svgLeft = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`
     const svgRight = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`
 
+    // Vincula navegación con soporte táctil: en móvil el swipe de StPageFlip se tragaba
+    // el tap, así que detenemos la propagación del touch y disparamos en touchend.
+    const bindNav = (btn, targetId) => {
+      const go = () => document.getElementById(targetId).click()
+      btn.addEventListener('click', go)
+      btn.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true })
+      btn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); go() })
+    }
+
     const btnLeft = document.createElement('button')
     btnLeft.innerHTML = svgLeft
     btnLeft.title = 'Página anterior'
     btnLeft.style.cssText = arrowStyle + (portrait ? ';left:6px' : ';left:-54px')
-    btnLeft.addEventListener('click', () => document.getElementById('btn-prev').click())
+    bindNav(btnLeft, 'btn-prev')
 
     const btnRight = document.createElement('button')
     btnRight.innerHTML = svgRight
     btnRight.title = 'Página siguiente'
     btnRight.style.cssText = arrowStyle + (portrait ? ';right:6px' : ';right:-54px')
-    btnRight.addEventListener('click', () => document.getElementById('btn-next').click())
+    bindNav(btnRight, 'btn-next')
 
     if (!portrait) {
       btnLeft.addEventListener('mouseenter', () => { btnLeft.style.background = 'rgba(0,0,0,.72)' })
@@ -1616,12 +1625,10 @@ async function init() {
   // Centrado dinámico: cubre/contraportada centradas, spreads interiores sin desplazamiento
   let currentShift = 0
   let currentScale = 1
-  let panX = 0, panY = 0          // desplazamiento al hacer zoom (pinch/doble toque)
-  let pinching = false
   function applyTransform() {
-    container.style.transform = `translate(${currentShift + panX}px, ${panY}px) scale(${currentScale})`
+    container.style.transform = `translateX(${currentShift}px) scale(${currentScale})`
     container.style.transformOrigin = 'center center'
-    container.style.transition = pinching ? 'none' : 'transform 0.3s ease'
+    container.style.transition = 'transform 0.3s ease'
   }
   // Convierte el índice del flipbook (con blanks) al número de página real (1..realCount)
   const pageNumOf = (idx) => Math.max(1, Math.min(idx - lead + 1, realCount))
@@ -1662,8 +1669,8 @@ async function init() {
     if (idx < firstIdx) { pageFlip.flip(firstIdx); return }
     if (idx > lastIdx) { pageFlip.flip(lastIdx); return }
     playFlipSound()
-    // Al cambiar de página, restablecer el zoom táctil para no quedar desplazado.
-    currentScale = 1; zoomIdx = 0; panX = 0; panY = 0
+    // Al cambiar de página, deshacer el zoom (vuelve a 1x).
+    currentScale = 1; zoomIdx = 0
     updatePageInfo()
     applyCenter()
     updateNavButtons()
@@ -1729,62 +1736,13 @@ async function init() {
   }
 
   // Zoom simple: cicla entre 3 escalas
-  const zoomLevels = [1, 1.25, 1.5]
+  const zoomLevels = [1, 1.5, 2, 2.5, 3]
   let zoomIdx = 0
   document.getElementById('btn-zoom').addEventListener('click', () => {
     zoomIdx = (zoomIdx + 1) % zoomLevels.length
     currentScale = zoomLevels[zoomIdx]
-    panX = 0; panY = 0
     applyTransform()
   })
-
-  // ── Zoom táctil: pellizcar (pinch) + doble toque + arrastrar con zoom ───────
-  // Permite ampliar la página con los dedos para leer mejor. Cuando hay zoom, el
-  // arrastre con 1 dedo desplaza (pan); sin zoom, 1 dedo voltea la página (StPageFlip).
-  (function setupTouchZoom() {
-    const fbWrap = document.getElementById('flipbook-container')
-    if (!fbWrap) return
-    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
-    let startDist = 0, startScale = 1
-    let panning = false, psx = 0, psy = 0
-    let lastTap = 0
-    const resetZoom = () => { currentScale = 1; zoomIdx = 0; panX = 0; panY = 0; pinching = false; applyTransform() }
-    window.__resetZoom = resetZoom
-
-    fbWrap.addEventListener('touchstart', (e) => {
-      if (e.touches.length === 2) {
-        pinching = true; startDist = dist(e.touches); startScale = currentScale
-        e.stopPropagation()
-      } else if (e.touches.length === 1) {
-        const now = Date.now()
-        if (now - lastTap < 300) {           // doble toque → alternar zoom
-          if (currentScale > 1) resetZoom()
-          else { currentScale = 2; applyTransform() }
-          e.preventDefault(); e.stopPropagation()
-        }
-        lastTap = now
-        if (currentScale > 1) {              // con zoom: arrastrar = pan
-          panning = true; psx = e.touches[0].clientX - panX; psy = e.touches[0].clientY - panY
-          e.stopPropagation()
-        }
-      }
-    }, { capture: true, passive: false })
-
-    fbWrap.addEventListener('touchmove', (e) => {
-      if (pinching && e.touches.length === 2) {
-        currentScale = Math.min(4, Math.max(1, startScale * (dist(e.touches) / (startDist || 1))))
-        applyTransform(); e.stopPropagation(); e.preventDefault()
-      } else if (panning && currentScale > 1 && e.touches.length === 1) {
-        panX = e.touches[0].clientX - psx; panY = e.touches[0].clientY - psy
-        applyTransform(); e.stopPropagation(); e.preventDefault()
-      }
-    }, { capture: true, passive: false })
-
-    fbWrap.addEventListener('touchend', (e) => {
-      if (pinching && e.touches.length < 2) { pinching = false; if (currentScale <= 1.05) resetZoom(); else applyTransform() }
-      if (e.touches.length === 0) panning = false
-    }, { capture: true })
-  })()
 
   document.getElementById('btn-first').addEventListener('click', () => pageFlip.flip(firstIdx))
   document.getElementById('btn-last').addEventListener('click', () => pageFlip.flip(lastIdx))
