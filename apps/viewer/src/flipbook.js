@@ -198,8 +198,12 @@ async function init() {
     container.appendChild(div)
   })
 
-  // blank final (solo escritorio): contraportada queda sola a la izquierda
-  if (!portrait) container.appendChild(makeBlank(pageWidth, pageHeight))
+  // blank final (solo escritorio): se agrega SOLO si con él el total de páginas queda
+  // PAR. StPageFlip arma spreads de 2; un total impar deja una última página suelta y
+  // rígida (el "blank falso" que se cerraba). Con lead(1)+realCount, el total es par
+  // cuando realCount es impar (no se agrega) y se vuelve par sumando 1 cuando realCount
+  // es par (se agrega → la contraportada queda sola a la izquierda).
+  if (!portrait && realCount % 2 === 0) container.appendChild(makeBlank(pageWidth, pageHeight))
 
   // Índices de página real dentro del flipbook (incluye blanks en escritorio)
   const firstIdx = lead                 // primera página real
