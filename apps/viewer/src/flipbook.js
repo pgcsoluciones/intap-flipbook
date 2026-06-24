@@ -167,6 +167,11 @@ async function init() {
     const div = document.createElement('div')
     div.className = 'page'
     div.style.cssText = `width:${pageWidth}px;height:${pageHeight}px;overflow:hidden;background:#fff;position:relative;`
+    // Contenedor interno con overflow:hidden PROPIO: StPageFlip reescribe el estilo de
+    // la .page al voltear y el recorte por zoom se desbordaba. Este wrapper recorta la
+    // imagen escalada de forma fiable, pase lo que pase con la .page.
+    const coverWrap = document.createElement('div')
+    coverWrap.style.cssText = 'position:absolute;inset:0;overflow:hidden;'
     const img = document.createElement('img')
     img.src = page.image_url
     img.alt = page.title ?? `Página ${page.page_number}`
@@ -177,7 +182,8 @@ async function init() {
     applyCoverStyle(img, page.cover_json)
     // Las primeras 2 páginas cargan inmediatamente (portada visible); el resto en diferido
     if (idx >= 2) img.loading = 'lazy'
-    div.appendChild(img)
+    coverWrap.appendChild(img)
+    div.appendChild(coverWrap)
     pageDivs.push(div)
     if (page.title || page.price) {
       const label = document.createElement('div')
