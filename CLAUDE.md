@@ -140,6 +140,11 @@ VITE_VIEWER_BASE_URL = https://intap-flipbook-viewer.pages.dev
 | `b804416` | **Reemplazar imagen — modo "cubrir"** — la imagen nueva llena el mismo recuadro sin deformar, recortando el sobrante con `cropX/cropY` centrado |
 | `ded9811` | **Editor — fondo de página modo "cubrir"** — al importar una hoja llena el recuadro A4 sin deformar (recorte centrado), igual que el `object-fit:cover` del viewer (editor = publicado) |
 | `d6d4d4c`→`173bb66` | **Reencuadre manual de hoja (zoom + arrastrar)** — Fase 1 API (columna `pages.cover_json`, `migration_cover.sql`, `PUT /api/pages` y `/view/:slug` manejan `cover_json`) · Fase 2 editor (herramienta "Ajustar hoja": slider zoom 1x–3x + arrastrar, `computeCover()`, guarda `{zoom,fx,fy}` por página) · Fase 3 viewer (`applyCoverStyle()` con `object-position` + `transform:scale`). El overlay no se ve afectado |
+| `f570eca` | **Vista previa de hoja activa** — botón en el editor, modal con el diseño actual a proporción A4 respetando el encuadre (StaticCanvas, solo dashboard) |
+| `6713e22` | **Reencuadre manual de imagen** — paridad con la hoja: botón "Reencuadrar imagen", reutiliza barra flotante (zoom + arrastrar). `computeCover` generalizado a cualquier recuadro; guarda en `data.imgCover`+`cropX/cropY` (canvas_json) → el viewer lo refleja solo |
+| `1a93cf1` | **Inspector Fase 1** — panel de propiedades con pestañas **Configuraciones / Acciones**, selector de **evento disparador** (clic/hover/mantener/al cargar en `data.trigger`), tipo de acción como **rejilla de tarjetas**, `ActionEditor` unificado para todos los tipos |
+| `6fdb232` | **Inspector Fase 3** — paneles ricos piloto **Mapa** (Ubicación/Vista/Interacción) y **WhatsApp** (Contenido/Estilo) + `Collapsible` y `TrackingControl` reutilizables. Viewer: `trackInteraction()` respeta `{enabled,event,category,label}` (botón "Abrir en Maps" + clic WhatsApp rastreables) |
+| `a36a058` | **Inspector Fase 2** — acciones nuevas: `popup_message` (toast info/éxito/aviso/promo), `show_comment` (autor+fecha), `play_effect` (pulse/flash/shake/bounce vía `fabric.animate`, objetivo sí mismo o nombrado), `copy_text` (portapapeles). `runAction` recibe el objeto clicado. Diferidas: zoom-a-zona (necesita Plano editable) y abrir-cuestionario |
 
 ---
 
@@ -361,6 +366,8 @@ npx wrangler d1 execute intap-flipbook-db --remote --command="CREATE TABLE IF NO
 | Editor/Viewer — fondo de página modo "cubrir" (llena el recuadro A4 sin deformar, editor = publicado) | ✅ Implementado |
 | **Reencuadre manual de hoja** — herramienta "Ajustar hoja" (zoom 1x–3x + arrastrar), guardado por página en `cover_json`, reflejado en el viewer | ✅ Implementado y en producción (migración + Worker `feb66c46` + viewer desplegados) |
 | **Vista previa de hoja activa** — botón en el editor, modal con el diseño actual a proporción A4 respetando el encuadre (solo dashboard) | ✅ Implementado y en producción |
+| **Reencuadre manual de imagen** — botón "Reencuadrar imagen" (zoom + arrastrar), guarda en `data.imgCover`/`cropX,cropY` (solo dashboard) | ✅ Implementado y en producción |
+| **Inspector / Panel de Propiedades (tarea #1 del MOCKUP-GAP)** — pestañas Configuraciones/Acciones, evento disparador, rejilla de acciones, paneles ricos piloto Mapa+WhatsApp, sección Tracking reutilizable, 13/15 acciones (zoom-a-zona y abrir-cuestionario diferidas) | ✅ Implementado (dashboard + viewer `bd0da0be` desplegados) |
 | Biblioteca SVG Fase 6 — RBAC granular (resources_manager, tenant_editor, tenant_viewer) | Pendiente |
 | Alinear claves de módulos frontend ↔ D1 | Pendiente |
 | AdminModules toggle — claves no coinciden | Pendiente |
