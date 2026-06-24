@@ -283,8 +283,8 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   whatsapp: { phone: '', message: 'Hola, vi tu catálogo y quiero más información', label: 'Escríbenos por WhatsApp' },
   social:   { network: 'instagram', value: '' },
   contact:  { title: 'Contáctanos', toEmail: '', button: 'Enviar', showPhone: true, showComment: true, nameRequired: true, emailRequired: true, phoneRequired: false },
-  video:    { url: '', autoplay: false, controls: true, muted: false, poster: '', loop: false },
-  audio:    { url: '', playerColor: '#4F46E5', autoplay: false, loop: false, style: 'button', btnShape: 'circle', icon: '▶', label: '' },
+  video:    { url: '', autoplay: false, controls: true, muted: false, poster: '', loop: false, playerStyle: 'native', playerColor: '#ef4444' },
+  audio:    { url: '', playerColor: '#7c3aed', autoplay: false, loop: false, playerStyle: 'circle', label: '' },
   qr:       { data: '', caption: 'Escanéame' },
   barcode:  { value: '123456789012', format: 'code128', showText: true },
   table:    { csv: 'Producto, Precio\nCafé, $2.50\nTé, $2.00' },
@@ -3305,6 +3305,53 @@ function BarcodeWidgetProps({ obj, cfg, setCfg }: { obj: any; cfg: any; setCfg: 
   )
 }
 
+// Presets de botón de reproducción (deben coincidir con makePlayButton del viewer).
+const PLAYER_LABELS: Record<string, string> = {
+  circle: 'Círculo', outline: 'Contorno', noteDark: 'Nota oscuro', noteLight: 'Nota claro',
+  square: 'Cuadrado', gradient: 'Degradado', minimal: 'Minimal', pill: 'Píldora',
+  bar: 'Barra nativa', native: 'Reproductor nativo',
+}
+const AUDIO_PRESETS = ['circle', 'outline', 'noteDark', 'noteLight', 'square', 'gradient', 'minimal', 'pill', 'bar']
+const VIDEO_PRESETS = ['native', 'circle', 'outline', 'square', 'gradient', 'minimal']
+
+// Miniatura visual de cada preset (réplica simplificada del render del viewer).
+function presetThumb(id: string, color: string): React.ReactNode {
+  const base: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700 }
+  const circle = (bg: string, fg: string, border?: string, icon = '▶'): React.ReactNode =>
+    <div style={{ ...base, width: 38, height: 38, borderRadius: '50%', background: bg, color: fg, border: border || 'none' }}>{icon}</div>
+  switch (id) {
+    case 'circle':    return circle(color, '#fff')
+    case 'outline':   return circle('transparent', color, `2px solid ${color}`)
+    case 'noteDark':  return circle('#1f2937', '#fff', undefined, '🎵')
+    case 'noteLight': return circle('#fff', '#111', '1px solid #e5e7eb', '🎵')
+    case 'square':    return <div style={{ ...base, width: 38, height: 38, borderRadius: 10, background: '#111827', color: '#fff' }}>🎵</div>
+    case 'gradient':  return circle(`linear-gradient(135deg, ${color}, #a855f7)`, '#fff', undefined, '🎵')
+    case 'minimal':   return <div style={{ ...base, color, fontSize: 26 }}>▶</div>
+    case 'pill':      return <div style={{ ...base, padding: '7px 14px', borderRadius: 999, background: color, color: '#fff', fontSize: 12 }}>▶ Texto</div>
+    case 'bar':       return <div style={{ ...base, width: 70, height: 22, borderRadius: 6, background: '#eef2ff', color, fontSize: 11, gap: 4 }}>▶ ▬▬▬</div>
+    case 'native':    return <div style={{ ...base, width: 70, height: 30, borderRadius: 6, background: '#000', color: '#fff', fontSize: 11, gap: 4 }}>▶ ▬▬ ⛶</div>
+    default:          return circle(color, '#fff')
+  }
+}
+
+// Galería de selección de preset de reproducción (audio/video).
+function PlayerGallery({ value, color, presets, onPick }: { value: string; color: string; presets: string[]; onPick: (id: string) => void }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+      {presets.map((id) => {
+        const sel = value === id
+        return (
+          <button key={id} type="button" onClick={() => onPick(id)} title={PLAYER_LABELS[id]}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '10px 4px', borderRadius: 10, cursor: 'pointer', background: sel ? `${color}14` : '#fff', border: sel ? `2px solid ${color}` : '1px solid #e5e7eb' }}>
+            <div style={{ height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{presetThumb(id, color)}</div>
+            <span style={{ fontSize: 10, color: '#6b7280', textAlign: 'center', lineHeight: 1.1 }}>{PLAYER_LABELS[id]}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 // Panel de Redes sociales: red + usuario/URL. Refresca el logo en el lienzo.
 function SocialWidgetProps({ obj, cfg, setCfg }: { obj: any; cfg: any; setCfg: (p: any) => void }) {
   const net = SOCIAL_NETWORKS[cfg.network] ?? SOCIAL_NETWORKS.instagram
@@ -3402,6 +3449,18 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
           <Field label="Portada / thumbnail (opcional, para MP4)">
             <FileField value={cfg.poster ?? ''} onChange={(url) => setCfg({ poster: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP" />
           </Field>
+          <Field label="Botón de reproducción — elige un estilo">
+            <PlayerGallery value={cfg.playerStyle ?? 'native'} color={cfg.playerColor ?? '#ef4444'} presets={VIDEO_PRESETS} onPick={(id) => setCfg({ playerStyle: id })} />
+            <p style={cp.hint}>Los botones de play aplican a videos subidos (MP4/WebM). YouTube/Vimeo usan su propio reproductor.</p>
+          </Field>
+          {(cfg.playerStyle ?? 'native') !== 'native' && (
+            <Field label="Color del botón de play">
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="color" defaultValue={cfg.playerColor ?? '#ef4444'} onChange={(e) => setCfg({ playerColor: e.target.value })} style={s.colorInput} />
+                <span style={{ fontSize: 11, color: '#6b7280' }}>Color del botón sobre el video</span>
+              </div>
+            </Field>
+          )}
           <Field label="Opciones de reproducción">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <Check k="autoplay" label="Autoplay (inicia automáticamente)" def={false} />
@@ -3418,40 +3477,17 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
           <Field label="Archivo de audio">
             <FileField value={cfg.url ?? ''} onChange={(url) => setCfg({ url })} accept={ACCEPT_AUDIO} preview={false} hint="MP3, OGG, WAV, M4A · máx 50 MB" />
           </Field>
-          <Field label="Estilo del reproductor">
-            <select style={s.propInput} value={cfg.style ?? 'button'} onChange={(e) => setCfg({ style: e.target.value })}>
-              <option value="button">Botón de reproducir (disparador)</option>
-              <option value="bar">Barra nativa</option>
-            </select>
+          <Field label="Botón de reproducción — elige un estilo">
+            <PlayerGallery value={cfg.playerStyle ?? 'circle'} color={cfg.playerColor ?? '#7c3aed'} presets={AUDIO_PRESETS} onPick={(id) => setCfg({ playerStyle: id })} />
           </Field>
-          {(cfg.style ?? 'button') === 'button' && (
-            <>
-              <Field label="Forma del botón">
-                <select style={s.propInput} value={cfg.btnShape ?? 'circle'} onChange={(e) => setCfg({ btnShape: e.target.value })}>
-                  <option value="circle">Círculo</option>
-                  <option value="pill">Píldora (con texto)</option>
-                  <option value="square">Cuadrado redondeado</option>
-                </select>
-              </Field>
-              <Field label="Ícono del botón">
-                <select style={s.propInput} value={cfg.icon ?? '▶'} onChange={(e) => setCfg({ icon: e.target.value })}>
-                  <option value="▶">▶ Play</option>
-                  <option value="🔊">🔊 Altavoz</option>
-                  <option value="🎵">🎵 Nota</option>
-                  <option value="🎧">🎧 Audífonos</option>
-                  <option value="🎙">🎙 Micrófono</option>
-                </select>
-              </Field>
-              {(cfg.btnShape ?? 'circle') === 'pill' && (
-                <Field label="Texto del botón">
-                  <input style={s.propInput} placeholder="Escuchar" defaultValue={cfg.label ?? ''} onChange={(e) => setCfg({ label: e.target.value })} />
-                </Field>
-              )}
-            </>
+          {(cfg.playerStyle ?? 'circle') === 'pill' && (
+            <Field label="Texto del botón">
+              <input style={s.propInput} placeholder="Escuchar" defaultValue={cfg.label ?? ''} onChange={(e) => setCfg({ label: e.target.value })} />
+            </Field>
           )}
           <Field label="Color del reproductor">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input type="color" defaultValue={cfg.playerColor ?? '#4F46E5'} onChange={(e) => setCfg({ playerColor: e.target.value })} style={s.colorInput} />
+              <input type="color" defaultValue={cfg.playerColor ?? '#7c3aed'} onChange={(e) => setCfg({ playerColor: e.target.value })} style={s.colorInput} />
               <span style={{ fontSize: 11, color: '#6b7280' }}>Color del botón / barra</span>
             </div>
           </Field>
