@@ -792,8 +792,129 @@ async function init() {
     d.textContent = text
     return d
   }
+  function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) }
   function ytId(u) { const m = (u || '').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/); return m ? m[1] : null }
   function vimeoId(u) { const m = (u || '').match(/vimeo\.com\/(\d+)/); return m ? m[1] : null }
+
+  // Ficha de producto — tarjeta rica con galería (hasta 5 fotos), título, categoría,
+  // precio, descripción, especificaciones (referencia + disponibilidad) y botones CTA
+  // que responden a acciones (enlace, WhatsApp, llamar, email).
+  function buildProductCard(cfg) {
+    const imgs = (cfg.images || []).filter(Boolean)
+    const accent = cfg.accent || '#4d7c0f'
+    const primaryColor = cfg.primaryColor || '#9aab3c'
+
+    const card = document.createElement('div')
+    card.style.cssText = 'display:flex;flex-direction:column;width:100%;height:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.18);font-family:Inter,sans-serif;color:#1f2937;box-sizing:border-box;'
+
+    // ── Sección de imagen / galería ──
+    const media = document.createElement('div')
+    media.style.cssText = 'position:relative;width:100%;flex:0 0 44%;min-height:110px;background:#f1f5f9;overflow:hidden;'
+    if (!imgs.length) {
+      media.style.cssText += 'display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:13px;'
+      media.textContent = 'Sin imagen'
+    } else {
+      const slides = imgs.map((src, i) => {
+        const im = document.createElement('div')
+        im.style.cssText = `position:absolute;inset:0;background-image:url("${src}");background-size:cover;background-position:center;background-repeat:no-repeat;opacity:${i === 0 ? 1 : 0};transition:opacity .5s ease;`
+        media.appendChild(im); return im
+      })
+      let cur = 0
+      const dotEls = []
+      const paintDots = () => dotEls.forEach((d, i) => { d.style.background = i === cur ? '#fff' : 'rgba(255,255,255,.55)' })
+      const show = (n) => { cur = (n + imgs.length) % imgs.length; slides.forEach((s, i) => { s.style.opacity = i === cur ? '1' : '0' }); paintDots() }
+      if (imgs.length > 1) {
+        const mk = (txt, side) => {
+          const b = document.createElement('button'); b.textContent = txt
+          b.style.cssText = `position:absolute;${side}:6px;top:50%;transform:translateY(-50%);z-index:3;width:28px;height:28px;border-radius:50%;border:none;background:rgba(0,0,0,.4);color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;`
+          return b
+        }
+        const bl = mk('‹', 'left'), br = mk('›', 'right')
+        bl.addEventListener('click', (e) => { e.stopPropagation(); show(cur - 1) })
+        br.addEventListener('click', (e) => { e.stopPropagation(); show(cur + 1) })
+        media.appendChild(bl); media.appendChild(br)
+        const dwrap = document.createElement('div')
+        dwrap.style.cssText = 'position:absolute;bottom:8px;left:0;right:0;z-index:3;display:flex;gap:5px;justify-content:center;'
+        imgs.forEach((_, i) => {
+          const d = document.createElement('button')
+          d.style.cssText = 'width:7px;height:7px;border-radius:50%;border:none;cursor:pointer;padding:0;'
+          d.addEventListener('click', (e) => { e.stopPropagation(); show(i) })
+          dwrap.appendChild(d); dotEls.push(d)
+        })
+        media.appendChild(dwrap); paintDots()
+        if (cfg.galleryAutoplay) setInterval(() => show(cur + 1), Math.max(1, cfg.galleryInterval || 4) * 1000)
+      }
+    }
+    card.appendChild(media)
+
+    // ── Cuerpo ──
+    const body = document.createElement('div')
+    body.style.cssText = 'flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:10px;box-sizing:border-box;'
+
+    if (cfg.title) {
+      const t = document.createElement('div'); t.textContent = cfg.title
+      t.style.cssText = 'font-size:18px;font-weight:800;line-height:1.25;color:#1f2937;'
+      body.appendChild(t)
+    }
+    if (cfg.showCategory !== false && cfg.category) {
+      const c = document.createElement('span'); c.textContent = cfg.category
+      c.style.cssText = `align-self:flex-start;background:${accent}1a;color:${accent};font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:5px 11px;border-radius:20px;`
+      body.appendChild(c)
+    }
+    if (cfg.showPrice !== false && cfg.price) {
+      const p = document.createElement('div'); p.textContent = cfg.price
+      p.style.cssText = `font-size:22px;font-weight:800;color:${accent};`
+      body.appendChild(p)
+    }
+    if (cfg.description) {
+      const d = document.createElement('div'); d.textContent = cfg.description
+      d.style.cssText = 'font-size:13px;line-height:1.55;color:#6b7280;'
+      body.appendChild(d)
+    }
+
+    if (cfg.showSpecs !== false && (cfg.refValue || cfg.availValue)) {
+      const specs = document.createElement('div')
+      specs.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:2px;'
+      const chip = (label, val) => {
+        const c = document.createElement('div')
+        c.style.cssText = 'flex:1;min-width:120px;background:#f3f4f6;border-radius:10px;padding:9px 12px;font-size:12px;display:flex;align-items:center;gap:6px;'
+        c.innerHTML = `<span style="color:${accent};font-weight:800;">✓</span><span style="font-weight:700;color:#374151;">${escapeHtml(label)}</span><span style="color:#6b7280;">${escapeHtml(val)}</span>`
+        return c
+      }
+      if (cfg.refValue) specs.appendChild(chip(cfg.refLabel || 'Ref.:', cfg.refValue))
+      if (cfg.availValue) specs.appendChild(chip(cfg.availLabel || 'Disponibilidad:', cfg.availValue))
+      body.appendChild(specs)
+    }
+
+    // ── Botones CTA (responden a acciones) ──
+    const ctaHref = (action, val, msg) => {
+      val = String(val || '').trim()
+      if (action === 'whatsapp') { const ph = val.replace(/[^0-9]/g, ''); return ph ? `https://wa.me/${ph}${msg ? `?text=${encodeURIComponent(msg)}` : ''}` : null }
+      if (action === 'call') return val ? `tel:${val}` : null
+      if (action === 'email') return val ? `mailto:${val}` : null
+      if (action === 'link') return val ? (/^https?:\/\//.test(val) ? val : `https://${val}`) : null
+      return null
+    }
+    const mkCta = (text, bg, color, action, val, msg) => {
+      const b = document.createElement('button'); b.textContent = text
+      b.style.cssText = `flex:1;border:none;border-radius:10px;padding:13px 10px;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;background:${bg};color:${color};`
+      const href = ctaHref(action, val, msg)
+      b.addEventListener('click', (e) => {
+        e.stopPropagation()
+        trackInteraction(cfg.tracking, text, 'product_card', href || '')
+        if (href) window.open(href, '_blank', 'noopener')
+      })
+      return b
+    }
+    const ctaWrap = document.createElement('div')
+    ctaWrap.style.cssText = 'display:flex;gap:10px;margin-top:auto;padding-top:6px;'
+    if (cfg.primaryText) ctaWrap.appendChild(mkCta(cfg.primaryText, primaryColor, '#fff', cfg.primaryAction, cfg.primaryValue, cfg.primaryMessage))
+    if (cfg.showSecondary !== false && cfg.secondaryText) ctaWrap.appendChild(mkCta(cfg.secondaryText, '#eef0f3', '#4b5563', cfg.secondaryAction, cfg.secondaryValue, cfg.secondaryMessage))
+    if (ctaWrap.children.length) body.appendChild(ctaWrap)
+
+    card.appendChild(body)
+    return card
+  }
 
   function buildContactForm(cfg) {
     const f = document.createElement('form')
@@ -1137,6 +1258,7 @@ async function init() {
         box.addEventListener('touchend', (e) => { if (sx == null) return; const dx = e.changedTouches[0].clientX - sx; if (Math.abs(dx) > 40) { go(dx < 0 ? cur + 1 : cur - 1); restart() } sx = null })
         return box
       }
+      case 'product_card': return buildProductCard(cfg)
       case 'contact': return buildContactForm(cfg)
       case 'table': return buildTable(cfg.csv || '')
       case 'like': return buildLike(cfg, key)

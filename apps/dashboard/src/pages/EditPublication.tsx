@@ -245,7 +245,7 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
 ]
 
 // Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
-type WidgetType = 'map' | 'whatsapp' | 'social' | 'contact' | 'video' | 'audio' | 'qr' | 'barcode' | 'gallery' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download' | 'units_table'
+type WidgetType = 'map' | 'whatsapp' | 'social' | 'contact' | 'video' | 'audio' | 'qr' | 'barcode' | 'gallery' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download' | 'units_table' | 'product_card'
 
 // Redes sociales: slug de Simple Icons (logo) + color de marca + plantilla de URL.
 // El logo se carga como imagen desde el CDN de Simple Icons (cdn.simpleicons.org).
@@ -260,6 +260,7 @@ const SOCIAL_NETWORKS: Record<string, { label: string; slug: string; color: stri
   pinterest: { label: 'Pinterest', slug: 'pinterest', color: 'BD081C', tpl: 'https://pinterest.com/{v}', ph: 'usuario' },
 }
 const WIDGETS: { type: WidgetType; label: string; icon: string; premium: boolean }[] = [
+  { type: 'product_card', label: 'Ficha de producto',      icon: 'image',    premium: false },
   { type: 'map',          label: 'Mapa',                  icon: 'map',      premium: false },
   { type: 'whatsapp',     label: 'WhatsApp',              icon: 'whatsapp', premium: false },
   { type: 'social',       label: 'Redes sociales',        icon: 'link',     premium: false },
@@ -295,6 +296,32 @@ const WIDGET_DEFAULTS: Record<WidgetType, any> = {
   embed:    { html: '' },
   quiz:     { title: 'Cuestionario', questions: [{ text: '¿Tu pregunta?', options: ['Opción A', 'Opción B'], type: 'single' }] },
   units_table: { publication_id: '', show_price: true, show_area: true, filter_status: 'all' },
+  product_card: {
+    images: [],
+    galleryAutoplay: false,
+    galleryInterval: 4,
+    title: 'WALLPANEL 3D MDF EMBOZADO',
+    category: 'EMBOZADOS',
+    showCategory: true,
+    price: 'RD$ 4,692.31',
+    showPrice: true,
+    description: 'Este producto es una solución ideal para tus proyectos. Contacta con nosotros para consultar disponibilidad y detalles técnicos adicionales.',
+    refLabel: 'Ref.:',
+    refValue: 'DEC7402',
+    availLabel: 'Disponibilidad:',
+    availValue: 'Inmediata',
+    showSpecs: true,
+    accent: '#4d7c0f',
+    primaryText: 'SOLICITAR COTIZACIÓN',
+    primaryColor: '#9aab3c',
+    primaryAction: 'none',
+    primaryValue: '',
+    primaryMessage: '',
+    secondaryText: 'VOLVER A RESULTADOS',
+    showSecondary: true,
+    secondaryAction: 'none',
+    secondaryValue: '',
+  },
   popup_banner: {
     template: 'offer',
     position: 'left',
@@ -339,6 +366,7 @@ const WIDGET_VISUAL: Record<WidgetType, { glyph: string; color: string; w: numbe
   quiz:         { glyph: '❓', color: '#f59e0b', w: 240, h: 170, shape: 'card' },
   units_table:  { glyph: '🏢', color: '#0891b2', w: 280, h: 170, shape: 'card' },
   popup_banner: { glyph: '🔔', color: '#4f46e5', w: 240, h: 120, shape: 'card' },
+  product_card: { glyph: '🛍️', color: '#4d7c0f', w: 300, h: 420, shape: 'card' },
 }
 
 // Construye la previsualización visual (fabric.Group) que representa un widget en el
@@ -509,8 +537,41 @@ function buildGalleryPreview(): any {
   ])
 }
 
+function buildProductCardPreview(): any {
+  const W = 280, H = 400, P = 18, accent = '#4d7c0f'
+  const els: any[] = [
+    wRect(0, 0, W, H, { rx: 16, ry: 16, fill: '#ffffff', stroke: '#e5e7eb', strokeWidth: 1 }),
+    // zona de imagen
+    wRect(0, 0, W, 150, { rx: 16, ry: 16, fill: '#eef2f5' }),
+    wRect(0, 130, W, 20, { fill: '#eef2f5' }),
+    wText('🛍️', W / 2 - 16, 56, { fontSize: 40, originX: 'left' }),
+    // título
+    wText('Ficha de producto', P, 168, { fontSize: 16, fontWeight: 'bold', fill: '#1f2937' }),
+    // categoría (pill)
+    wRect(P, 196, 96, 22, { rx: 11, ry: 11, fill: '#e8f0dc' }),
+    wText('CATEGORÍA', P + 12, 201, { fontSize: 9, fontWeight: 'bold', fill: accent }),
+    // precio
+    wText('RD$ 4,692.31', P, 230, { fontSize: 20, fontWeight: 'bold', fill: accent }),
+    // descripción (líneas)
+    wRect(P, 264, W - 2 * P, 8, { rx: 4, ry: 4, fill: '#eef2f5' }),
+    wRect(P, 278, W - 2 * P - 40, 8, { rx: 4, ry: 4, fill: '#eef2f5' }),
+    // specs
+    wRect(P, 300, (W - 2 * P - 8) / 2, 36, { rx: 8, ry: 8, fill: '#f3f4f6' }),
+    wRect(P + (W - 2 * P - 8) / 2 + 8, 300, (W - 2 * P - 8) / 2, 36, { rx: 8, ry: 8, fill: '#f3f4f6' }),
+    wText('✓ Ref.', P + 10, 312, { fontSize: 11, fontWeight: 'bold', fill: '#374151' }),
+    wText('✓ Disp.', P + (W - 2 * P - 8) / 2 + 18, 312, { fontSize: 11, fontWeight: 'bold', fill: '#374151' }),
+    // botones CTA
+    wRect(P, 350, (W - 2 * P - 10) / 2, 38, { rx: 10, ry: 10, fill: '#9aab3c' }),
+    wText('COTIZAR', P + 22, 361, { fontSize: 11, fontWeight: 'bold', fill: '#ffffff' }),
+    wRect(P + (W - 2 * P - 10) / 2 + 10, 350, (W - 2 * P - 10) / 2, 38, { rx: 10, ry: 10, fill: '#eef0f3' }),
+    wText('VOLVER', P + (W - 2 * P - 10) / 2 + 32, 361, { fontSize: 11, fontWeight: 'bold', fill: '#4b5563' }),
+  ]
+  return wGroup(els)
+}
+
 function makeWidgetCard(type: WidgetType, label: string): any {
   switch (type) {
+    case 'product_card': return buildProductCardPreview()
     case 'gallery':      return buildGalleryPreview()
     case 'contact':      return buildFormPreview()
     case 'whatsapp':     return buildWhatsappPreview()
@@ -3470,6 +3531,177 @@ function SocialWidgetProps({ obj, cfg, setCfg }: { obj: any; cfg: any; setCfg: (
 }
 
 // Panel del widget Galería / Slider: lista de imágenes + opciones de reproducción.
+// Panel de la Ficha de producto: galería (máx. 5), textos, especificaciones y botones CTA.
+// Todos los campos se editan aquí y se ven en vivo con el botón "Vista previa".
+function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) {
+  const MAX = 5
+  const images: string[] = cfg.images ?? []
+  const fileRefs = React.useRef<(HTMLInputElement | null)[]>([])
+  const multiRef = React.useRef<HTMLInputElement | null>(null)
+  const [uploading, setUploading] = React.useState(false)
+  const setImages = (next: string[]) => setCfg({ images: next })
+  const updateImage = (i: number, url: string) => { const n = [...images]; n[i] = url; setImages(n) }
+  const removeImage = (i: number) => setImages(images.filter((_, j) => j !== i))
+  const move = (i: number, d: number) => {
+    const j = i + d; if (j < 0 || j >= images.length) return
+    const n = [...images];[n[i], n[j]] = [n[j], n[i]]; setImages(n)
+  }
+  const uploadImage = async (i: number, file: File) => {
+    try { const res = await api.upload(file); updateImage(i, res.data.url) } catch (e: any) { alert('Error al subir: ' + (e.message ?? e)) }
+  }
+  const uploadMany = async (files: FileList) => {
+    const list = Array.from(files).slice(0, MAX - images.length)
+    if (!list.length) return
+    setUploading(true)
+    const urls: string[] = []
+    for (const f of list) {
+      try { const res = await api.upload(f); if (res?.data?.url) urls.push(res.data.url) } catch (e: any) { alert('Error al subir ' + f.name + ': ' + (e.message ?? e)) }
+    }
+    if (urls.length) setImages([...images, ...urls])
+    setUploading(false)
+  }
+
+  const Group = ({ label, children }: { label: string; children: React.ReactNode }) => <PropGroup label={label}>{children}</PropGroup>
+  const CtaActionFields = ({ prefix }: { prefix: 'primary' | 'secondary' }) => {
+    const action = cfg[`${prefix}Action`] ?? 'none'
+    return (
+      <>
+        <select style={s.propInput} value={action} onChange={(e) => setCfg({ [`${prefix}Action`]: e.target.value })}>
+          <option value="none">Sin acción</option>
+          <option value="whatsapp">WhatsApp</option>
+          <option value="link">Abrir enlace</option>
+          <option value="call">Llamar por teléfono</option>
+          <option value="email">Enviar email</option>
+        </select>
+        {action === 'whatsapp' && (
+          <>
+            <input style={{ ...s.propInput, marginTop: 6 }} placeholder="Teléfono con código país (ej. 18091234567)" value={cfg[`${prefix}Value`] ?? ''} onChange={(e) => setCfg({ [`${prefix}Value`]: e.target.value })} />
+            <input style={{ ...s.propInput, marginTop: 6 }} placeholder="Mensaje predefinido (opcional)" value={cfg[`${prefix}Message`] ?? ''} onChange={(e) => setCfg({ [`${prefix}Message`]: e.target.value })} />
+          </>
+        )}
+        {action === 'link' && <input style={{ ...s.propInput, marginTop: 6 }} placeholder="https://..." value={cfg[`${prefix}Value`] ?? ''} onChange={(e) => setCfg({ [`${prefix}Value`]: e.target.value })} />}
+        {action === 'call' && <input style={{ ...s.propInput, marginTop: 6 }} placeholder="Teléfono (ej. 8091234567)" value={cfg[`${prefix}Value`] ?? ''} onChange={(e) => setCfg({ [`${prefix}Value`]: e.target.value })} />}
+        {action === 'email' && <input style={{ ...s.propInput, marginTop: 6 }} placeholder="correo@dominio.com" value={cfg[`${prefix}Value`] ?? ''} onChange={(e) => setCfg({ [`${prefix}Value`]: e.target.value })} />}
+      </>
+    )
+  }
+
+  return (
+    <>
+      <Group label={`Imágenes (${images.length}/${MAX})`}>
+        {images.map((url, i) => (
+          <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 6 }}>
+            {url ? <img src={url} alt="" style={{ width: 30, height: 30, objectFit: 'cover', borderRadius: 4, flex: 'none', border: '1px solid #e5e7eb' }} /> : <div style={{ width: 30, height: 30, borderRadius: 4, background: '#f1f5f9', flex: 'none' }} />}
+            <input style={{ ...s.propInput, flex: 1, fontSize: 11 }} placeholder="https://..." value={url} onChange={(e) => updateImage(i, e.target.value)} />
+            <input ref={(el) => { fileRefs.current[i] = el }} type="file" accept={ACCEPT_IMAGE} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(i, f); e.target.value = '' }} />
+            <button type="button" style={{ ...s.alignBtn, fontSize: 11, padding: '4px 8px', flex: 'none' }} onClick={() => fileRefs.current[i]?.click()}>Subir</button>
+            <button type="button" title="Subir en orden (la 1ª es la portada)" style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, padding: '0 2px' }} onClick={() => move(i, -1)}>▲</button>
+            <button type="button" title="Bajar en orden" style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, padding: '0 2px' }} onClick={() => move(i, 1)}>▼</button>
+            <button type="button" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }} onClick={() => removeImage(i)}>✕</button>
+          </div>
+        ))}
+        <input ref={multiRef} type="file" accept={ACCEPT_IMAGE} multiple style={{ display: 'none' }}
+          onChange={(e) => { if (e.target.files?.length) uploadMany(e.target.files); e.target.value = '' }} />
+        {images.length < MAX && (
+          <button type="button" style={{ ...s.alignBtn, width: '100%', fontSize: 12, fontWeight: 700, background: '#eef2ff', color: '#4F46E5', borderColor: '#c7d2fe', marginTop: 4 }} disabled={uploading} onClick={() => multiRef.current?.click()}>
+            {uploading ? 'Subiendo…' : `⬆ Subir imágenes (hasta ${MAX})`}
+          </button>
+        )}
+        <p style={cp.hint}>La primera imagen es la portada. Usa ▲▼ para reordenar. Si subes varias, la ficha muestra una mini-galería con flechas.</p>
+      </Group>
+
+      {images.length > 1 && (
+        <Group label="Galería">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', marginBottom: 6 }}>
+            <input type="checkbox" checked={!!cfg.galleryAutoplay} onChange={(e) => setCfg({ galleryAutoplay: e.target.checked })} /> Avance automático
+          </label>
+          {cfg.galleryAutoplay && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>Cada</span>
+              <input style={{ ...s.propInput, width: 70 }} type="number" min={1} max={30} value={cfg.galleryInterval ?? 4} onChange={(e) => setCfg({ galleryInterval: +e.target.value })} />
+              <span style={{ fontSize: 12, color: '#6b7280' }}>segundos</span>
+            </div>
+          )}
+        </Group>
+      )}
+
+      <Group label="Título">
+        <input style={s.propInput} value={cfg.title ?? ''} onChange={(e) => setCfg({ title: e.target.value })} />
+      </Group>
+
+      <Group label="Categoría / etiqueta">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', marginBottom: 6 }}>
+          <input type="checkbox" checked={cfg.showCategory !== false} onChange={(e) => setCfg({ showCategory: e.target.checked })} /> Mostrar
+        </label>
+        {cfg.showCategory !== false && <input style={s.propInput} value={cfg.category ?? ''} onChange={(e) => setCfg({ category: e.target.value })} />}
+      </Group>
+
+      <Group label="Precio">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', marginBottom: 6 }}>
+          <input type="checkbox" checked={cfg.showPrice !== false} onChange={(e) => setCfg({ showPrice: e.target.checked })} /> Mostrar
+        </label>
+        {cfg.showPrice !== false && <input style={s.propInput} placeholder="RD$ 4,692.31" value={cfg.price ?? ''} onChange={(e) => setCfg({ price: e.target.value })} />}
+      </Group>
+
+      <Group label="Descripción">
+        <textarea style={{ ...s.propInput, height: 70, resize: 'vertical' } as any} value={cfg.description ?? ''} onChange={(e) => setCfg({ description: e.target.value })} />
+      </Group>
+
+      <Group label="Especificaciones técnicas">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', marginBottom: 8 }}>
+          <input type="checkbox" checked={cfg.showSpecs !== false} onChange={(e) => setCfg({ showSpecs: e.target.checked })} /> Mostrar
+        </label>
+        {cfg.showSpecs !== false && (
+          <>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+              <input style={{ ...s.propInput, flex: '0 0 90px' }} placeholder="Ref.:" value={cfg.refLabel ?? ''} onChange={(e) => setCfg({ refLabel: e.target.value })} />
+              <input style={{ ...s.propInput, flex: 1 }} placeholder="DEC7402" value={cfg.refValue ?? ''} onChange={(e) => setCfg({ refValue: e.target.value })} />
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input style={{ ...s.propInput, flex: '0 0 90px' }} placeholder="Disponibilidad:" value={cfg.availLabel ?? ''} onChange={(e) => setCfg({ availLabel: e.target.value })} />
+              <input style={{ ...s.propInput, flex: 1 }} placeholder="Inmediata" value={cfg.availValue ?? ''} onChange={(e) => setCfg({ availValue: e.target.value })} />
+            </div>
+          </>
+        )}
+      </Group>
+
+      <Group label="Color de acento (precio, categoría, ✓)">
+        <input type="color" value={cfg.accent ?? '#4d7c0f'} onChange={(e) => setCfg({ accent: e.target.value })} style={s.colorInput} />
+      </Group>
+
+      <div style={s.actionDivider}>Botón principal</div>
+      <Group label="Texto del botón">
+        <input style={s.propInput} value={cfg.primaryText ?? ''} onChange={(e) => setCfg({ primaryText: e.target.value })} />
+      </Group>
+      <Group label="Color del botón">
+        <input type="color" value={cfg.primaryColor ?? '#9aab3c'} onChange={(e) => setCfg({ primaryColor: e.target.value })} style={s.colorInput} />
+      </Group>
+      <Group label="Acción al hacer clic">
+        <CtaActionFields prefix="primary" />
+      </Group>
+
+      <div style={s.actionDivider}>Botón secundario</div>
+      <Group label="Mostrar segundo botón">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
+          <input type="checkbox" checked={cfg.showSecondary !== false} onChange={(e) => setCfg({ showSecondary: e.target.checked })} /> Mostrar
+        </label>
+      </Group>
+      {cfg.showSecondary !== false && (
+        <>
+          <Group label="Texto del botón">
+            <input style={s.propInput} value={cfg.secondaryText ?? ''} onChange={(e) => setCfg({ secondaryText: e.target.value })} />
+          </Group>
+          <Group label="Acción al hacer clic">
+            <CtaActionFields prefix="secondary" />
+          </Group>
+        </>
+      )}
+
+      <p style={cp.hint}>Pulsa “👁 Vista previa” para ver la ficha completa tal como se verá publicada. En el lienzo verás un boceto para colocarla y dimensionarla.</p>
+    </>
+  )
+}
+
 function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) {
   const images: string[] = cfg.images ?? []
   const fileRefs = React.useRef<(HTMLInputElement | null)[]>([])
@@ -3573,7 +3805,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
     map: 'Mapa', whatsapp: 'WhatsApp', social: 'Redes sociales', contact: 'Formulario', video: 'Video',
     audio: 'Audio', qr: 'Código QR', barcode: 'Código de barras', gallery: 'Galería / Slider', table: 'Tabla', like: 'Me gusta',
     embed: 'Incrustar / HTML', quiz: 'Cuestionario', popup_banner: 'Pop-up emergente',
-    download: 'Descargar archivo', units_table: 'Tabla de Unidades',
+    download: 'Descargar archivo', units_table: 'Tabla de Unidades', product_card: 'Ficha de producto',
   }
 
   return (
@@ -3685,6 +3917,8 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
       {type === 'social' && <SocialWidgetProps obj={obj} cfg={cfg} setCfg={setCfg} />}
 
       {type === 'gallery' && <GalleryWidgetProps cfg={cfg} setCfg={setCfg} />}
+
+      {type === 'product_card' && <ProductCardWidgetProps cfg={cfg} setCfg={setCfg} />}
 
       {type === 'table' && (
         <Field label="Datos (fila por línea, columnas separadas por coma)">

@@ -177,6 +177,42 @@ function Body({ type, config }: { type: string; config: any }) {
         </div>
       )
     }
+    case 'product_card': {
+      const imgs = (cfg.images || []).filter(Boolean)
+      const accent = cfg.accent || '#4d7c0f'
+      const primaryColor = cfg.primaryColor || '#9aab3c'
+      const Chip = ({ label, val }: { label: string; val: string }) => (
+        <div style={{ flex: 1, minWidth: 120, background: '#f3f4f6', borderRadius: 10, padding: '9px 12px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ color: accent, fontWeight: 800 }}>✓</span>
+          <span style={{ fontWeight: 700, color: '#374151' }}>{label}</span>
+          <span style={{ color: '#6b7280' }}>{val}</span>
+        </div>
+      )
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,.18)', fontFamily: 'Inter, sans-serif', color: '#1f2937' }}>
+          <div style={{ position: 'relative', width: '100%', flex: '0 0 44%', minHeight: 110, background: imgs[0] ? `center/cover no-repeat url("${imgs[0]}")` : '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 13 }}>
+            {!imgs.length && 'Sin imagen'}
+            {imgs.length > 1 && <div style={{ position: 'absolute', bottom: 8, right: 10, background: 'rgba(0,0,0,.5)', color: '#fff', borderRadius: 12, padding: '2px 8px', fontSize: 11 }}>1 / {imgs.length}</div>}
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 10, boxSizing: 'border-box' }}>
+            {cfg.title && <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.25 }}>{cfg.title}</div>}
+            {cfg.showCategory !== false && cfg.category && <span style={{ alignSelf: 'flex-start', background: accent + '1a', color: accent, fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', padding: '5px 11px', borderRadius: 20 }}>{cfg.category}</span>}
+            {cfg.showPrice !== false && cfg.price && <div style={{ fontSize: 22, fontWeight: 800, color: accent }}>{cfg.price}</div>}
+            {cfg.description && <div style={{ fontSize: 13, lineHeight: 1.55, color: '#6b7280' }}>{cfg.description}</div>}
+            {cfg.showSpecs !== false && (cfg.refValue || cfg.availValue) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
+                {cfg.refValue && <Chip label={cfg.refLabel || 'Ref.:'} val={cfg.refValue} />}
+                {cfg.availValue && <Chip label={cfg.availLabel || 'Disponibilidad:'} val={cfg.availValue} />}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, marginTop: 'auto', paddingTop: 6 }}>
+              {cfg.primaryText && <button style={{ flex: 1, border: 'none', borderRadius: 10, padding: '13px 10px', fontSize: 12, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', cursor: 'pointer', background: primaryColor, color: '#fff' }}>{cfg.primaryText}</button>}
+              {cfg.showSecondary !== false && cfg.secondaryText && <button style={{ flex: 1, border: 'none', borderRadius: 10, padding: '13px 10px', fontSize: 12, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', cursor: 'pointer', background: '#eef0f3', color: '#4b5563' }}>{cfg.secondaryText}</button>}
+            </div>
+          </div>
+        </div>
+      )
+    }
     default:
       return <div style={PH}>{type}</div>
   }
@@ -185,6 +221,7 @@ function Body({ type, config }: { type: string; config: any }) {
 export default function WidgetPreview({ type, config, onClose }: { type: string; config: any; onClose: () => void }) {
   // El pop-up ya trae su propio fondo/caja; el resto se muestra en un recuadro.
   const isPopup = type === 'popup_banner'
+  const isTall = type === 'product_card'
   return (
     <div
       onClick={onClose}
@@ -195,7 +232,7 @@ export default function WidgetPreview({ type, config, onClose }: { type: string;
           <strong style={{ fontSize: 14, color: '#111827', fontFamily: 'Inter, sans-serif' }}>Vista previa</strong>
           <button onClick={onClose} style={{ border: 'none', background: '#f3f4f6', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 15, color: '#374151' }}>✕</button>
         </div>
-        <div style={{ width: '100%', height: isPopup ? 300 : 280, background: isPopup ? '#eef2f7' : '#fff', borderRadius: 10, overflow: 'hidden' }}>
+        <div style={{ width: '100%', height: isTall ? 460 : isPopup ? 300 : 280, maxHeight: '78vh', background: isPopup ? '#eef2f7' : '#fff', borderRadius: 10, overflow: 'hidden' }}>
           <Body type={type} config={config} />
         </div>
         <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 10, fontFamily: 'Inter, sans-serif' }}>
