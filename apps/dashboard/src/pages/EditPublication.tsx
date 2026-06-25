@@ -3787,9 +3787,22 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
             </select>
           </Field>
           {(cfg.trigger === 'delay' || !cfg.trigger) && (
-            <Field label="Demora (segundos)">
-              <input style={s.propInput} type="number" min={0} max={120} defaultValue={cfg.delay ?? 5} onChange={(e) => setCfg({ delay: +e.target.value })} />
-            </Field>
+            <>
+              <Field label="Inicio del contador">
+                <select style={s.propInput} defaultValue={cfg.timer_scope ?? 'global'} onChange={(e) => setCfg({ timer_scope: e.target.value })}>
+                  <option value="global">Al abrir el flipbook (global)</option>
+                  <option value="page">Al llegar a esta página (focalizado)</option>
+                </select>
+                <p style={{ fontSize: 10, color: '#6b7280', marginTop: 4 }}>
+                  {(cfg.timer_scope ?? 'global') === 'global'
+                    ? 'El contador arranca desde que se abre el flipbook, sin importar en qué página esté el lector.'
+                    : 'El contador arranca solo cuando el lector llega a la página donde colocaste este widget.'}
+                </p>
+              </Field>
+              <Field label="Demora (segundos)">
+                <input style={s.propInput} type="number" min={0} max={120} defaultValue={cfg.delay ?? 5} onChange={(e) => setCfg({ delay: +e.target.value })} />
+              </Field>
+            </>
           )}
           <Field label="Animación de entrada">
             <select style={s.propInput} defaultValue={cfg.animation ?? 'slide'} onChange={(e) => setCfg({ animation: e.target.value })}>

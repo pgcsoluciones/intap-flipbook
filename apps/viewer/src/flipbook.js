@@ -886,7 +886,7 @@ async function init() {
     return { el, setPlaying(v) { playing = v; paint() } }
   }
 
-  function buildWidget(widget, w, h, key, ctx) {
+  function buildWidget(widget, w, h, key, ctx, pageIndex) {
     const cfg = widget.config || {}
     switch (widget.type) {
       case 'map': {
@@ -1202,7 +1202,7 @@ async function init() {
       case 'popup_banner': {
         // El banner se registra y se muestra después del delay. Si la posición es
         // "custom" se ancla al cuadro del widget (ctx) en vez de a un lateral fijo.
-        scheduleBanner(cfg, key, ctx)
+        scheduleBanner(cfg, key, ctx, pageIndex)
         return null
       }
       case 'units_table': {
@@ -1311,11 +1311,36 @@ async function init() {
 
   // ── Banner popup emergente (cintillo) ──────────────────────────────────────
   const shownBanners = new Set()
-  function scheduleBanner(cfg, key, ctx) {
+  // Banners con alcance "page": {key, cfg, ctx, pageIndex, delay}
+  const pendingPageBanners = []
+
+  function scheduleBanner(cfg, key, ctx, pageIndex) {
     if (shownBanners.has(key)) return
-    shownBanners.add(key)
     const delay = cfg.trigger === 'immediate' ? 0 : (parseInt(cfg.delay || '3', 10) * 1000)
+    // timer_scope:'page' → esperar a que el lector llegue a ESA página
+    if (cfg.timer_scope === 'page' && pageIndex != null) {
+      pendingPageBanners.push({ key, cfg, ctx, pageIndex, delay })
+      return
+    }
+    // timer_scope:'global' (o sin valor) → countdown desde que abre el flipbook
+    shownBanners.add(key)
     setTimeout(() => showBanner(cfg, ctx), delay)
+  }
+
+  // Llamado desde onFlipChange: dispara los banners pendientes de la página activa.
+  function firePendingBannersForPage(activePageIndex) {
+    for (let i = pendingPageBanners.length - 1; i >= 0; i--) {
+      const pb = pendingPageBanners[i]
+      // Comparamos por pageIndex del canvas (puede ser par o impar según StPageFlip)
+      if (pb.pageIndex === activePageIndex || pb.pageIndex === activePageIndex + 1) {
+        if (!shownBanners.has(pb.key)) {
+          shownBanners.add(pb.key)
+          const captured = pb
+          setTimeout(() => showBanner(captured.cfg, captured.ctx), captured.delay)
+        }
+        pendingPageBanners.splice(i, 1)
+      }
+    }
   }
 
   // Pop-up anclado al cuadro del widget (posición "personalizado"): aparece justo
@@ -1555,7 +1580,7 @@ async function init() {
 
         // Widget: renderiza el componente real y oculta el placeholder del editor
         if (d.widget) {
-          const node = buildWidget(d.widget, r.width, r.height, `${slug}_${widgetIdx++}`, { rect: r, wrap })
+          const node = buildWidget(d.widget, r.width, r.height, `${slug}_${widgetIdx++}`, { rect: r, wrap }, pageIndex)
           if (node) {
             const holder = document.createElement('div')
             holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;pointer-events:auto;`
@@ -1677,11 +1702,16 @@ async function init() {
     updateActiveThumbnail()
     startPageTimer(pageNumOf(idx))
     triggerEntrances(idx)
+    firePendingBannersForPage(idx)
   }
 
   pageFlip.on('flip', onFlipChange)
-  // Entradas de la primera hoja visible (tras el fade-in del overlay).
-  setTimeout(() => triggerEntrances(pageFlip.getCurrentPageIndex()), 500)
+  // Entradas y banners de página de la primera hoja visible (tras el fade-in del overlay).
+  setTimeout(() => {
+    const firstPage = pageFlip.getCurrentPageIndex()
+    triggerEntrances(firstPage)
+    firePendingBannersForPage(firstPage)
+  }, 500)
   pageFlip.on('changeState', () => {
     updatePageInfo()
     applyCenter()
