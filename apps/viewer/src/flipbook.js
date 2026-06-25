@@ -385,7 +385,7 @@ async function init() {
     requestAnimationFrame(animTick)
   }
 
-  function runAction(a, fcanvas, selfObj) {
+  function runAction(a, fcanvas, selfObj, elementDomMap) {
     if (!a || !a.type || a.type === 'none') return
     // Extraer la URL destino según el tipo de acción (para analítica)
     const urlDest = a.url || a.phone || a.email || a.whatsapp || null
@@ -466,12 +466,20 @@ async function init() {
       }
       case 'show_hide': {
         // Alterna la visibilidad del elemento objetivo (identificado por su elementId único).
-        // El fcanvas es el StaticCanvas de Fabric de la página donde vive el elemento.
-        if (!a.target || !fcanvas) break
-        const tgt = fcanvas.getObjects().find((o) => (o.data || {}).elementId === a.target)
-        if (tgt) {
-          tgt.visible = !tgt.visible
-          fcanvas.renderAll()
+        // Bidireccional: si está visible lo oculta, si está oculto lo muestra.
+        // Afecta tanto objetos Fabric como widgets DOM (holders).
+        if (!a.target) break
+        // 1. Buscar en objetos Fabric (texto, imágenes, formas…)
+        if (fcanvas) {
+          const tgt = fcanvas.getObjects().find((o) => (o.data || {}).elementId === a.target)
+          if (tgt) { tgt.visible = !tgt.visible; fcanvas.renderAll() }
+        }
+        // 2. Buscar en widgets DOM (mapa, video, formulario, galería…)
+        const domEl = (elementDomMap || {})[a.target]
+        if (domEl) {
+          const nowVisible = domEl.dataset.visible !== 'false'
+          domEl.style.visibility = nowVisible ? 'hidden' : 'visible'
+          domEl.dataset.visible = nowVisible ? 'false' : 'true'
         }
         break
       }
@@ -1552,6 +1560,8 @@ async function init() {
     }
 
     const fcanvas = new fabric.StaticCanvas(cv, { width: DESIGN_W, height: DESIGN_H })
+    // Mapa elementId → holderDiv para widgets DOM (show_hide puede afectarlos igual que objetos Fabric)
+    const elementDomMap = {}
     // Sin fondo: la imagen de la página ya está debajo
     const objectsOnly = Object.assign({}, parsed, { background: '', backgroundImage: null })
     fcanvas.loadFromJSON(objectsOnly, () => {
@@ -1571,7 +1581,7 @@ async function init() {
           const hs = document.createElement('div')
           hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;pointer-events:auto;`
           hs.innerHTML = `<div class="${animClass}" style="width:36px;height:36px;border-radius:50%;background:${color}44;border:2.5px solid ${color};display:flex;align-items:center;justify-content:center;"><div style="width:14px;height:14px;border-radius:50%;background:${color};"></div></div>`
-          if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action, fcanvas, obj) })
+          if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action, fcanvas, obj, elementDomMap) })
           blockFlipDrag(hs)
           wrap.appendChild(hs)
           fcanvas.remove(obj)
@@ -1584,6 +1594,10 @@ async function init() {
           if (node) {
             const holder = document.createElement('div')
             holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;pointer-events:auto;`
+            // Visibilidad inicial para widgets con startHidden
+            if (d.startHidden) { holder.style.visibility = 'hidden'; holder.dataset.visible = 'false' }
+            else { holder.dataset.visible = 'true' }
+            if (d.elementId) elementDomMap[d.elementId] = holder
             holder.appendChild(node)
             blockFlipDrag(holder)
             wrap.appendChild(holder)
@@ -1599,7 +1613,7 @@ async function init() {
         hot.href = 'javascript:void(0)'
         hot.title = ''
         hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;pointer-events:auto;`
-        hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action, fcanvas, obj) })
+        hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action, fcanvas, obj, elementDomMap) })
         blockFlipDrag(hot)
         wrap.appendChild(hot)
        } catch (err) {

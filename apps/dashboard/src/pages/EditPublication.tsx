@@ -3004,13 +3004,12 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
 
       {insTab === 'actions' && (
       <div style={s.props}>
-        {isWidget ? (
-          <p style={cp.hint}>Este widget es autónomo: su comportamiento se configura en la pestaña <b>Configuraciones</b>.</p>
-        ) : (
-          <>
-            <TriggerSelector data={(obj as any).data ?? {}} setData={setData} />
-            <ActionEditor data={(obj as any).data ?? {}} pages={pages} setData={setData} targets={namedTargets} />
-          </>
+        <TriggerSelector data={(obj as any).data ?? {}} setData={setData} />
+        <ActionEditor data={(obj as any).data ?? {}} pages={pages} setData={setData} targets={namedTargets} />
+        {isWidget && (
+          <p style={{ ...cp.hint, marginTop: 8 }}>
+            <b>Nota:</b> para que este widget pueda ser objetivo de "Mostrar / ocultar", asígnale un nombre en la pestaña <b>Configuraciones</b>.
+          </p>
         )}
       </div>
       )}
