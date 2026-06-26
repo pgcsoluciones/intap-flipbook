@@ -84,3 +84,13 @@
 - X Fabric: se mantiene superpuesta dentro del borde visual del objeto, en la esquina superior derecha interna con margen de 8 px, limitada al área de página para que no quede fuera ni lejos del elemento.
 - Por qué: evitar cierres activos por defecto y hacer que la configuración guardada sea la única fuente de verdad para cada mecanismo.
 - Prueba realizada o pendiente: `node --check apps/viewer/src/flipbook.js` exitoso, sin salida; build/pruebas no ejecutadas por instrucción del usuario.
+
+## 7. Restricción de cambio de página en escritorio
+
+- Archivo tocado: `apps/viewer/src/flipbook.js`
+- Función o bloque modificado: `installDesktopEdgeFlipGuard`, detección de targets interactivos y marcado de hotspots/widgets/zonas de acción.
+- Qué hacía antes: en escritorio el motor podía cambiar página con clics en cualquier punto de la página, incluyendo el centro.
+- Qué cambiaste: en dispositivos con `matchMedia('(hover: hover) and (pointer: fine)')`, el clic de página queda limitado a franjas laterales dentro del rectángulo visible del flipbook. Cada franja mide 10% del ancho visible con mínimo 48 px y máximo 80 px; el centro no cambia página.
+- Prioridad interactiva: botones, enlaces, formularios, media embebida, controles, widgets DOM, hotspots y objetos con acción quedan marcados o detectados como interactivos, por lo que sus clics no pasan página aunque estén cerca del borde.
+- Qué se preserva: móvil mantiene el comportamiento táctil/deslizamiento porque el guard solo corre con hover y puntero fino; no se tocaron flechas, teclado, cierre Mostrar/Ocultar, X, clic fuera, temporizador ni cierre por cambio de página configurado.
+- Prueba realizada o pendiente: `node --check apps/viewer/src/flipbook.js` exitoso, sin salida; `git diff --check` exitoso, sin salida.

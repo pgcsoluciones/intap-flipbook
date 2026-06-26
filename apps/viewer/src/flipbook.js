@@ -227,6 +227,7 @@ async function init() {
   })
 
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
+  installDesktopEdgeFlipGuard()
 
   // Ocultar la pantalla de carga. El flipbook-container siempre estuvo visible
   // debajo (necesario para que StPageFlip pueda medir sus dimensiones con size:'stretch');
@@ -405,6 +406,59 @@ async function init() {
       domTarget.style.visibility = visible ? 'visible' : 'hidden'
       domTarget.dataset.visible = visible ? 'true' : 'false'
     }
+  }
+
+  function isPrecisePointerDesktop() {
+    return window.matchMedia?.('(hover: hover) and (pointer: fine)')?.matches === true
+  }
+
+  function isFlipInteractiveTarget(target) {
+    return !!target?.closest?.([
+      'button', 'a', 'input', 'select', 'textarea', 'form', 'iframe', 'audio', 'video',
+      '[role="button"]', '[contenteditable="true"]', '[data-flip-interactive="true"]',
+      '#controls', '#thumbnail-panel', '#share-menu',
+    ].join(','))
+  }
+
+  function getDesktopFlipEdgeZone(e) {
+    const rect = container.getBoundingClientRect()
+    if (!rect.width || !rect.height) return null
+    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return null
+    const edgeWidth = Math.min(80, Math.max(48, rect.width * 0.10))
+    const offsetX = e.clientX - rect.left
+    if (offsetX <= edgeWidth) return 'prev'
+    if (offsetX >= rect.width - edgeWidth) return 'next'
+    return 'center'
+  }
+
+  function installDesktopEdgeFlipGuard() {
+    let lastGuardedAt = 0
+
+    const guard = (e) => {
+      if (!isPrecisePointerDesktop()) return
+      if (e.button != null && e.button !== 0) return
+      if (isFlipInteractiveTarget(e.target)) return
+
+      const zone = getDesktopFlipEdgeZone(e)
+      if (!zone) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation?.()
+
+      if (zone === 'center') return
+      const now = Date.now()
+      if (now - lastGuardedAt < 250) return
+      lastGuardedAt = now
+
+      const idx = pageFlip.getCurrentPageIndex()
+      if (zone === 'prev' && idx > firstIdx) pageFlip.flipPrev()
+      if (zone === 'next' && idx < lastIdx) pageFlip.flipNext()
+    }
+
+    ;['pointerdown', 'mousedown', 'click'].forEach((ev) => {
+      container.addEventListener(ev, guard, true)
+    })
   }
 
   function createShowHideCloseButton() {
@@ -1898,6 +1952,7 @@ async function init() {
           const color = hsColor || '#ef4444'
           const hs = document.createElement('div')
           hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;pointer-events:auto;`
+          hs.dataset.flipInteractive = 'true'
           hs.innerHTML = `<div class="${animClass}" style="width:36px;height:36px;border-radius:50%;background:${color}44;border:2.5px solid ${color};display:flex;align-items:center;justify-content:center;"><div style="width:14px;height:14px;border-radius:50%;background:${color};"></div></div>`
           if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action, fcanvas, obj, elementDomMap) })
           blockFlipDrag(hs)
@@ -1912,6 +1967,7 @@ async function init() {
           if (node) {
             const holder = document.createElement('div')
             holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;pointer-events:auto;`
+            holder.dataset.flipInteractive = 'true'
             holder.__widget = d.widget || {}
             // Visibilidad inicial para widgets con startHidden
             if (d.startHidden) { holder.style.visibility = 'hidden'; holder.dataset.visible = 'false' }
@@ -1932,6 +1988,7 @@ async function init() {
         hot.href = 'javascript:void(0)'
         hot.title = ''
         hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;pointer-events:auto;`
+        hot.dataset.flipInteractive = 'true'
         hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action, fcanvas, obj, elementDomMap) })
         blockFlipDrag(hot)
         wrap.appendChild(hot)
