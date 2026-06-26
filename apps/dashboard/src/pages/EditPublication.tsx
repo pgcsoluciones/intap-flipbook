@@ -2052,6 +2052,7 @@ export default function EditPublication() {
           <div style={s.toolbar}>
             <ToolbarBtn icon="undo"      title="Deshacer (Ctrl+Z)" onClick={undo}             disabled={!canUndo} />
             <ToolbarBtn icon="redo"      title="Rehacer (Ctrl+Y)"  onClick={redo}             disabled={!canRedo} />
+            <ToolbarBtn icon="crop"      title="Ajustar hoja (zoom y posición)" onClick={toggleBgAdjust} active={adjustMode && adjustTarget === 'bg'} disabled={!activePage} />
             <div style={s.toolSep} />
             <ToolbarBtn icon="duplicate" title="Duplicar"          onClick={duplicateSelected} disabled={!selected} />
             <ToolbarBtn icon="trash"     title="Eliminar"          onClick={deleteSelected}   disabled={!selected} />
@@ -2066,7 +2067,6 @@ export default function EditPublication() {
             <div style={s.toolSep} />
             <ToolbarBtn icon={selected?.data?.locked ? 'unlock' : 'lock'} title={selected?.data?.locked ? 'Desbloquear' : 'Bloquear'} onClick={toggleLock} disabled={!selected} />
             <ToolbarBtn icon="replace"   title="Reemplazar elemento" onClick={replaceSelected}  disabled={!selected} />
-            <ToolbarBtn icon="crop"      title="Ajustar hoja (zoom y posición)" onClick={toggleBgAdjust} active={adjustMode && adjustTarget === 'bg'} disabled={!activePage} />
             <div style={s.toolSep} />
             <div style={{ display: 'flex', border: '1px solid #e5e7eb', borderRadius: 7, overflow: 'hidden', fontSize: 10, fontWeight: 600 }}>
               <button
@@ -2930,7 +2930,7 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
 
   const [, setTick] = React.useState(0)
   const set = (props: any) => { obj.set(props); canvas?.requestRenderAll(); onChange(); setTick((t) => t + 1) }
-  const setData = (patch: any) => { (obj as any).data = { ...((obj as any).data ?? {}), ...patch }; onChange() }
+  const setData = (patch: any) => { (obj as any).data = { ...((obj as any).data ?? {}), ...patch }; onChange(); setTick((t) => t + 1) }
 
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'
   const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen', icon: 'Icono', widget: 'Widget', hotspot: 'Punto activo', svglib: 'Gráfico SVG' }
@@ -5102,8 +5102,8 @@ const s: Record<string, React.CSSProperties> = {
   panel: { width: 268, minWidth: 268, background: '#fff', borderRight: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', padding: 14, overflowY: 'auto' },
 
   center:    { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#e8eaed' },
-  toolbar:   { display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', height: 44, background: '#fff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 },
-  toolBtn:   { background: 'none', border: '1px solid transparent', borderRadius: 8, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151' },
+  toolbar:   { display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', height: 44, background: '#fff', borderBottom: '1px solid #e5e7eb', flexShrink: 0, overflowX: 'auto' } as React.CSSProperties,
+  toolBtn:   { background: 'none', border: '1px solid transparent', borderRadius: 8, width: 34, height: 34, minWidth: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151', flexShrink: 0 },
   toolSep:   { width: 1, height: 20, background: '#e5e7eb', margin: '0 6px' },
   ctxOverlay:{ position: 'fixed', inset: 0, zIndex: 4000 },
   ctxMenu:   { position: 'fixed', zIndex: 4001, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 10px 40px rgba(0,0,0,0.18)', padding: 6, minWidth: 190, maxHeight: '80vh', overflowY: 'auto' },
