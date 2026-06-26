@@ -74,3 +74,13 @@
 - Nota sobre 160 ms: el valor se mantiene únicamente dentro del flujo de clic fuera activado y solo evita que el clic disparador cierre de inmediato el target recién abierto; no funciona como temporizador de cierre ni se cambió a segundos.
 - Riesgo posible: la X de objetos Fabric se posiciona con el bounding box al abrirse, igual que la implementación previa de X superpuesta; no se agregó seguimiento continuo de animaciones posteriores.
 - Prueba realizada o pendiente: revisión estática pendiente; build/pruebas no ejecutadas por instrucción del usuario.
+
+## 6. Cierre estrictamente configurable
+
+- Archivo tocado: `apps/viewer/src/flipbook.js`
+- Función o bloque modificado: `installShowHideDismiss`, `installConfiguredShowHideDismiss`, `positionFloatingCloseButton`.
+- Qué hacía antes: la corrección visual anterior montaba la X como mecanismo universal incluso sin `showCloseButton`, y la ruta heredada seguía registrando cierre por cambio de página.
+- Qué cambiaste: cada mecanismo obedece estrictamente su opción en `closeOptions`: `showCloseButton === true` monta la X, `closeOnOutsideClick === true` registra clic fuera, `closeOnPageChange === true` cierra al cambiar página y `closeOnTimer === true` activa el temporizador. Si el target no tiene `closeOptions`, no se muestra X nueva, no se registra clic fuera y no se cierra por cambio de página; solo queda el toggle original y `dismissAfter` explícito en acciones antiguas.
+- X Fabric: se mantiene superpuesta dentro del borde visual del objeto, en la esquina superior derecha interna con margen de 8 px, limitada al área de página para que no quede fuera ni lejos del elemento.
+- Por qué: evitar cierres activos por defecto y hacer que la configuración guardada sea la única fuente de verdad para cada mecanismo.
+- Prueba realizada o pendiente: `node --check apps/viewer/src/flipbook.js` exitoso, sin salida; build/pruebas no ejecutadas por instrucción del usuario.

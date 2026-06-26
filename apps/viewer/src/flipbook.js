@@ -447,8 +447,16 @@ async function init() {
     if (!xBtn || !fabricTarget) return
     fabricTarget.setCoords?.()
     const r = fabricTarget.getBoundingRect(true)
-    xBtn.style.left = `${r.left + r.width - 32}px`
-    xBtn.style.top = `${r.top}px`
+    const size = 32
+    const margin = 8
+    const minLeft = Math.max(0, r.left)
+    const maxLeft = Math.min(DESIGN_W - size, r.left + r.width - size)
+    const preferredLeft = r.left + r.width - size - margin
+    const minTop = Math.max(0, r.top)
+    const maxTop = Math.min(DESIGN_H - size, r.top + r.height - size)
+    const preferredTop = r.top + margin
+    xBtn.style.left = `${Math.min(Math.max(preferredLeft, minLeft), maxLeft)}px`
+    xBtn.style.top = `${Math.min(Math.max(preferredTop, minTop), maxTop)}px`
   }
 
   function isClickInsideFabricTarget(e, fabricTarget, fcanvas) {
@@ -471,20 +479,16 @@ async function init() {
     return point.x >= r.left && point.x <= r.left + r.width && point.y >= r.top && point.y <= r.top + r.height
   }
 
-  // Instala el mecanismo de cierre (X + timer heredado) cuando show_hide muestra un elemento.
+  // Instala solo compatibilidad heredada explícita de dismissAfter.
   // Retorna la función hide() para registrarla en dismissCleanupMap.
   function installShowHideDismiss(a, domTarget, fabricTarget, fcanvas) {
     let timer = null
-    let xBtn = null
-    const entry = { hide: null, closeOnPageChange: true }
+    const entry = { hide: null, closeOnPageChange: false }
 
     entry.hide = () => {
       setTargetVisibility(domTarget, fabricTarget, fcanvas, false)
-      if (xBtn?.parentNode) xBtn.parentNode.removeChild(xBtn)
       if (timer) clearTimeout(timer)
     }
-
-    xBtn = mountShowHideCloseButton(domTarget, fabricTarget, entry)
 
     // Timer opcional: dismissAfter en segundos
     if (a.dismissAfter && Number(a.dismissAfter) > 0) {
@@ -499,7 +503,7 @@ async function init() {
     let outsideHandler = null
     let outsideDelay = null
     let xBtn = null
-    const entry = { hide: null, closeOnPageChange: !!options.closeOnPageChange }
+    const entry = { hide: null, closeOnPageChange: options.closeOnPageChange === true }
 
     const cleanup = () => {
       setTargetVisibility(domTarget, fabricTarget, fcanvas, false)
@@ -510,9 +514,11 @@ async function init() {
     }
     entry.hide = () => cleanup()
 
-    xBtn = mountShowHideCloseButton(domTarget, fabricTarget, entry)
+    if (options.showCloseButton === true) {
+      xBtn = mountShowHideCloseButton(domTarget, fabricTarget, entry)
+    }
 
-    if (options.closeOnOutsideClick) {
+    if (options.closeOnOutsideClick === true) {
       outsideHandler = (e) => {
         if (xBtn?.contains(e.target)) return
         if (domTarget && domTarget.contains(e.target)) return
@@ -525,7 +531,7 @@ async function init() {
       }, 160)
     }
 
-    if (options.closeOnTimer && Number(options.timerSeconds) > 0) {
+    if (options.closeOnTimer === true && Number(options.timerSeconds) > 0) {
       timer = setTimeout(() => entry.hide(), Number(options.timerSeconds) * 1000)
     }
 
