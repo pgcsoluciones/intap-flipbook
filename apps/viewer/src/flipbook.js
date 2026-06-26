@@ -386,14 +386,34 @@ async function init() {
   }
 
   // Registro de funciones de limpieza para elementos activos de show_hide.
-  // Clave: elementId del target. Valor: función hide() que cierra el elemento.
+  // Clave: elementId del target. Valor: registro con hide() y política de cambio de página.
   const dismissCleanupMap = {}
+
+  function getCloseOptionsForTarget(fabricTarget, domTarget) {
+    const opts = fabricTarget?.data?.widget?.config?.closeOptions
+      || fabricTarget?.data?.closeOptions
+      || domTarget?.__widget?.config?.closeOptions
+    return opts && typeof opts === 'object' ? opts : null
+  }
+
+  function setTargetVisibility(domTarget, fabricTarget, fcanvas, visible) {
+    if (fabricTarget) {
+      fabricTarget.visible = visible
+      fcanvas.renderAll()
+    }
+    if (domTarget) {
+      domTarget.style.visibility = visible ? 'visible' : 'hidden'
+      domTarget.dataset.visible = visible ? 'true' : 'false'
+    }
+  }
 
   // Instala el mecanismo de cierre (X + clic fuera + timer) cuando show_hide muestra un elemento.
   // Retorna la función hide() para registrarla en dismissCleanupMap.
   function installShowHideDismiss(a, domTarget, fabricTarget, fcanvas) {
     let timer = null
     let outsideHandler = null
+    let outsideDelay = null
+    const entry = { hide: null, closeOnPageChange: true }
 
     // Botón flotante fijo en la pantalla — garantiza visibilidad independientemente
     // de z-index, overflow o transforms del contenedor del flipbook.
@@ -409,31 +429,122 @@ async function init() {
     ].join(';')
     document.body.appendChild(xBtn)
 
-    const hide = () => {
-      if (fabricTarget) { fabricTarget.visible = false; fcanvas.renderAll() }
-      if (domTarget) { domTarget.style.visibility = 'hidden'; domTarget.dataset.visible = 'false' }
+    entry.hide = () => {
+      setTargetVisibility(domTarget, fabricTarget, fcanvas, false)
       if (xBtn.parentNode) xBtn.parentNode.removeChild(xBtn)
+      if (outsideDelay) { clearTimeout(outsideDelay); outsideDelay = null }
       if (outsideHandler) document.removeEventListener('click', outsideHandler, true)
       if (timer) clearTimeout(timer)
     }
 
-    xBtn.addEventListener('click', (e) => { e.stopPropagation(); hide() })
+    xBtn.addEventListener('click', (e) => { e.stopPropagation(); entry.hide() })
 
     // Clic fuera del elemento mostrado → cerrar (fase capture, antes de otros handlers)
     outsideHandler = (e) => {
       if (xBtn.contains(e.target)) return
       if (domTarget && domTarget.contains(e.target)) return
-      hide()
+      entry.hide()
     }
     // Delay para que el clic disparador no cierre el elemento inmediatamente
-    setTimeout(() => document.addEventListener('click', outsideHandler, true), 160)
+    outsideDelay = setTimeout(() => {
+      outsideDelay = null
+      document.addEventListener('click', outsideHandler, true)
+    }, 160)
 
     // Timer opcional: dismissAfter en segundos
     if (a.dismissAfter && Number(a.dismissAfter) > 0) {
-      timer = setTimeout(hide, Number(a.dismissAfter) * 1000)
+      timer = setTimeout(() => entry.hide(), Number(a.dismissAfter) * 1000)
     }
 
-    return hide
+    return entry
+  }
+
+  function installConfiguredShowHideDismiss(options, domTarget, fabricTarget, fcanvas) {
+    let timer = null
+    let outsideHandler = null
+    let outsideDelay = null
+    let xBtn = null
+    const wrap = fabricTarget?.__showHideWrap
+    const entry = { hide: null, closeOnPageChange: !!options.closeOnPageChange }
+
+    const cleanup = () => {
+      setTargetVisibility(domTarget, fabricTarget, fcanvas, false)
+      if (xBtn?.parentNode) xBtn.parentNode.removeChild(xBtn)
+      if (outsideDelay) { clearTimeout(outsideDelay); outsideDelay = null }
+      if (outsideHandler) document.removeEventListener('click', outsideHandler, true)
+      if (timer) clearTimeout(timer)
+    }
+    entry.hide = () => cleanup()
+
+    function positionFloatingCloseButton() {
+      if (!xBtn || !fabricTarget) return
+      fabricTarget.setCoords?.()
+      const r = fabricTarget.getBoundingRect(true)
+      xBtn.style.left = `${r.left + r.width - 16}px`
+      xBtn.style.top = `${r.top - 16}px`
+    }
+
+    function isClickInsideFabricTarget(e) {
+      if (!fabricTarget || !fcanvas) return false
+      fabricTarget.setCoords?.()
+      let p = fcanvas.getPointer ? fcanvas.getPointer(e) : null
+      if (!p) {
+        const canvasEl = fcanvas.getElement?.()
+        const rect = canvasEl?.getBoundingClientRect?.()
+        if (!rect) return false
+        p = {
+          x: ((e.clientX - rect.left) / rect.width) * fcanvas.getWidth(),
+          y: ((e.clientY - rect.top) / rect.height) * fcanvas.getHeight(),
+        }
+      }
+      if (!p) return false
+      const point = new fabric.Point(p.x, p.y)
+      if (fabricTarget.containsPoint) return fabricTarget.containsPoint(point)
+      const r = fabricTarget.getBoundingRect(true)
+      return point.x >= r.left && point.x <= r.left + r.width && point.y >= r.top && point.y <= r.top + r.height
+    }
+
+    if (options.showCloseButton && (domTarget || (fabricTarget && wrap))) {
+      xBtn = document.createElement('button')
+      xBtn.type = 'button'
+      xBtn.setAttribute('aria-label', 'Cerrar elemento')
+      xBtn.textContent = '×'
+      xBtn.style.cssText = [
+        'width:32px', 'height:32px', 'border:none', 'border-radius:50%',
+        'background:rgba(15,23,42,.78)', 'color:#fff', 'cursor:pointer',
+        'font-size:22px', 'line-height:32px', 'font-family:Inter,sans-serif',
+        'font-weight:700', 'display:flex', 'align-items:center', 'justify-content:center',
+        'box-shadow:0 6px 18px rgba(0,0,0,.25)', 'padding:0', 'pointer-events:auto',
+      ].join(';')
+      if (domTarget) {
+        xBtn.style.cssText += ';position:absolute;top:10px;right:10px;z-index:30'
+        domTarget.appendChild(xBtn)
+      } else {
+        xBtn.style.cssText += ';position:absolute;z-index:20'
+        wrap.appendChild(xBtn)
+        positionFloatingCloseButton()
+      }
+      xBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); entry.hide() })
+    }
+
+    if (options.closeOnOutsideClick) {
+      outsideHandler = (e) => {
+        if (xBtn?.contains(e.target)) return
+        if (domTarget && domTarget.contains(e.target)) return
+        if (!domTarget && isClickInsideFabricTarget(e)) return
+        entry.hide()
+      }
+      outsideDelay = setTimeout(() => {
+        outsideDelay = null
+        document.addEventListener('click', outsideHandler, true)
+      }, 160)
+    }
+
+    if (options.closeOnTimer && Number(options.timerSeconds) > 0) {
+      timer = setTimeout(() => entry.hide(), Number(options.timerSeconds) * 1000)
+    }
+
+    return entry
   }
 
   function runAction(a, fcanvas, selfObj, elementDomMap) {
@@ -525,19 +636,26 @@ async function init() {
         if (!a.target) break
         const fabricTgt = fcanvas ? fcanvas.getObjects().find((o) => (o.data || {}).elementId === a.target) : null
         const domTgt = (elementDomMap || {})[a.target]
+        const closeOptions = getCloseOptionsForTarget(fabricTgt, domTgt)
         const isVisible = domTgt ? domTgt.dataset.visible !== 'false' : (fabricTgt ? fabricTgt.visible : false)
         // Limpiar dismiss anterior para este target (si el usuario vuelve a clickear el disparador)
         const prevCleanup = dismissCleanupMap[a.target]
-        if (prevCleanup) { prevCleanup(); delete dismissCleanupMap[a.target] }
+        if (prevCleanup) prevCleanup.hide()
         if (isVisible) {
           // Ocultar manualmente (el dismiss ya fue limpiado arriba)
-          if (fabricTgt) { fabricTgt.visible = false; fcanvas.renderAll() }
-          if (domTgt) { domTgt.style.visibility = 'hidden'; domTgt.dataset.visible = 'false' }
+          setTargetVisibility(domTgt, fabricTgt, fcanvas, false)
         } else {
-          // Mostrar + instalar mecanismo de cierre (X, clic fuera, timer)
-          if (fabricTgt) { fabricTgt.visible = true; fcanvas.renderAll() }
-          if (domTgt) { domTgt.style.visibility = 'visible'; domTgt.dataset.visible = 'true' }
-          dismissCleanupMap[a.target] = installShowHideDismiss(a, domTgt, fabricTgt, fcanvas)
+          // Mostrar + instalar cierre heredado o cierre configurable del target.
+          setTargetVisibility(domTgt, fabricTgt, fcanvas, true)
+          const entry = closeOptions
+            ? installConfiguredShowHideDismiss(closeOptions, domTgt, fabricTgt, fcanvas)
+            : installShowHideDismiss(a, domTgt, fabricTgt, fcanvas)
+          const rawHide = entry.hide
+          entry.hide = () => {
+            rawHide()
+            if (dismissCleanupMap[a.target] === entry) delete dismissCleanupMap[a.target]
+          }
+          dismissCleanupMap[a.target] = entry
         }
         break
       }
@@ -1778,6 +1896,7 @@ async function init() {
       fcanvas.getObjects().slice().forEach((obj) => {
        try {
         const d = obj.data || {}
+        obj.__showHideWrap = wrap
         const r = obj.getBoundingRect(true)
 
         // Hotspot animado: reemplazar con div CSS
@@ -1802,6 +1921,7 @@ async function init() {
           if (node) {
             const holder = document.createElement('div')
             holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;pointer-events:auto;`
+            holder.__widget = d.widget || {}
             // Visibilidad inicial para widgets con startHidden
             if (d.startHidden) { holder.style.visibility = 'hidden'; holder.dataset.visible = 'false' }
             else { holder.dataset.visible = 'true' }
@@ -1916,9 +2036,12 @@ async function init() {
     if (idx < firstIdx) { pageFlip.flip(firstIdx); return }
     if (idx > lastIdx) { pageFlip.flip(lastIdx); return }
     playFlipSound()
-    // Cerrar todos los elementos show_hide activos al cambiar de página
-    Object.values(dismissCleanupMap).forEach((fn) => fn())
-    Object.keys(dismissCleanupMap).forEach((k) => delete dismissCleanupMap[k])
+    // Cerrar al cambiar de página solo los show_hide activos cuya política lo permita.
+    Object.keys(dismissCleanupMap).forEach((k) => {
+      const entry = dismissCleanupMap[k]
+      if (!entry?.closeOnPageChange) return
+      entry.hide()
+    })
     // Al cambiar de página, deshacer el zoom (vuelve a 1x).
     currentScale = 1; zoomIdx = 0
     updatePageInfo()
