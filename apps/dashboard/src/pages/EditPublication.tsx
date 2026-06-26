@@ -92,6 +92,8 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
     case 'backward':  return <svg {...p}><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M20 11v8a1 1 0 0 1-1 1h-8"/></svg>
     case 'lock':      return <svg {...p}><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
     case 'unlock':    return <svg {...p}><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>
+    case 'eye':       return <svg {...p}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+    case 'eyeOff':    return <svg {...p}><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
     case 'replace':   return <svg {...p}><path d="M4 8a8 8 0 0 1 13-2l3 3M20 16a8 8 0 0 1-13 2l-3-3"/><path d="M20 4v5h-5M4 20v-5h5"/></svg>
     case 'crop':      return <svg {...p}><path d="M6 2v16h16"/><path d="M2 6h16v16"/></svg>
     case 'alignLeft':   return <svg {...p}><path d="M4 4v16"/><rect x="7" y="7" width="11" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/></svg>
@@ -807,7 +809,19 @@ export default function EditPublication() {
     if (!pageId || !canvas) return
     setSaveState('saving')
     try {
-      const json = JSON.stringify(canvas.toJSON(['data']))
+      // Serializa el canvas restaurando la opacidad real de los objetos ocultos en el editor.
+      // data.hiddenInEditor = true → en el editor muestran opacity 0.07 para ser clicables,
+      // pero al guardar el viewer tiene que ver la opacidad real (data.originalOpacity).
+      const rawJson = canvas.toJSON(['data']) as any
+      if (rawJson?.objects) {
+        rawJson.objects = rawJson.objects.map((obj: any) => {
+          if (obj.data?.hiddenInEditor && obj.data?.originalOpacity != null) {
+            return { ...obj, opacity: obj.data.originalOpacity }
+          }
+          return obj
+        })
+      }
+      const json = JSON.stringify(rawJson)
       await api.pages.saveCanvas(pageId, json)
       setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, canvas_json: json } : p)))
 
@@ -926,6 +940,13 @@ export default function EditPublication() {
     if (activePage.canvas_json) {
       canvas.loadFromJSON(activePage.canvas_json, () => {
         isLoading = false
+        // Aplicar visibilidad de editor: elementos marcados como ocultos en el editor
+        // se muestran con opacidad mínima para que sean clicables pero no distraigan.
+        canvas.getObjects().forEach((o: any) => {
+          if (o.data?.hiddenInEditor) {
+            o.set({ opacity: 0.07 })
+          }
+        })
         canvas.renderAll()
         // Estado inicial en el historial
         pushHistory(JSON.stringify(canvas.toJSON(['data'])))
@@ -1432,6 +1453,42 @@ export default function EditPublication() {
     })
   }
 
+  // Duplica una página existente con todo su contenido (imagen de fondo + canvas_json + cover_json).
+  // Si la página a duplicar es la activa, primero guarda el estado actual del canvas para no perder cambios.
+  async function duplicatePage(page: any) {
+    setUploading(true)
+    try {
+      // Si se duplica la página activa, capturar el JSON actual del canvas (puede tener cambios sin guardar).
+      let canvasJson = page.canvas_json ?? null
+      let coverJson = page.cover_json ?? null
+      if (page.id === pageIdRef.current && fabricRef.current) {
+        canvasJson = JSON.stringify(fabricRef.current.toJSON(['data']))
+        coverJson = page.cover_json ?? null
+      }
+      // 1. Crear la página nueva con la misma imagen de fondo.
+      const res = await api.pages.add(id!, { image_url: page.image_url })
+      const newPage = res.data
+      // 2. Copiar el canvas y el encuadre de hoja si existen.
+      if (canvasJson || coverJson) {
+        await api.pages.update(newPage.id, { canvas_json: canvasJson, cover_json: coverJson })
+        newPage.canvas_json = canvasJson
+        newPage.cover_json = coverJson
+      }
+      // 3. Insertar la copia justo después de la página original en el rail.
+      setPages((prev) => {
+        const idx = prev.findIndex((p) => p.id === page.id)
+        const next = [...prev]
+        next.splice(idx + 1, 0, newPage)
+        // Reordenar en la API para que los page_number reflejen la posición.
+        api.pages.reorder(id!, next.map((p) => p.id))
+        return next
+      })
+      setActivePage(newPage)
+    } catch (e: any) {
+      alert(e.message ?? 'No se pudo duplicar la página')
+    } finally { setUploading(false) }
+  }
+
   // Agrega una página en blanco (lienzo blanco) a la publicación actual.
   // Usa un SVG data-URL blanco como image_url para no requerir subida a R2.
   async function addBlankPage() {
@@ -1554,6 +1611,27 @@ export default function EditPublication() {
     })
     o.data = { ...(o.data ?? {}), locked }
     c.discardActiveObject(); c.requestRenderAll(); setSelected(null); setSelectVersion((v) => v + 1); scheduleAutosave()
+  }
+
+  // Oculta o muestra un elemento EN EL LIENZO del editor (no afecta la publicación).
+  // Útil cuando hay muchos elementos superpuestos y se quiere trabajar en las capas de abajo.
+  // La opacidad real se guarda en data.originalOpacity para que el viewer la use correctamente.
+  function toggleHideInEditor() {
+    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
+    const nowHidden = !!o.data?.hiddenInEditor
+    if (nowHidden) {
+      // Mostrar: restaurar opacidad real
+      const orig = o.data?.originalOpacity ?? 1
+      o.data = { ...(o.data ?? {}), hiddenInEditor: false, originalOpacity: undefined }
+      o.set({ opacity: orig })
+    } else {
+      // Ocultar: guardar opacidad real y poner casi transparente
+      o.data = { ...(o.data ?? {}), hiddenInEditor: true, originalOpacity: o.opacity ?? 1 }
+      o.set({ opacity: 0.07 })
+    }
+    c.requestRenderAll()
+    setSelectVersion((v) => v + 1)
+    scheduleAutosave()
   }
 
   // ── Reencuadre manual (cubrir + recorte) — funciona sobre el FONDO de la hoja o
@@ -1912,6 +1990,7 @@ export default function EditPublication() {
               onDragStart={onDragStart}
               onDropReorder={onDropReorder}
               handleDeletePage={handleDeletePage}
+              duplicatePage={duplicatePage}
               addBlankPage={addBlankPage}
               fileInputRef={fileInputRef}
               uploading={uploading}
@@ -2098,6 +2177,7 @@ export default function EditPublication() {
               onChange={() => { scheduleAutosave() }}
               onSyncToggle={handleSvgSyncToggle}
               onReframeImage={startImageReframe}
+              onToggleHide={toggleHideInEditor}
             />
           ) : (
             <PageConfig bgColor={bgColor} applyBgColor={applyBgColor} />
@@ -2215,6 +2295,7 @@ export default function EditPublication() {
                 <CtxItem icon="back"     label="Enviar al fondo" onClick={() => { sendToBack(); setCtxMenu(null) }} />
                 <div style={s.ctxSep} />
                 <CtxItem icon={selected?.data?.locked ? 'unlock' : 'lock'} label={selected?.data?.locked ? 'Desbloquear' : 'Bloquear'} onClick={() => { toggleLock(); setCtxMenu(null) }} />
+                <CtxItem icon="eye" label={selected?.data?.hiddenInEditor ? 'Mostrar en lienzo' : 'Ocultar en lienzo'} onClick={() => { toggleHideInEditor(); setCtxMenu(null) }} />
                 {selected?.type !== 'activeSelection' &&
                   <CtxItem icon="replace" label={replaceLabel(selected)} onClick={() => { setCtxMenu(null); replaceSelected() }} />}
                 <div style={s.ctxSep} />
@@ -2347,6 +2428,11 @@ function ContextPanel(p: any) {
               >
                 <img src={page.image_url} alt={`p${i + 1}`} style={cp.thumbImg} />
                 <div style={cp.thumbNum}>{i + 1}</div>
+                <button
+                  title="Duplicar página (copia con todo el contenido)"
+                  style={{ ...cp.thumbDel, right: 22, background: 'rgba(79,70,229,0.82)', color: '#fff', fontSize: 11 }}
+                  onClick={(e: React.MouseEvent) => { e.stopPropagation(); p.duplicatePage(page) }}
+                >⧉</button>
                 <button style={cp.thumbDel} onClick={(e: React.MouseEvent) => { e.stopPropagation(); p.handleDeletePage(page.id) }}>✕</button>
               </div>
             ))}
@@ -2802,7 +2888,7 @@ function CfgGroup({ label, children }: { label: string; children: React.ReactNod
 
 // ─── Panel de propiedades del elemento seleccionado ───────────────────────────
 // Cambia según el tipo: texto, forma, botón, imagen o zona de enlace.
-function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage }: { obj: any; canvas: any; pages: any[]; onChange: () => void; onSyncToggle?: (enabled: boolean) => void; onReframeImage?: (o: any) => void }) {
+function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage, onToggleHide }: { obj: any; canvas: any; pages: any[]; onChange: () => void; onSyncToggle?: (enabled: boolean) => void; onReframeImage?: (o: any) => void; onToggleHide?: () => void }) {
   const kind: string = (obj as any).data?.kind
     ?? (obj instanceof fabric.Textbox || obj instanceof fabric.Text ? 'text' : 'shape')
 
@@ -2906,6 +2992,29 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
             />
             Empieza oculto (se revela al hacer clic en el disparador)
           </label>
+        </PropGroup>
+
+        <PropGroup label="Visibilidad en el lienzo">
+          {(obj as any).data?.hiddenInEditor ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fef3c7', borderRadius: 8, padding: '7px 10px', border: '1px solid #fbbf24' }}>
+                <span style={{ fontSize: 15 }}>👁</span>
+                <span style={{ fontSize: 12, color: '#92400e', fontWeight: 600, flex: 1 }}>Oculto en el lienzo — visible en producción</span>
+              </div>
+              <button
+                type="button"
+                style={{ ...s.alignBtn, fontSize: 12, color: '#047857', borderColor: '#6ee7b7', background: '#ecfdf5' }}
+                onClick={() => { onToggleHide?.() }}
+              >👁 Mostrar en lienzo</button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              style={{ ...s.alignBtn, fontSize: 12, width: '100%' }}
+              onClick={() => { onToggleHide?.() }}
+            >🚫 Ocultar en lienzo (no afecta la publicación)</button>
+          )}
+          <p style={cp.hint}>Útil cuando hay elementos superpuestos — podés ocultarlos mientras diseñás sin que desaparezcan del flipbook publicado.</p>
         </PropGroup>
 
         {/* ── TEXTO ── */}
