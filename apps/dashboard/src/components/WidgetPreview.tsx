@@ -203,16 +203,18 @@ function Body({ type, config }: { type: string; config: any }) {
             {cfg.title && <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.25 }}>{cfg.title}</div>}
             {cfg.showCategory !== false && cfg.category && <span style={{ alignSelf: 'flex-start', background: accent + '1a', color: accent, fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', padding: '5px 11px', borderRadius: 20 }}>{cfg.category}</span>}
             {cfg.showPrice !== false && cfg.price && <div style={{ fontSize: 22, fontWeight: 800, color: accent }}>{cfg.price}</div>}
-            {cfg.description && <div style={{ fontSize: 13, lineHeight: 1.55, color: '#6b7280' }}>{cfg.description}</div>}
+            {cfg.description && <div style={{ fontSize: cfg.descriptionSize || 14, lineHeight: 1.55, color: '#6b7280' }}>{cfg.description}</div>}
+            <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {cfg.showSpecs !== false && (cfg.refValue || cfg.availValue) && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {cfg.refValue && <Chip label={cfg.refLabel || 'Ref.:'} val={cfg.refValue} />}
                 {cfg.availValue && <Chip label={cfg.availLabel || 'Disponibilidad:'} val={cfg.availValue} />}
               </div>
             )}
-            <div style={{ display: 'flex', gap: 10, marginTop: 'auto', paddingTop: 6 }}>
+            <div style={{ display: 'flex', gap: 10 }}>
               {cfg.primaryText && <button style={{ flex: 1, border: 'none', borderRadius: 10, padding: '13px 10px', fontSize: 12, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', cursor: 'pointer', background: primaryColor, color: '#fff' }}>{cfg.primaryText}</button>}
               {cfg.showSecondary !== false && cfg.secondaryText && <button style={{ flex: 1, border: 'none', borderRadius: 10, padding: '13px 10px', fontSize: 12, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', cursor: 'pointer', background: '#eef0f3', color: '#4b5563' }}>{cfg.secondaryText}</button>}
+            </div>
             </div>
           </div>
         </div>

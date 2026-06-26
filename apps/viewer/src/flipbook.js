@@ -385,6 +385,59 @@ async function init() {
     requestAnimationFrame(animTick)
   }
 
+  // Registro de funciones de limpieza para elementos activos de show_hide.
+  // Clave: elementId del target. Valor: función hide() que cierra el elemento.
+  const dismissCleanupMap = {}
+
+  // Instala el mecanismo de cierre (X + clic fuera + timer) cuando show_hide muestra un elemento.
+  // Retorna la función hide() para registrarla en dismissCleanupMap.
+  function installShowHideDismiss(a, domTarget, fabricTarget, fcanvas) {
+    let timer = null
+    let xBtn = null
+    let outsideHandler = null
+
+    const hide = () => {
+      if (fabricTarget) { fabricTarget.visible = false; fcanvas.renderAll() }
+      if (domTarget) { domTarget.style.visibility = 'hidden'; domTarget.dataset.visible = 'false' }
+      if (xBtn && xBtn.parentNode) xBtn.parentNode.removeChild(xBtn)
+      if (outsideHandler) document.removeEventListener('click', outsideHandler, true)
+      if (timer) clearTimeout(timer)
+    }
+
+    // Botón X dentro del holder DOM
+    if (domTarget) {
+      xBtn = document.createElement('button')
+      xBtn.textContent = '✕'
+      xBtn.style.cssText = 'position:absolute;top:6px;right:6px;z-index:20;border:none;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:24px;text-align:center;padding:0;'
+      xBtn.addEventListener('click', (e) => { e.stopPropagation(); hide() })
+      if (!domTarget.style.position || domTarget.style.position === 'static') domTarget.style.position = 'relative'
+      domTarget.appendChild(xBtn)
+    } else if (fabricTarget) {
+      // Para objetos Fabric (canvas): botón flotante fijo en la pantalla
+      xBtn = document.createElement('button')
+      xBtn.textContent = '✕ Cerrar'
+      xBtn.style.cssText = 'position:fixed;top:80px;right:16px;z-index:9999;border:none;background:rgba(0,0,0,.72);color:#fff;border-radius:20px;padding:6px 16px;cursor:pointer;font-size:13px;font-family:Inter,sans-serif;font-weight:700;box-shadow:0 2px 12px rgba(0,0,0,.3);'
+      xBtn.addEventListener('click', (e) => { e.stopPropagation(); hide() })
+      document.body.appendChild(xBtn)
+    }
+
+    // Clic fuera del elemento → cerrar (capture phase para interceptar antes de otros handlers)
+    outsideHandler = (e) => {
+      if (domTarget && domTarget.contains(e.target)) return
+      if (xBtn && xBtn.contains(e.target)) return
+      hide()
+    }
+    // Pequeño delay para que el clic que disparó show_hide no cierre inmediatamente
+    setTimeout(() => document.addEventListener('click', outsideHandler, true), 150)
+
+    // Timer opcional: cfg.dismissAfter en segundos
+    if (a.dismissAfter && Number(a.dismissAfter) > 0) {
+      timer = setTimeout(hide, Number(a.dismissAfter) * 1000)
+    }
+
+    return hide
+  }
+
   function runAction(a, fcanvas, selfObj, elementDomMap) {
     if (!a || !a.type || a.type === 'none') return
     // Extraer la URL destino según el tipo de acción (para analítica)
@@ -471,21 +524,22 @@ async function init() {
         break
       }
       case 'show_hide': {
-        // Alterna la visibilidad del elemento objetivo (identificado por su elementId único).
-        // Bidireccional: si está visible lo oculta, si está oculto lo muestra.
-        // Afecta tanto objetos Fabric como widgets DOM (holders).
         if (!a.target) break
-        // 1. Buscar en objetos Fabric (texto, imágenes, formas…)
-        if (fcanvas) {
-          const tgt = fcanvas.getObjects().find((o) => (o.data || {}).elementId === a.target)
-          if (tgt) { tgt.visible = !tgt.visible; fcanvas.renderAll() }
-        }
-        // 2. Buscar en widgets DOM (mapa, video, formulario, galería…)
-        const domEl = (elementDomMap || {})[a.target]
-        if (domEl) {
-          const nowVisible = domEl.dataset.visible !== 'false'
-          domEl.style.visibility = nowVisible ? 'hidden' : 'visible'
-          domEl.dataset.visible = nowVisible ? 'false' : 'true'
+        const fabricTgt = fcanvas ? fcanvas.getObjects().find((o) => (o.data || {}).elementId === a.target) : null
+        const domTgt = (elementDomMap || {})[a.target]
+        const isVisible = domTgt ? domTgt.dataset.visible !== 'false' : (fabricTgt ? fabricTgt.visible : false)
+        // Limpiar dismiss anterior para este target (si el usuario vuelve a clickear el disparador)
+        const prevCleanup = dismissCleanupMap[a.target]
+        if (prevCleanup) { prevCleanup(); delete dismissCleanupMap[a.target] }
+        if (isVisible) {
+          // Ocultar manualmente (el dismiss ya fue limpiado arriba)
+          if (fabricTgt) { fabricTgt.visible = false; fcanvas.renderAll() }
+          if (domTgt) { domTgt.style.visibility = 'hidden'; domTgt.dataset.visible = 'false' }
+        } else {
+          // Mostrar + instalar mecanismo de cierre (X, clic fuera, timer)
+          if (fabricTgt) { fabricTgt.visible = true; fcanvas.renderAll() }
+          if (domTgt) { domTgt.style.visibility = 'visible'; domTgt.dataset.visible = 'true' }
+          dismissCleanupMap[a.target] = installShowHideDismiss(a, domTgt, fabricTgt, fcanvas)
         }
         break
       }
@@ -893,13 +947,17 @@ async function init() {
     }
     if (cfg.description) {
       const d = document.createElement('div'); d.textContent = cfg.description
-      d.style.cssText = 'font-size:13px;line-height:1.55;color:#6b7280;'
+      d.style.cssText = `font-size:${cfg.descriptionSize || 14}px;line-height:1.55;color:#6b7280;`
       body.appendChild(d)
     }
 
+    // ── Bloque inferior: especificaciones + CTAs siempre juntos en la parte baja ──
+    const bottomWrap = document.createElement('div')
+    bottomWrap.style.cssText = 'margin-top:auto;display:flex;flex-direction:column;gap:8px;'
+
     if (cfg.showSpecs !== false && (cfg.refValue || cfg.availValue)) {
       const specs = document.createElement('div')
-      specs.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:2px;'
+      specs.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;'
       const chip = (label, val) => {
         const c = document.createElement('div')
         c.style.cssText = 'flex:1;min-width:120px;background:#f3f4f6;border-radius:10px;padding:9px 12px;font-size:12px;display:flex;align-items:center;gap:6px;'
@@ -908,7 +966,7 @@ async function init() {
       }
       if (cfg.refValue) specs.appendChild(chip(cfg.refLabel || 'Ref.:', cfg.refValue))
       if (cfg.availValue) specs.appendChild(chip(cfg.availLabel || 'Disponibilidad:', cfg.availValue))
-      body.appendChild(specs)
+      bottomWrap.appendChild(specs)
     }
 
     // ── Botones CTA (responden a acciones) ──
@@ -932,10 +990,11 @@ async function init() {
       return b
     }
     const ctaWrap = document.createElement('div')
-    ctaWrap.style.cssText = 'display:flex;gap:10px;margin-top:auto;padding-top:6px;'
+    ctaWrap.style.cssText = 'display:flex;gap:10px;'
     if (cfg.primaryText) ctaWrap.appendChild(mkCta(cfg.primaryText, primaryColor, '#fff', cfg.primaryAction, cfg.primaryValue, cfg.primaryMessage))
     if (cfg.showSecondary !== false && cfg.secondaryText) ctaWrap.appendChild(mkCta(cfg.secondaryText, '#eef0f3', '#4b5563', cfg.secondaryAction, cfg.secondaryValue, cfg.secondaryMessage))
-    if (ctaWrap.children.length) body.appendChild(ctaWrap)
+    if (ctaWrap.children.length) bottomWrap.appendChild(ctaWrap)
+    body.appendChild(bottomWrap)
 
     card.appendChild(body)
     return card
@@ -1859,6 +1918,9 @@ async function init() {
     if (idx < firstIdx) { pageFlip.flip(firstIdx); return }
     if (idx > lastIdx) { pageFlip.flip(lastIdx); return }
     playFlipSound()
+    // Cerrar todos los elementos show_hide activos al cambiar de página
+    Object.values(dismissCleanupMap).forEach((fn) => fn())
+    Object.keys(dismissCleanupMap).forEach((k) => delete dismissCleanupMap[k])
     // Al cambiar de página, deshacer el zoom (vuelve a 1x).
     currentScale = 1; zoomIdx = 0
     updatePageInfo()

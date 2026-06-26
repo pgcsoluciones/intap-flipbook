@@ -816,7 +816,7 @@ export default function EditPublication() {
       if (rawJson?.objects) {
         rawJson.objects = rawJson.objects.map((obj: any) => {
           if (obj.data?.hiddenInEditor && obj.data?.originalOpacity != null) {
-            return { ...obj, opacity: obj.data.originalOpacity }
+            return { ...obj, opacity: obj.data.originalOpacity, selectable: true, evented: true, hasControls: true, hasBorders: true }
           }
           return obj
         })
@@ -944,7 +944,7 @@ export default function EditPublication() {
         // se muestran con opacidad mínima para que sean clicables pero no distraigan.
         canvas.getObjects().forEach((o: any) => {
           if (o.data?.hiddenInEditor) {
-            o.set({ opacity: 0.07 })
+            o.set({ opacity: 0.07, selectable: false, evented: false, hasControls: false, hasBorders: false })
           }
         })
         canvas.renderAll()
@@ -1620,18 +1620,32 @@ export default function EditPublication() {
     const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
     const nowHidden = !!o.data?.hiddenInEditor
     if (nowHidden) {
-      // Mostrar: restaurar opacidad real
       const orig = o.data?.originalOpacity ?? 1
       o.data = { ...(o.data ?? {}), hiddenInEditor: false, originalOpacity: undefined }
-      o.set({ opacity: orig })
+      o.set({ opacity: orig, selectable: true, evented: true, hasControls: true, hasBorders: true })
     } else {
-      // Ocultar: guardar opacidad real y poner casi transparente
       o.data = { ...(o.data ?? {}), hiddenInEditor: true, originalOpacity: o.opacity ?? 1 }
-      o.set({ opacity: 0.07 })
+      o.set({ opacity: 0.07, selectable: false, evented: false, hasControls: false, hasBorders: false })
+      c.discardActiveObject()
+      setSelected(null)
     }
     c.requestRenderAll()
     setSelectVersion((v) => v + 1)
     scheduleAutosave()
+  }
+
+  function showAllHiddenInEditor() {
+    const c = fabricRef.current; if (!c) return
+    let changed = false
+    c.getObjects().forEach((o: any) => {
+      if (o.data?.hiddenInEditor) {
+        const orig = o.data?.originalOpacity ?? 1
+        o.data = { ...o.data, hiddenInEditor: false, originalOpacity: undefined }
+        o.set({ opacity: orig, selectable: true, evented: true, hasControls: true, hasBorders: true })
+        changed = true
+      }
+    })
+    if (changed) { c.requestRenderAll(); setSelectVersion((v) => v + 1); scheduleAutosave() }
   }
 
   // ── Reencuadre manual (cubrir + recorte) — funciona sobre el FONDO de la hoja o
@@ -2028,6 +2042,7 @@ export default function EditPublication() {
               deleteFromBank={deleteFromBank}
               svgInputRef={svgInputRef}
               pdfPagesInputRef={pdfPagesInputRef}
+              onShowAllHidden={showAllHiddenInEditor}
             />
           </aside>
         )}
@@ -2445,6 +2460,13 @@ function ContextPanel(p: any) {
           </button>
           <button style={cp.secondaryBtn} onClick={() => p.pdfPagesInputRef?.current?.click()} disabled={p.uploading}>
             📄 Importar PDF como páginas
+          </button>
+          <button
+            style={{ ...cp.secondaryBtn, background: '#fef3c7', color: '#92400e', borderColor: '#fde68a', marginTop: 4 }}
+            onClick={p.onShowAllHidden}
+            title="Muestra todos los elementos marcados como ocultos en este lienzo"
+          >
+            👁 Mostrar todos los ocultos
           </button>
         </>
       )
@@ -3848,6 +3870,11 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
 
       <Group label="Descripción">
         <textarea style={{ ...s.propInput, height: 70, resize: 'vertical' } as any} value={cfg.description ?? ''} onChange={(e) => setCfg({ description: e.target.value })} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+          <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>Tamaño:</span>
+          <input type="range" min={10} max={22} step={1} value={cfg.descriptionSize ?? 14} onChange={(e) => setCfg({ descriptionSize: +e.target.value })} style={{ flex: 1 }} />
+          <span style={{ fontSize: 11, color: '#6b7280', minWidth: 28, textAlign: 'right' }}>{cfg.descriptionSize ?? 14}px</span>
+        </div>
       </Group>
 
       <Group label="Especificaciones técnicas">
