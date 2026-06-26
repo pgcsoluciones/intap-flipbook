@@ -407,49 +407,84 @@ async function init() {
     }
   }
 
-  // Instala el mecanismo de cierre (X + clic fuera + timer) cuando show_hide muestra un elemento.
+  function createShowHideCloseButton() {
+    const xBtn = document.createElement('button')
+    xBtn.type = 'button'
+    xBtn.setAttribute('aria-label', 'Cerrar elemento')
+    xBtn.textContent = '×'
+    xBtn.style.cssText = [
+      'width:32px', 'height:32px', 'border:none', 'border-radius:50%',
+      'background:rgba(15,23,42,.78)', 'color:#fff', 'cursor:pointer',
+      'font-size:22px', 'line-height:32px', 'font-family:Inter,sans-serif',
+      'font-weight:700', 'display:flex', 'align-items:center', 'justify-content:center',
+      'box-shadow:0 6px 18px rgba(0,0,0,.25)', 'padding:0', 'pointer-events:auto',
+    ].join(';')
+    return xBtn
+  }
+
+  function mountShowHideCloseButton(domTarget, fabricTarget, entry) {
+    const wrap = fabricTarget?.__showHideWrap
+    if (!domTarget && !(fabricTarget && wrap)) return null
+
+    const xBtn = createShowHideCloseButton()
+    xBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); entry.hide() })
+
+    if (domTarget) {
+      const currentPosition = window.getComputedStyle(domTarget).position
+      if (!currentPosition || currentPosition === 'static') domTarget.style.position = 'relative'
+      xBtn.style.cssText += ';position:absolute;top:10px;right:10px;z-index:30'
+      domTarget.appendChild(xBtn)
+      return xBtn
+    }
+
+    xBtn.style.cssText += ';position:absolute;z-index:20'
+    wrap.appendChild(xBtn)
+    positionFloatingCloseButton(xBtn, fabricTarget)
+    return xBtn
+  }
+
+  function positionFloatingCloseButton(xBtn, fabricTarget) {
+    if (!xBtn || !fabricTarget) return
+    fabricTarget.setCoords?.()
+    const r = fabricTarget.getBoundingRect(true)
+    xBtn.style.left = `${r.left + r.width - 32}px`
+    xBtn.style.top = `${r.top}px`
+  }
+
+  function isClickInsideFabricTarget(e, fabricTarget, fcanvas) {
+    if (!fabricTarget || !fcanvas) return false
+    fabricTarget.setCoords?.()
+    let p = fcanvas.getPointer ? fcanvas.getPointer(e) : null
+    if (!p) {
+      const canvasEl = fcanvas.getElement?.()
+      const rect = canvasEl?.getBoundingClientRect?.()
+      if (!rect) return false
+      p = {
+        x: ((e.clientX - rect.left) / rect.width) * fcanvas.getWidth(),
+        y: ((e.clientY - rect.top) / rect.height) * fcanvas.getHeight(),
+      }
+    }
+    if (!p) return false
+    const point = new fabric.Point(p.x, p.y)
+    if (fabricTarget.containsPoint) return fabricTarget.containsPoint(point)
+    const r = fabricTarget.getBoundingRect(true)
+    return point.x >= r.left && point.x <= r.left + r.width && point.y >= r.top && point.y <= r.top + r.height
+  }
+
+  // Instala el mecanismo de cierre (X + timer heredado) cuando show_hide muestra un elemento.
   // Retorna la función hide() para registrarla en dismissCleanupMap.
   function installShowHideDismiss(a, domTarget, fabricTarget, fcanvas) {
     let timer = null
-    let outsideHandler = null
-    let outsideDelay = null
+    let xBtn = null
     const entry = { hide: null, closeOnPageChange: true }
-
-    // Botón flotante fijo en la pantalla — garantiza visibilidad independientemente
-    // de z-index, overflow o transforms del contenedor del flipbook.
-    const xBtn = document.createElement('button')
-    xBtn.innerHTML = '&#x2715;&nbsp;Cerrar'
-    xBtn.style.cssText = [
-      'position:fixed', 'bottom:72px', 'right:16px', 'z-index:99999',
-      'border:none', 'background:rgba(15,23,42,.88)', 'color:#fff',
-      'border-radius:24px', 'padding:8px 20px', 'cursor:pointer',
-      'font-size:13px', 'font-family:Inter,sans-serif', 'font-weight:700',
-      'letter-spacing:.03em', 'box-shadow:0 4px 20px rgba(0,0,0,.35)',
-      'display:flex', 'align-items:center', 'gap:6px',
-    ].join(';')
-    document.body.appendChild(xBtn)
 
     entry.hide = () => {
       setTargetVisibility(domTarget, fabricTarget, fcanvas, false)
-      if (xBtn.parentNode) xBtn.parentNode.removeChild(xBtn)
-      if (outsideDelay) { clearTimeout(outsideDelay); outsideDelay = null }
-      if (outsideHandler) document.removeEventListener('click', outsideHandler, true)
+      if (xBtn?.parentNode) xBtn.parentNode.removeChild(xBtn)
       if (timer) clearTimeout(timer)
     }
 
-    xBtn.addEventListener('click', (e) => { e.stopPropagation(); entry.hide() })
-
-    // Clic fuera del elemento mostrado → cerrar (fase capture, antes de otros handlers)
-    outsideHandler = (e) => {
-      if (xBtn.contains(e.target)) return
-      if (domTarget && domTarget.contains(e.target)) return
-      entry.hide()
-    }
-    // Delay para que el clic disparador no cierre el elemento inmediatamente
-    outsideDelay = setTimeout(() => {
-      outsideDelay = null
-      document.addEventListener('click', outsideHandler, true)
-    }, 160)
+    xBtn = mountShowHideCloseButton(domTarget, fabricTarget, entry)
 
     // Timer opcional: dismissAfter en segundos
     if (a.dismissAfter && Number(a.dismissAfter) > 0) {
@@ -464,7 +499,6 @@ async function init() {
     let outsideHandler = null
     let outsideDelay = null
     let xBtn = null
-    const wrap = fabricTarget?.__showHideWrap
     const entry = { hide: null, closeOnPageChange: !!options.closeOnPageChange }
 
     const cleanup = () => {
@@ -476,62 +510,13 @@ async function init() {
     }
     entry.hide = () => cleanup()
 
-    function positionFloatingCloseButton() {
-      if (!xBtn || !fabricTarget) return
-      fabricTarget.setCoords?.()
-      const r = fabricTarget.getBoundingRect(true)
-      xBtn.style.left = `${r.left + r.width - 16}px`
-      xBtn.style.top = `${r.top - 16}px`
-    }
-
-    function isClickInsideFabricTarget(e) {
-      if (!fabricTarget || !fcanvas) return false
-      fabricTarget.setCoords?.()
-      let p = fcanvas.getPointer ? fcanvas.getPointer(e) : null
-      if (!p) {
-        const canvasEl = fcanvas.getElement?.()
-        const rect = canvasEl?.getBoundingClientRect?.()
-        if (!rect) return false
-        p = {
-          x: ((e.clientX - rect.left) / rect.width) * fcanvas.getWidth(),
-          y: ((e.clientY - rect.top) / rect.height) * fcanvas.getHeight(),
-        }
-      }
-      if (!p) return false
-      const point = new fabric.Point(p.x, p.y)
-      if (fabricTarget.containsPoint) return fabricTarget.containsPoint(point)
-      const r = fabricTarget.getBoundingRect(true)
-      return point.x >= r.left && point.x <= r.left + r.width && point.y >= r.top && point.y <= r.top + r.height
-    }
-
-    if (options.showCloseButton && (domTarget || (fabricTarget && wrap))) {
-      xBtn = document.createElement('button')
-      xBtn.type = 'button'
-      xBtn.setAttribute('aria-label', 'Cerrar elemento')
-      xBtn.textContent = '×'
-      xBtn.style.cssText = [
-        'width:32px', 'height:32px', 'border:none', 'border-radius:50%',
-        'background:rgba(15,23,42,.78)', 'color:#fff', 'cursor:pointer',
-        'font-size:22px', 'line-height:32px', 'font-family:Inter,sans-serif',
-        'font-weight:700', 'display:flex', 'align-items:center', 'justify-content:center',
-        'box-shadow:0 6px 18px rgba(0,0,0,.25)', 'padding:0', 'pointer-events:auto',
-      ].join(';')
-      if (domTarget) {
-        xBtn.style.cssText += ';position:absolute;top:10px;right:10px;z-index:30'
-        domTarget.appendChild(xBtn)
-      } else {
-        xBtn.style.cssText += ';position:absolute;z-index:20'
-        wrap.appendChild(xBtn)
-        positionFloatingCloseButton()
-      }
-      xBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); entry.hide() })
-    }
+    xBtn = mountShowHideCloseButton(domTarget, fabricTarget, entry)
 
     if (options.closeOnOutsideClick) {
       outsideHandler = (e) => {
         if (xBtn?.contains(e.target)) return
         if (domTarget && domTarget.contains(e.target)) return
-        if (!domTarget && isClickInsideFabricTarget(e)) return
+        if (!domTarget && isClickInsideFabricTarget(e, fabricTarget, fcanvas)) return
         entry.hide()
       }
       outsideDelay = setTimeout(() => {

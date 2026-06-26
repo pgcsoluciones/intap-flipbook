@@ -8,7 +8,7 @@
 - Qué cambiaste: `show_hide` ahora lee `closeOptions` del elemento objetivo sin limitarse a Ficha de producto. Para widgets usa `obj.data.widget.config.closeOptions`; para objetos Fabric usa `obj.data.closeOptions`. Si no existen opciones, mantiene el cierre heredado. Con opciones personalizadas instala X interna para widgets DOM y X superpuesta en el overlay para objetos Fabric.
 - Por qué: generalizar las Opciones de cierre a cualquier elemento objetivo de Mostrar/Ocultar, conservando compatibilidad total con documentos existentes.
 - Riesgo posible: la X flotante de objetos Fabric se posiciona con el bounding box al momento de abrirse; acompaña la escala/página del overlay, pero no persigue animaciones posteriores del objeto si ocurren después de la apertura.
-- Prueba realizada o pendiente: revisión estática pendiente; build/pruebas no ejecutadas por instrucción del usuario.
+- Prueba realizada o pendiente: `node --check apps/viewer/src/flipbook.js` exitoso, sin salida; build/pruebas no ejecutadas por instrucción del usuario.
 
 ## 1.1. `apps/viewer/src/flipbook.js`
 
@@ -62,3 +62,15 @@
   - `npm run build --workspace=apps/dashboard`: exitoso. Ejecutó `tsc && vite build`; Vite construyó `dist/` correctamente con advertencias no bloqueantes.
   - `node --check apps/viewer/src/flipbook.js`: exitoso, sin salida.
   - `git diff --check`: exitoso, sin salida.
+
+## 5. Corrección visual de cierre Mostrar/Ocultar
+
+- Archivo tocado: `apps/viewer/src/flipbook.js`
+- Función o bloque modificado: `installShowHideDismiss`, `installConfiguredShowHideDismiss` y helpers de X de cierre.
+- Qué hacía antes: la ruta heredada agregaba a `document.body` un botón fijo “× Cerrar” fuera del flipbook, mientras la ruta configurable podía agregar otra X. Además, el flujo heredado registraba clic fuera por defecto con un retraso de 160 ms.
+- Qué cambiaste: reemplacé el cierre fijo heredado por una X anclada al target mostrado. En widgets DOM la X queda dentro del elemento, en la esquina superior derecha. En imagen, texto, forma, SVG, botón u objeto Fabric la X se superpone en la esquina superior derecha del objeto dentro del área visual del flipbook.
+- Por qué: la X debe ser el mecanismo universal y visible de cierre para cualquier elemento mostrado mediante Mostrar/Ocultar, sin duplicar controles fuera de la página.
+- Clic fuera: pasó a ser opt-in; solo se registra cuando `closeOptions.closeOnOutsideClick === true`. Para documentos antiguos sin `closeOptions`, se conserva `dismissAfter` si existe y el cierre por cambio de página, pero ya no se aplica clic fuera automático.
+- Nota sobre 160 ms: el valor se mantiene únicamente dentro del flujo de clic fuera activado y solo evita que el clic disparador cierre de inmediato el target recién abierto; no funciona como temporizador de cierre ni se cambió a segundos.
+- Riesgo posible: la X de objetos Fabric se posiciona con el bounding box al abrirse, igual que la implementación previa de X superpuesta; no se agregó seguimiento continuo de animaciones posteriores.
+- Prueba realizada o pendiente: revisión estática pendiente; build/pruebas no ejecutadas por instrucción del usuario.
