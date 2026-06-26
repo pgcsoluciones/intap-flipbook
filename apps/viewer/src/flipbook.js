@@ -393,44 +393,42 @@ async function init() {
   // Retorna la función hide() para registrarla en dismissCleanupMap.
   function installShowHideDismiss(a, domTarget, fabricTarget, fcanvas) {
     let timer = null
-    let xBtn = null
     let outsideHandler = null
+
+    // Botón flotante fijo en la pantalla — garantiza visibilidad independientemente
+    // de z-index, overflow o transforms del contenedor del flipbook.
+    const xBtn = document.createElement('button')
+    xBtn.innerHTML = '&#x2715;&nbsp;Cerrar'
+    xBtn.style.cssText = [
+      'position:fixed', 'bottom:72px', 'right:16px', 'z-index:99999',
+      'border:none', 'background:rgba(15,23,42,.88)', 'color:#fff',
+      'border-radius:24px', 'padding:8px 20px', 'cursor:pointer',
+      'font-size:13px', 'font-family:Inter,sans-serif', 'font-weight:700',
+      'letter-spacing:.03em', 'box-shadow:0 4px 20px rgba(0,0,0,.35)',
+      'display:flex', 'align-items:center', 'gap:6px',
+    ].join(';')
+    document.body.appendChild(xBtn)
 
     const hide = () => {
       if (fabricTarget) { fabricTarget.visible = false; fcanvas.renderAll() }
       if (domTarget) { domTarget.style.visibility = 'hidden'; domTarget.dataset.visible = 'false' }
-      if (xBtn && xBtn.parentNode) xBtn.parentNode.removeChild(xBtn)
+      if (xBtn.parentNode) xBtn.parentNode.removeChild(xBtn)
       if (outsideHandler) document.removeEventListener('click', outsideHandler, true)
       if (timer) clearTimeout(timer)
     }
 
-    // Botón X dentro del holder DOM
-    if (domTarget) {
-      xBtn = document.createElement('button')
-      xBtn.textContent = '✕'
-      xBtn.style.cssText = 'position:absolute;top:6px;right:6px;z-index:20;border:none;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:24px;text-align:center;padding:0;'
-      xBtn.addEventListener('click', (e) => { e.stopPropagation(); hide() })
-      if (!domTarget.style.position || domTarget.style.position === 'static') domTarget.style.position = 'relative'
-      domTarget.appendChild(xBtn)
-    } else if (fabricTarget) {
-      // Para objetos Fabric (canvas): botón flotante fijo en la pantalla
-      xBtn = document.createElement('button')
-      xBtn.textContent = '✕ Cerrar'
-      xBtn.style.cssText = 'position:fixed;top:80px;right:16px;z-index:9999;border:none;background:rgba(0,0,0,.72);color:#fff;border-radius:20px;padding:6px 16px;cursor:pointer;font-size:13px;font-family:Inter,sans-serif;font-weight:700;box-shadow:0 2px 12px rgba(0,0,0,.3);'
-      xBtn.addEventListener('click', (e) => { e.stopPropagation(); hide() })
-      document.body.appendChild(xBtn)
-    }
+    xBtn.addEventListener('click', (e) => { e.stopPropagation(); hide() })
 
-    // Clic fuera del elemento → cerrar (capture phase para interceptar antes de otros handlers)
+    // Clic fuera del elemento mostrado → cerrar (fase capture, antes de otros handlers)
     outsideHandler = (e) => {
+      if (xBtn.contains(e.target)) return
       if (domTarget && domTarget.contains(e.target)) return
-      if (xBtn && xBtn.contains(e.target)) return
       hide()
     }
-    // Pequeño delay para que el clic que disparó show_hide no cierre inmediatamente
-    setTimeout(() => document.addEventListener('click', outsideHandler, true), 150)
+    // Delay para que el clic disparador no cierre el elemento inmediatamente
+    setTimeout(() => document.addEventListener('click', outsideHandler, true), 160)
 
-    // Timer opcional: cfg.dismissAfter en segundos
+    // Timer opcional: dismissAfter en segundos
     if (a.dismissAfter && Number(a.dismissAfter) > 0) {
       timer = setTimeout(hide, Number(a.dismissAfter) * 1000)
     }

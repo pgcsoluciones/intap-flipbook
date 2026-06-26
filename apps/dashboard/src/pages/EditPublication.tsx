@@ -2195,7 +2195,7 @@ export default function EditPublication() {
               onToggleHide={toggleHideInEditor}
             />
           ) : (
-            <PageConfig bgColor={bgColor} applyBgColor={applyBgColor} />
+            <PageConfig bgColor={bgColor} applyBgColor={applyBgColor} onShowAllHidden={showAllHiddenInEditor} />
           )}
         </aside>
       </div>
@@ -2322,7 +2322,11 @@ export default function EditPublication() {
                 <CtxItem icon="alignBottom"  label="Alinear abajo"     onClick={() => { alignSelected('bottom'); setCtxMenu(null) }} />
               </>
             ) : (
-              <div style={{ padding: '8px 12px', color: '#9ca3af', fontSize: 12 }}>Selecciona un elemento</div>
+              <>
+                <div style={{ padding: '8px 12px', color: '#9ca3af', fontSize: 12 }}>Selecciona un elemento</div>
+                <div style={s.ctxSep} />
+                <CtxItem icon="eye" label="Mostrar todos los ocultos" onClick={() => { setCtxMenu(null); showAllHiddenInEditor() }} />
+              </>
             )}
           </div>
         </>
@@ -2859,10 +2863,20 @@ function ShapeBtn({ icon, label, onClick }: { icon: string; label: string; onCli
 }
 
 // ─── Configuración de página (panel derecho cuando no hay selección) ──────────
-function PageConfig({ bgColor, applyBgColor }: { bgColor: string; applyBgColor: (c: string, all?: boolean) => void }) {
+function PageConfig({ bgColor, applyBgColor, onShowAllHidden }: { bgColor: string; applyBgColor: (c: string, all?: boolean) => void; onShowAllHidden?: () => void }) {
   return (
     <div style={{ padding: 16, overflowY: 'auto', flex: 1, minHeight: 0 }}>
       <div style={s.rightHeader}>Configuración de página</div>
+
+      {onShowAllHidden && (
+        <button
+          onClick={onShowAllHidden}
+          style={{ width: '100%', marginBottom: 16, padding: '8px 12px', background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}
+          title="Muestra todos los elementos marcados como ocultos en este lienzo"
+        >
+          <span>👁</span> Mostrar todos los ocultos
+        </button>
+      )}
 
       <CfgGroup label="Tamaño de página">
         <div style={{ display: 'flex', gap: 8 }}>
