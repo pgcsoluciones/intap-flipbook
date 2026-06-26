@@ -190,9 +190,14 @@ function Body({ type, config }: { type: string; config: any }) {
       )
       return (
         <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,.18)', fontFamily: 'Inter, sans-serif', color: '#1f2937' }}>
-          <div style={{ position: 'relative', width: '100%', flex: '0 0 44%', minHeight: 110, background: imgs[0] ? `center/cover no-repeat url("${imgs[0]}")` : '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 13 }}>
+          <div style={{ position: 'relative', width: '100%', flex: '0 0 44%', minHeight: 110, background: '#f1f5f9', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 13 }}>
+            {imgs[0] && (() => {
+              const f = (cfg.fit || {})[imgs[0]] || {}
+              const px = f.x ?? 50, py = f.y ?? 50, z = f.zoom || 1
+              return <div style={{ position: 'absolute', inset: 0, backgroundImage: `url("${imgs[0]}")`, backgroundSize: 'cover', backgroundPosition: `${px}% ${py}%`, backgroundRepeat: 'no-repeat', transform: `scale(${z})`, transformOrigin: `${px}% ${py}%` }} />
+            })()}
             {!imgs.length && 'Sin imagen'}
-            {imgs.length > 1 && <div style={{ position: 'absolute', bottom: 8, right: 10, background: 'rgba(0,0,0,.5)', color: '#fff', borderRadius: 12, padding: '2px 8px', fontSize: 11 }}>1 / {imgs.length}</div>}
+            {imgs.length > 1 && <div style={{ position: 'absolute', bottom: 8, right: 10, background: 'rgba(0,0,0,.5)', color: '#fff', borderRadius: 12, padding: '2px 8px', fontSize: 11, zIndex: 2 }}>1 / {imgs.length}</div>}
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 10, boxSizing: 'border-box' }}>
             {cfg.title && <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.25 }}>{cfg.title}</div>}

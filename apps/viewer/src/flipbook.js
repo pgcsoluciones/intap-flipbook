@@ -417,9 +417,15 @@ async function init() {
       }
       case 'popup_image': {
         if (!a.image) break
+        const fit = fitCss(a.image, a.fit)
         const im = document.createElement('img')
         im.src = a.image
-        im.style.cssText = 'max-width:80vw;max-height:80vh;display:block;border-radius:8px;'
+        if (fit) {
+          // Con encuadre: se muestra en un recuadro de proporción fija que "cubre".
+          im.style.cssText = 'width:min(80vw,560px);height:min(60vh,420px);display:block;border-radius:8px;' + fit
+        } else {
+          im.style.cssText = 'max-width:80vw;max-height:80vh;display:block;border-radius:8px;'
+        }
         showPopup(im)
         break
       }
@@ -525,7 +531,7 @@ async function init() {
         if (!imgs.length) break
         injectGalleryStyles()
         const startIdx = imgs.indexOf(a.cover) !== -1 ? imgs.indexOf(a.cover) : 0
-        showImageGallery(imgs, startIdx)
+        showImageGallery(imgs, startIdx, a.fit)
         break
       }
 
@@ -569,7 +575,7 @@ async function init() {
     document.head.appendChild(st)
   }
 
-  function showImageGallery(imgs, startIdx) {
+  function showImageGallery(imgs, startIdx, fitMap) {
     let current = startIdx
     const overlay = document.createElement('div')
     overlay.className = 'fg-overlay'
@@ -614,6 +620,14 @@ async function init() {
     function goto(i) {
       current = (i + imgs.length) % imgs.length
       mainImg.src = imgs[current]
+      // Encuadre por imagen: si existe, la imagen "cubre" un recuadro fijo respetando
+      // el zoom y centrado; si no, conserva el ajuste "contain" original (sin recorte).
+      const fit = fitCss(imgs[current], fitMap)
+      if (fit) {
+        mainImg.style.cssText = 'width:min(90vw,720px);height:min(70vh,520px);border-radius:8px;display:block;user-select:none;' + fit
+      } else {
+        mainImg.style.cssText = ''
+      }
       counter.textContent = `${current + 1} / ${imgs.length}`
       thumbEls.forEach((t, j) => t.classList.toggle('active', j === current))
     }
@@ -793,6 +807,14 @@ async function init() {
     return d
   }
   function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) }
+  // Encuadre por imagen elegido en el editor (zoom + centrar). fitMap = { [url]: {zoom,x,y} }.
+  // Si la imagen no tiene encuadre guardado devuelve '' (conserva el comportamiento previo).
+  function fitCss(url, fitMap) {
+    const f = fitMap && fitMap[url]
+    if (!f) return ''
+    const zoom = f.zoom || 1, x = f.x == null ? 50 : f.x, y = f.y == null ? 50 : f.y
+    return `object-fit:cover;object-position:${x}% ${y}%;transform:scale(${zoom});transform-origin:${x}% ${y}%;`
+  }
   function ytId(u) { const m = (u || '').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/); return m ? m[1] : null }
   function vimeoId(u) { const m = (u || '').match(/vimeo\.com\/(\d+)/); return m ? m[1] : null }
 
@@ -816,7 +838,10 @@ async function init() {
     } else {
       const slides = imgs.map((src, i) => {
         const im = document.createElement('div')
-        im.style.cssText = `position:absolute;inset:0;background-image:url("${src}");background-size:cover;background-position:center;background-repeat:no-repeat;opacity:${i === 0 ? 1 : 0};transition:opacity .5s ease;`
+        // Encuadre por imagen (zoom + centrar) elegido en el editor.
+        const f = (cfg.fit || {})[src] || {}
+        const px = f.x == null ? 50 : f.x, py = f.y == null ? 50 : f.y, z = f.zoom || 1
+        im.style.cssText = `position:absolute;inset:0;background-image:url("${src}");background-size:cover;background-position:${px}% ${py}%;background-repeat:no-repeat;transform:scale(${z});transform-origin:${px}% ${py}%;opacity:${i === 0 ? 1 : 0};transition:opacity .5s ease;`
         media.appendChild(im); return im
       })
       let cur = 0
@@ -1205,9 +1230,12 @@ async function init() {
         const transition = cfg.transition || 'fade'
         const box = document.createElement('div')
         box.style.cssText = 'position:relative;width:100%;height:100%;overflow:hidden;border-radius:8px;background:#0f172a;'
-        const slides = imgs.map((src) => {
+        // Encuadre por imagen (zoom + centrar) elegido en el editor: { [src]: {zoom,x,y} }.
+        const fits = imgs.map((src) => { const f = (cfg.fit || {})[src] || {}; return { x: f.x == null ? 50 : f.x, y: f.y == null ? 50 : f.y, z: f.zoom || 1 } })
+        const slides = imgs.map((src, i) => {
           const im = document.createElement('div')
-          im.style.cssText = `position:absolute;inset:0;background-image:url("${src}");background-size:cover;background-position:center;background-repeat:no-repeat;`
+          const ft = fits[i]
+          im.style.cssText = `position:absolute;inset:0;background-image:url("${src}");background-size:cover;background-position:${ft.x}% ${ft.y}%;background-repeat:no-repeat;transform-origin:${ft.x}% ${ft.y}%;`
           box.appendChild(im); return im
         })
         let cur = 0
@@ -1216,9 +1244,10 @@ async function init() {
         const layout = (animate) => {
           slides.forEach((s, i) => {
             s.style.transition = animate ? 'opacity .5s ease, transform .5s ease' : 'none'
-            if (transition === 'slide') { s.style.transform = `translateX(${(i - cur) * 100}%)`; s.style.opacity = '1' }
-            else if (transition === 'zoom') { s.style.opacity = i === cur ? '1' : '0'; s.style.transform = i === cur ? 'scale(1)' : 'scale(1.08)' }
-            else { s.style.opacity = i === cur ? '1' : '0'; s.style.transform = 'none' }
+            const z = fits[i].z // zoom de encuadre, se compone con la transición
+            if (transition === 'slide') { s.style.transform = `translateX(${(i - cur) * 100}%) scale(${z})`; s.style.opacity = '1' }
+            else if (transition === 'zoom') { s.style.opacity = i === cur ? '1' : '0'; s.style.transform = i === cur ? `scale(${z})` : `scale(${z * 1.08})` }
+            else { s.style.opacity = i === cur ? '1' : '0'; s.style.transform = `scale(${z})` }
           })
         }
         layout(false)

@@ -3530,6 +3530,95 @@ function SocialWidgetProps({ obj, cfg, setCfg }: { obj: any; cfg: any; setCfg: (
   )
 }
 
+// ─── Encuadre por imagen (zoom + arrastrar para centrar) ──────────────────────
+// "Fit" = cómo se acomoda una imagen dentro de su recuadro sin deformarse.
+// Guardamos { zoom, x, y }: zoom 1–3 (acercar), x/y 0–100 (posición que se ve,
+// como object-position en CSS). El viewer reproduce esto idéntico → editor = publicado.
+type ImgFit = { zoom: number; x: number; y: number }
+const DEFAULT_FIT: ImgFit = { zoom: 1, x: 50, y: 50 }
+
+// Devuelve los estilos CSS que "cubren" el recuadro respetando el encuadre elegido.
+function imageFitCss(fit?: Partial<ImgFit> | null): React.CSSProperties {
+  const f = { ...DEFAULT_FIT, ...(fit ?? {}) }
+  return {
+    objectFit: 'cover',
+    objectPosition: `${f.x}% ${f.y}%`,
+    transform: `scale(${f.zoom})`,
+    transformOrigin: `${f.x}% ${f.y}%`,
+  }
+}
+
+// Control visual: caja de vista previa donde se ARRASTRA la imagen para centrarla
+// + slider de zoom. Llama onChange con el nuevo { zoom, x, y }.
+function ImageFitControl({ src, fit, onChange, aspect = 4 / 3 }: { src: string; fit?: Partial<ImgFit> | null; onChange: (f: ImgFit) => void; aspect?: number }) {
+  const f: ImgFit = { ...DEFAULT_FIT, ...(fit ?? {}) }
+  const boxRef = React.useRef<HTMLDivElement | null>(null)
+  const drag = React.useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null)
+
+  const onDown = (e: React.PointerEvent) => {
+    const box = boxRef.current; if (!box) return
+    box.setPointerCapture(e.pointerId)
+    drag.current = { sx: e.clientX, sy: e.clientY, ox: f.x, oy: f.y }
+  }
+  const onMove = (e: React.PointerEvent) => {
+    const d = drag.current, box = boxRef.current; if (!d || !box) return
+    const r = box.getBoundingClientRect()
+    // Arrastrar a la derecha revela el lado izquierdo → la posición disminuye.
+    // Dividimos por zoom para que a más acercamiento el control sea más fino.
+    const nx = d.ox - ((e.clientX - d.sx) / r.width) * 100 / f.zoom
+    const ny = d.oy - ((e.clientY - d.sy) / r.height) * 100 / f.zoom
+    onChange({ zoom: f.zoom, x: Math.max(0, Math.min(100, nx)), y: Math.max(0, Math.min(100, ny)) })
+  }
+  const onUp = (e: React.PointerEvent) => {
+    drag.current = null
+    try { boxRef.current?.releasePointerCapture(e.pointerId) } catch {}
+  }
+
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div
+        ref={boxRef}
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        style={{ position: 'relative', width: '100%', aspectRatio: String(aspect), borderRadius: 8, overflow: 'hidden', background: '#0f172a', cursor: 'grab', touchAction: 'none', userSelect: 'none' }}
+      >
+        {src
+          ? <img src={src} alt="" draggable={false} style={{ width: '100%', height: '100%', pointerEvents: 'none', ...imageFitCss(f) }} />
+          : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', color: '#94a3b8', fontSize: 12 }}>Sin imagen</div>}
+        <div style={{ position: 'absolute', left: 6, bottom: 6, background: 'rgba(15,23,42,.7)', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 4, pointerEvents: 'none' }}>⤢ Arrastra para centrar</div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+        <span style={{ fontSize: 11, color: '#6b7280', flex: 'none' }}>Zoom</span>
+        <input
+          type="range" min={1} max={3} step={0.01} value={f.zoom}
+          style={{ flex: 1 }}
+          onChange={(e) => onChange({ ...f, zoom: +e.target.value })}
+        />
+        <span style={{ fontSize: 11, color: '#374151', width: 34, textAlign: 'right' }}>{f.zoom.toFixed(1)}x</span>
+        <button type="button" style={{ ...s.alignBtn, fontSize: 11, padding: '3px 8px', flex: 'none' }} onClick={() => onChange({ ...DEFAULT_FIT })}>Restablecer</button>
+      </div>
+    </div>
+  )
+}
+
+// Fila de imagen con botón "Ajustar" que despliega el ImageFitControl inline.
+// `fitMap` es el objeto { [url]: ImgFit } guardado en la config; setFit lo actualiza.
+function ImageFitToggle({ url, fitMap, setFit, aspect }: { url: string; fitMap: Record<string, ImgFit>; setFit: (url: string, f: ImgFit) => void; aspect?: number }) {
+  const [open, setOpen] = React.useState(false)
+  if (!url) return null
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <button
+        type="button"
+        style={{ ...s.alignBtn, fontSize: 11, padding: '3px 8px', width: '100%', color: open ? '#4F46E5' : '#374151', borderColor: open ? '#c7d2fe' : undefined, background: open ? '#eef2ff' : undefined }}
+        onClick={() => setOpen(o => !o)}
+      >⤢ {open ? 'Cerrar ajuste' : 'Ajustar encuadre (zoom y centrar)'}</button>
+      {open && <ImageFitControl src={url} fit={fitMap[url]} onChange={(f) => setFit(url, f)} aspect={aspect} />}
+    </div>
+  )
+}
+
 // Panel del widget Galería / Slider: lista de imágenes + opciones de reproducción.
 // Panel de la Ficha de producto: galería (máx. 5), textos, especificaciones y botones CTA.
 // Todos los campos se editan aquí y se ven en vivo con el botón "Vista previa".
@@ -3539,6 +3628,8 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
   const fileRefs = React.useRef<(HTMLInputElement | null)[]>([])
   const multiRef = React.useRef<HTMLInputElement | null>(null)
   const [uploading, setUploading] = React.useState(false)
+  const fitMap: Record<string, ImgFit> = cfg.fit ?? {}
+  const setFit = (url: string, f: ImgFit) => setCfg({ fit: { ...fitMap, [url]: f } })
   const setImages = (next: string[]) => setCfg({ images: next })
   const updateImage = (i: number, url: string) => { const n = [...images]; n[i] = url; setImages(n) }
   const removeImage = (i: number) => setImages(images.filter((_, j) => j !== i))
@@ -3599,6 +3690,9 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
             <button type="button" title="Bajar en orden" style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, padding: '0 2px' }} onClick={() => move(i, 1)}>▼</button>
             <button type="button" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }} onClick={() => removeImage(i)}>✕</button>
           </div>
+        ))}
+        {images.filter(Boolean).map((url) => (
+          <ImageFitToggle key={'fit-' + url} url={url} fitMap={fitMap} setFit={setFit} aspect={4 / 3} />
         ))}
         <input ref={multiRef} type="file" accept={ACCEPT_IMAGE} multiple style={{ display: 'none' }}
           onChange={(e) => { if (e.target.files?.length) uploadMany(e.target.files); e.target.value = '' }} />
@@ -3707,6 +3801,8 @@ function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => voi
   const fileRefs = React.useRef<(HTMLInputElement | null)[]>([])
   const multiRef = React.useRef<HTMLInputElement | null>(null)
   const [uploading, setUploading] = React.useState(false)
+  const fitMap: Record<string, ImgFit> = cfg.fit ?? {}
+  const setFit = (url: string, f: ImgFit) => setCfg({ fit: { ...fitMap, [url]: f } })
   const setImages = (next: string[]) => setCfg({ images: next })
   const addImage = () => { if (images.length < 30) setImages([...images, '']) }
   const updateImage = (i: number, url: string) => { const n = [...images]; n[i] = url; setImages(n) }
@@ -3743,6 +3839,9 @@ function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => voi
             <button type="button" title="Bajar en orden" style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, padding: '0 2px' }} onClick={() => move(i, 1)}>▼</button>
             <button type="button" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }} onClick={() => removeImage(i)}>✕</button>
           </div>
+        ))}
+        {images.filter(Boolean).map((url) => (
+          <ImageFitToggle key={'fit-' + url} url={url} fitMap={fitMap} setFit={setFit} aspect={4 / 3} />
         ))}
         <input ref={multiRef} type="file" accept={ACCEPT_IMAGE} multiple style={{ display: 'none' }}
           onChange={(e) => { if (e.target.files?.length) uploadMany(e.target.files); e.target.value = '' }} />
@@ -4281,6 +4380,14 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
       {action.type === 'popup_image' && (
         <PropGroup label="Imagen emergente">
           <FileField value={action.image ?? ''} onChange={(url) => setAction({ image: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP · máx 10 MB" />
+          {action.image && (
+            <ImageFitToggle
+              url={action.image}
+              fitMap={action.fit ?? {}}
+              setFit={(url, f) => setAction({ fit: { ...(action.fit ?? {}), [url]: f } })}
+              aspect={4 / 3}
+            />
+          )}
         </PropGroup>
       )}
 
@@ -4400,6 +4507,8 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
 function GalleryImagesEditor({ action, setAction }: { action: any; setAction: (p: any) => void }) {
   const images: string[] = action.images ?? []
   const cover: string = action.cover ?? images[0] ?? ''
+  const fitMap: Record<string, ImgFit> = action.fit ?? {}
+  const setFit = (url: string, f: ImgFit) => setAction({ fit: { ...fitMap, [url]: f } })
   const fileRefs = useRef<(HTMLInputElement | null)[]>([])
 
   function setImages(next: string[]) {
@@ -4461,6 +4570,9 @@ function GalleryImagesEditor({ action, setAction }: { action: any; setAction: (p
               onClick={() => removeImage(i)}
             >✕</button>
           </div>
+        ))}
+        {images.filter(Boolean).map((url) => (
+          <ImageFitToggle key={'fit-' + url} url={url} fitMap={fitMap} setFit={setFit} aspect={4 / 3} />
         ))}
         {images.length < 20 && (
           <button type="button" style={{ ...s.alignBtn, fontSize: 12 }} onClick={addImage}>+ Agregar imagen</button>
