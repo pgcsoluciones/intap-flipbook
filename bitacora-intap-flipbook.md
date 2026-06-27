@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-06-27 — Rama `feature/live-preview-image-adjustments`
+
+- **Fix fondo A4 en editor:** `canvas_json` se sanitiza para no guardar ni cargar `backgroundImage`; el fondo visible se reinstala desde `image_url + cover_json` y `bgImgRef.current` queda sincronizado con `canvas.backgroundImage`.
+- **Fix preview de pop-up en lienzo:** `buildPopupPreview(cfg, imageObj?)` queda como renderer único para creación y refresh. Las imágenes de preview usan caché por URL, se clonan para aplicar `imageZoom/imagePosX/imagePosY`, y el refresh reemplaza solo hijos del mismo `fabric.Group` del `popup_banner`.
+- **Alcance:** no se tocó viewer, galería ni otros widgets. Sin commit, push ni deploy.
+
+---
+
 ## ¿Qué es Intap Flipbook?
 
 SaaS para crear revistas digitales interactivas (flipbooks) con efecto de paso de página. Stack 100% Cloudflare.

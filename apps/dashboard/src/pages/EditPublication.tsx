@@ -41,6 +41,16 @@ function computeCover(iw: number, ih: number, fr: { zoom?: number; fx?: number; 
   return { cropX, cropY, cropW, cropH, scaleX: targetW / cropW, scaleY: targetH / cropH }
 }
 
+function canvasJsonWithoutBackgroundImage(json: any): any {
+  const clean = typeof json === 'string' ? JSON.parse(json) : { ...(json ?? {}) }
+  delete clean.backgroundImage
+  return clean
+}
+
+function serializedCanvasWithoutBackgroundImage(canvas: any): string {
+  return JSON.stringify(canvasJsonWithoutBackgroundImage(canvas.toJSON(['data'])))
+}
+
 // ─── Iconos SVG monocromáticos (estilo línea, 20px, stroke uniforme) ──────────
 // "stroke" = trazo. Todos comparten grosor 1.6 y currentColor para mantener
 // consistencia visual en toda la barra de herramientas.
@@ -509,15 +519,90 @@ function buildQuizPreview(): any {
   ])
 }
 
-function buildPopupPreview(): any {
+const popupPreviewImageCache = new Map<string, any>()
+const popupPreviewImageLoading = new Map<string, Array<(img: any | null) => void>>()
+
+function clonePopupPreviewImage(img: any, cb: (clone: any | null) => void) {
+  if (!img?.clone) { cb(img ?? null); return }
+  img.clone((clone: any) => cb(clone))
+}
+
+function getPopupPreviewImage(url: string, cb: (img: any | null) => void) {
+  if (!url) { cb(null); return }
+  const cached = popupPreviewImageCache.get(url)
+  if (cached) {
+    clonePopupPreviewImage(cached, cb)
+    return
+  }
+  const pending = popupPreviewImageLoading.get(url)
+  if (pending) {
+    pending.push(cb)
+    return
+  }
+  popupPreviewImageLoading.set(url, [cb])
+  fabric.Image.fromURL(url, (img: any) => {
+    popupPreviewImageCache.set(url, img)
+    const waiters = popupPreviewImageLoading.get(url) ?? []
+    popupPreviewImageLoading.delete(url)
+    waiters.forEach((fn) => clonePopupPreviewImage(img, fn))
+  })
+}
+
+function buildPopupPreview(cfg: any = {}, imageObj?: any): any {
   const W = 240, H = 130
-  return wGroup([
-    wRect(0, 0, W, H, { rx: 14, ry: 14, fill: '#4f46e5' }),
-    wText('🔔  ¡Oferta!', 16, 16, { fontSize: 14, fontWeight: 'bold', fill: '#ffffff' }),
-    wText('Mensaje del pop-up emergente', 16, 46, { fontSize: 12, fill: '#e0e7ff' }),
-    wRect(16, 88, 112, 28, { rx: 8, ry: 8, fill: '#ffffff' }),
-    wText('Ver más', 72, 95, { fontSize: 12, fontWeight: 'bold', fill: '#4f46e5', originX: 'center' }),
-  ])
+  const bg = cfg.bgColor || '#4f46e5'
+  const tc = cfg.textColor || '#ffffff'
+  const title = String(cfg.title || '¡Oferta!')
+  const text = String(cfg.text || 'Mensaje del pop-up emergente')
+  const buttonText = String(cfg.buttonText || 'Ver más')
+  const imgW = imageObj ? 76 : 0
+  const x0 = imageObj ? imgW + 14 : 16
+  const els: any[] = [wRect(0, 0, W, H, { rx: 14, ry: 14, fill: bg })]
+  if (imageObj && imageObj.width && imageObj.height) {
+    const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(
+      imageObj.width,
+      imageObj.height,
+      { zoom: cfg.imageZoom || 1, fx: (cfg.imagePosX ?? 50) / 100, fy: (cfg.imagePosY ?? 50) / 100 },
+      imgW,
+      H,
+    )
+    imageObj.set({ left: 0, top: 0, cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top' })
+    ;(imageObj as any).__popupPreviewImage = true
+    els.push(imageObj)
+    els.push(wRect(imgW - 1, 0, 1, H, { fill: 'rgba(255,255,255,.22)' }))
+  }
+  els.push(wText(`🔔  ${title.slice(0, 20)}`, x0, 16, { fontSize: 14, fontWeight: 'bold', fill: tc }))
+  els.push(wText(text.slice(0, 28), x0, 46, { fontSize: 12, fill: tc, opacity: 0.82 }))
+  els.push(wRect(x0, 88, 112, 28, { rx: 8, ry: 8, fill: '#ffffff' }))
+  els.push(wText(buttonText.slice(0, 14), x0 + 56, 95, { fontSize: 12, fontWeight: 'bold', fill: bg, originX: 'center' }))
+  return wGroup(els)
+}
+
+function replacePopupPreviewContents(target: any, next: any) {
+  const children = target.getObjects?.().slice?.() ?? []
+  children.forEach((child: any) => target.removeWithUpdate?.(child))
+  ;(next.getObjects?.() ?? []).forEach((child: any) => target.addWithUpdate?.(child))
+  target.dirty = true
+  target.setCoords?.()
+}
+
+function refreshPopupPreviewGroup(obj: any, canvas: any) {
+  if (!obj || !canvas || obj.data?.kind !== 'widget' || obj.data?.widget?.type !== 'popup_banner') return
+  const cfg = obj.data?.widget?.config ?? {}
+  const url = cfg.image || ''
+  const token = ((obj as any).__popupPreviewToken ?? 0) + 1
+  ;(obj as any).__popupPreviewToken = token
+  const wasActive = canvas.getActiveObject?.() === obj
+  const apply = (next: any) => {
+    const stillOnCanvas = canvas.getObjects?.().includes(obj)
+    const currentUrl = obj.data?.widget?.config?.image || ''
+    if ((obj as any).__popupPreviewToken !== token || currentUrl !== url || !stillOnCanvas) return
+    replacePopupPreviewContents(obj, next)
+    if (wasActive) canvas.setActiveObject(obj)
+    canvas.requestRenderAll()
+  }
+  if (url) getPopupPreviewImage(url, (img) => apply(buildPopupPreview(obj.data?.widget?.config ?? cfg, img ?? undefined)))
+  else apply(buildPopupPreview(cfg))
 }
 
 function buildGalleryPreview(): any {
@@ -571,7 +656,7 @@ function buildProductCardPreview(): any {
   return wGroup(els)
 }
 
-function makeWidgetCard(type: WidgetType, label: string): any {
+function makeWidgetCard(type: WidgetType, label: string, widgetCfg: any = {}): any {
   switch (type) {
     case 'product_card': return buildProductCardPreview()
     case 'gallery':      return buildGalleryPreview()
@@ -586,7 +671,7 @@ function makeWidgetCard(type: WidgetType, label: string): any {
     case 'download':     return buildButtonPreview('⬇', 'Descargar archivo', '#16a34a')
     case 'embed':        return buildEmbedPreview()
     case 'quiz':         return buildQuizPreview()
-    case 'popup_banner': return buildPopupPreview()
+    case 'popup_banner': return buildPopupPreview(widgetCfg)
     default: {
       const v = WIDGET_VISUAL[type] ?? { glyph: '▦', color: '#4f46e5', w: 230, h: 150, shape: 'card' as const }
       return wGroup([
@@ -745,8 +830,16 @@ export default function EditPublication() {
     const c = fabricRef.current
     if (!c) return
     isUndoRedoRef.current = true
-    c.loadFromJSON(json, () => {
-      c.renderAll()
+    const bg = bgImgRef.current
+    c.loadFromJSON(canvasJsonWithoutBackgroundImage(json), () => {
+      if (bg) {
+        c.setBackgroundImage(bg, () => {
+          bgImgRef.current = c.backgroundImage
+          c.renderAll()
+        })
+      } else {
+        c.renderAll()
+      }
       isUndoRedoRef.current = false
       scheduleAutosaveRef.current()
     })
@@ -812,7 +905,7 @@ export default function EditPublication() {
       // Serializa el canvas restaurando la opacidad real de los objetos ocultos en el editor.
       // data.hiddenInEditor = true → en el editor muestran opacity 0.07 para ser clicables,
       // pero al guardar el viewer tiene que ver la opacidad real (data.originalOpacity).
-      const rawJson = canvas.toJSON(['data']) as any
+      const rawJson = canvasJsonWithoutBackgroundImage(canvas.toJSON(['data'])) as any
       if (rawJson?.objects) {
         rawJson.objects = rawJson.objects.map((obj: any) => {
           if (obj.data?.hiddenInEditor && obj.data?.originalOpacity != null) {
@@ -926,19 +1019,23 @@ export default function EditPublication() {
     // Fondo de página en modo "cubrir": la hoja llena el recuadro A4 (W×H) sin
     // deformarse. Replica el `object-fit:cover` del viewer (flipbook.js) y respeta
     // el encuadre manual (zoom + posición) guardado en cover_json.
-    fabric.Image.fromURL(activePage.image_url, (img: any) => {
+    const installPageBackground = (after?: () => void) => fabric.Image.fromURL(activePage.image_url, (img: any) => {
+      if (fabricRef.current !== canvas || pageIdRef.current !== activePage.id) return
       img.set({ selectable: false, evented: false })
       if (img && img.width && img.height) {
-        bgImgRef.current = img
         bgNatRef.current = { iw: img.width, ih: img.height }
         const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
         img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
       }
-      canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
+      canvas.setBackgroundImage(img, () => {
+        bgImgRef.current = canvas.backgroundImage
+        canvas.renderAll()
+        after?.()
+      })
     })
 
     if (activePage.canvas_json) {
-      canvas.loadFromJSON(activePage.canvas_json, () => {
+      canvas.loadFromJSON(canvasJsonWithoutBackgroundImage(activePage.canvas_json), () => {
         isLoading = false
         // Aplicar visibilidad de editor: elementos marcados como ocultos en el editor
         // se muestran con opacidad mínima para que sean clicables pero no distraigan.
@@ -947,14 +1044,13 @@ export default function EditPublication() {
             o.set({ opacity: 0.07, selectable: false, evented: false, hasControls: false, hasBorders: false })
           }
         })
-        canvas.renderAll()
         // Estado inicial en el historial
-        pushHistory(JSON.stringify(canvas.toJSON(['data'])))
+        installPageBackground(() => pushHistory(serializedCanvasWithoutBackgroundImage(canvas)))
       })
     } else {
       isLoading = false
       // Página vacía: estado inicial
-      pushHistory(JSON.stringify(canvas.toJSON(['data'])))
+      installPageBackground(() => pushHistory(serializedCanvasWithoutBackgroundImage(canvas)))
     }
 
     const onSel = (e: any) => { setSelected(e.selected?.[0] ?? canvas.getActiveObject() ?? null); setSelectVersion((v) => v + 1) }
@@ -1016,7 +1112,7 @@ export default function EditPublication() {
     // Autoguardado + historial en cada cambio del lienzo
     const onChange = () => {
       if (isLoading) return  // no guardar durante la carga inicial del JSON
-      if (!isUndoRedoRef.current) pushHistory(JSON.stringify(canvas.toJSON(['data'])))
+      if (!isUndoRedoRef.current) pushHistory(serializedCanvasWithoutBackgroundImage(canvas))
       scheduleAutosave()
     }
     // Reemplazo in-situ: si hay un objeto marcado para reemplazar y el usuario
@@ -1123,7 +1219,7 @@ export default function EditPublication() {
     const handler = () => {
       if (fabricRef.current && pageIdRef.current) {
         try {
-          const json = JSON.stringify(fabricRef.current.toJSON(['data']))
+          const json = serializedCanvasWithoutBackgroundImage(fabricRef.current)
           api.pages.saveCanvas(pageIdRef.current, json).catch(() => {})
         } catch {}
       }
@@ -1419,9 +1515,10 @@ export default function EditPublication() {
       setActiveTool('widgets')
       return
     }
-    const group = makeWidgetCard(w.type, w.label)
+    const group = makeWidgetCard(w.type, w.label, defaultCfg)
     group.set({ left: 100, top: 120, data: { kind: 'widget', widget: { type: w.type, config: defaultCfg } } })
     c.add(group); c.setActiveObject(group); c.requestRenderAll()
+    if (w.type === 'popup_banner' && defaultCfg.image) refreshPopupPreviewGroup(group, c)
     setActiveTool('widgets')
     scheduleAutosave()
   }
@@ -1462,7 +1559,7 @@ export default function EditPublication() {
       let canvasJson = page.canvas_json ?? null
       let coverJson = page.cover_json ?? null
       if (page.id === pageIdRef.current && fabricRef.current) {
-        canvasJson = JSON.stringify(fabricRef.current.toJSON(['data']))
+        canvasJson = serializedCanvasWithoutBackgroundImage(fabricRef.current)
         coverJson = page.cover_json ?? null
       }
       // 1. Crear la página nueva con la misma imagen de fondo.
@@ -2930,7 +3027,20 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
 
   const [, setTick] = React.useState(0)
   const set = (props: any) => { obj.set(props); canvas?.requestRenderAll(); onChange(); setTick((t) => t + 1) }
-  const setData = (patch: any) => { (obj as any).data = { ...((obj as any).data ?? {}), ...patch }; onChange(); setTick((t) => t + 1) }
+  const setData = (patch: any) => {
+    const prevCfg = (obj as any).data?.widget?.config ?? {}
+    ;(obj as any).data = { ...((obj as any).data ?? {}), ...patch }
+    const nextCfg = (obj as any).data?.widget?.config ?? {}
+    const shouldRefreshPopup =
+      (obj as any).data?.kind === 'widget' &&
+      (obj as any).data?.widget?.type === 'popup_banner' &&
+      (prevCfg.image !== nextCfg.image ||
+        prevCfg.imageZoom !== nextCfg.imageZoom ||
+        prevCfg.imagePosX !== nextCfg.imagePosX ||
+        prevCfg.imagePosY !== nextCfg.imagePosY)
+    if (shouldRefreshPopup) refreshPopupPreviewGroup(obj, canvas)
+    onChange(); setTick((t) => t + 1)
+  }
   const [closeWarning, setCloseWarning] = React.useState('')
 
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'
