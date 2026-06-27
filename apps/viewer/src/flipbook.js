@@ -420,44 +420,129 @@ async function init() {
     ].join(','))
   }
 
+  function isPointInsideRect(x, y, rect) {
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+  }
+
+  function isPageVisiblyAtPoint(page, x, y) {
+    const top = document.elementFromPoint(x, y)
+    return top === page || page.contains(top)
+  }
+
+  function getVisibleSheetRects() {
+    const shell = document.getElementById('flipbook-container') || container.parentElement || container
+    const shellRect = shell.getBoundingClientRect()
+    const sheets = Array.from(container.querySelectorAll('.page'))
+      .map((page) => {
+        const rect = page.getBoundingClientRect()
+        return { page, rect }
+      })
+      .filter(({ page, rect }) => {
+        if (rect.width < 20 || rect.height < 20) return false
+        if (rect.right <= shellRect.left || rect.left >= shellRect.right || rect.bottom <= shellRect.top || rect.top >= shellRect.bottom) return false
+        const insetX = Math.min(24, rect.width / 4)
+        const insetY = Math.min(24, rect.height / 4)
+        const points = [
+          [rect.left + rect.width / 2, rect.top + rect.height / 2],
+          [rect.left + insetX, rect.top + insetY],
+          [rect.right - insetX, rect.top + insetY],
+          [rect.left + insetX, rect.bottom - insetY],
+          [rect.right - insetX, rect.bottom - insetY],
+        ]
+        return points.some(([x, y]) => isPointInsideRect(x, y, shellRect) && isPageVisiblyAtPoint(page, x, y))
+      })
+      .sort((a, b) => a.rect.left - b.rect.left)
+
+    const unique = []
+    sheets.forEach((sheet) => {
+      const duplicate = unique.some(({ rect }) =>
+        Math.abs(rect.left - sheet.rect.left) < 2
+        && Math.abs(rect.top - sheet.rect.top) < 2
+        && Math.abs(rect.width - sheet.rect.width) < 2
+        && Math.abs(rect.height - sheet.rect.height) < 2)
+      if (!duplicate) unique.push(sheet)
+    })
+    return unique
+  }
+
+  function getVisibleSheetLayout() {
+    const sheets = getVisibleSheetRects()
+    if (sheets.length >= 2) {
+      const left = sheets[0].rect
+      const right = sheets[sheets.length - 1].rect
+      const separated = Math.abs((right.left + right.width / 2) - (left.left + left.width / 2)) > Math.min(left.width, right.width) * 0.5
+      if (separated) return { mode: 'double', left, right }
+    }
+    if (sheets.length >= 1) return { mode: 'single', sheet: sheets[0].rect }
+    return null
+  }
+
+  function getSheetEdgeWidth(rect) {
+    return Math.min(56, Math.max(36, rect.width * 0.06))
+  }
+
   function getDesktopFlipEdgeZone(e) {
-    const rect = container.getBoundingClientRect()
-    if (!rect.width || !rect.height) return null
-    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return null
-    const edgeWidth = Math.min(80, Math.max(48, rect.width * 0.10))
-    const offsetX = e.clientX - rect.left
-    if (offsetX <= edgeWidth) return 'prev'
-    if (offsetX >= rect.width - edgeWidth) return 'next'
-    return 'center'
+    const layout = getVisibleSheetLayout()
+    if (!layout) return null
+    const idx = pageFlip.getCurrentPageIndex()
+    if (layout.mode === 'double') {
+      const leftEdge = getSheetEdgeWidth(layout.left)
+      const rightEdge = getSheetEdgeWidth(layout.right)
+      if (idx > firstIdx
+        && isPointInsideRect(e.clientX, e.clientY, layout.left)
+        && e.clientX <= layout.left.left + leftEdge) return 'prev'
+      if (idx < lastIdx
+        && isPointInsideRect(e.clientX, e.clientY, layout.right)
+        && e.clientX >= layout.right.right - rightEdge) return 'next'
+      return null
+    }
+
+    const edge = getSheetEdgeWidth(layout.sheet)
+    if (!isPointInsideRect(e.clientX, e.clientY, layout.sheet)) return null
+    if (idx > firstIdx && e.clientX <= layout.sheet.left + edge) return 'prev'
+    if (idx < lastIdx && e.clientX >= layout.sheet.right - edge) return 'next'
+    return null
   }
 
   function installDesktopEdgeFlipGuard() {
-    let lastGuardedAt = 0
+    const shell = document.getElementById('flipbook-container') || container.parentElement || container
+    let blockPointerSequence = false
+    let blockMouseSequence = false
 
-    const guard = (e) => {
-      if (!isPrecisePointerDesktop()) return
-      if (e.button != null && e.button !== 0) return
-      if (isFlipInteractiveTarget(e.target)) return
-
-      const zone = getDesktopFlipEdgeZone(e)
-      if (!zone) return
-
+    const block = (e) => {
       e.preventDefault()
       e.stopPropagation()
       e.stopImmediatePropagation?.()
-
-      if (zone === 'center') return
-      const now = Date.now()
-      if (now - lastGuardedAt < 250) return
-      lastGuardedAt = now
-
-      const idx = pageFlip.getCurrentPageIndex()
-      if (zone === 'prev' && idx > firstIdx) pageFlip.flipPrev()
-      if (zone === 'next' && idx < lastIdx) pageFlip.flipNext()
     }
 
-    ;['pointerdown', 'mousedown', 'click'].forEach((ev) => {
-      container.addEventListener(ev, guard, true)
+    const shouldBlockStart = (e) => {
+      if (!isPrecisePointerDesktop()) return
+      if (e.pointerType && e.pointerType !== 'mouse') return false
+      if (e.button != null && e.button !== 0) return
+      if (isFlipInteractiveTarget(e.target)) return false
+      return !getDesktopFlipEdgeZone(e)
+    }
+
+    shell.addEventListener('pointerdown', (e) => {
+      blockPointerSequence = shouldBlockStart(e) === true
+      if (blockPointerSequence) block(e)
+    }, true)
+    ;['pointermove', 'pointerup', 'click'].forEach((ev) => {
+      shell.addEventListener(ev, (e) => {
+        if (blockPointerSequence) block(e)
+        if (ev === 'click') blockPointerSequence = false
+      }, true)
+    })
+
+    shell.addEventListener('mousedown', (e) => {
+      blockMouseSequence = shouldBlockStart(e) === true
+      if (blockMouseSequence) block(e)
+    }, true)
+    ;['mousemove', 'mouseup', 'click'].forEach((ev) => {
+      shell.addEventListener(ev, (e) => {
+        if (blockMouseSequence) block(e)
+        if (ev === 'click') blockMouseSequence = false
+      }, true)
     })
   }
 
