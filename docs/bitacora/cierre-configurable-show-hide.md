@@ -105,3 +105,13 @@
 - Límite visual: durante un gesto válido, los movimientos que intentan llevar el doblez más allá del 10% del ancho real de la hoja se bloquean y se reenvían a PageFlip con coordenadas limitadas a ese borde visual. El `pointerup`/`mouseup` también se limita si hace falta para que PageFlip cierre o complete el gesto sin quedar atrapado.
 - Qué se preserva: no se volvió a navegación manual con `flipPrev()`/`flipNext()`; PageFlip sigue recibiendo el gesto nativo solo desde franjas válidas. Móvil, táctil, controles, teclado, widgets, hotspots, acciones y cierres configurables no cambian.
 - Prueba realizada o pendiente: `node --check apps/viewer/src/flipbook.js` exitoso, sin salida; `git diff --check` exitoso, sin salida.
+
+## 9. Hover real del curl en PageFlip local
+
+- Archivo tocado: `apps/viewer/src/vendor/page-flip.browser.js`, `apps/viewer/src/index.html` y `apps/viewer/src/flipbook.js`.
+- Función o bloque modificado: copia local de `page-flip@2.0.7`, carga del vendor local e `isPointOnCorners()` dentro del motor.
+- Qué hacía antes: el hover/curl real vivía en PageFlip, por `window.mousemove -> userMove(false) -> showCorner() -> isPointOnCorners()`, y usaba un umbral basado en `sqrt(pageWidth^2 + pageHeight^2) / 5`, mucho más profundo que el borde físico deseado.
+- Qué cambiaste: el viewer carga `/vendor/page-flip.browser.js` en lugar del CDN. En esa copia local, `isPointOnCorners()` usa `edgeX = pageWidth * 0.10` y `edgeY = pageHeight * 0.10`, manteniendo bordes exteriores y dejando que `checkDirection()` conserve izquierda exterior como anterior y derecha exterior como siguiente solo cuando exista página disponible.
+- Guard externo: queda solo para limitar el inicio de navegación al 8% de la hoja real; retiré la capa que clonaba, reenviaba o limitaba `mousemove`/`pointermove`/`mouseup`/`pointerup` para controlar profundidad visual.
+- Qué se preserva: no se reemplazó `showCorner()`, `do()` ni `calc()` con animaciones propias; móvil/táctil, controles, teclado, widgets, hotspots, acciones y cierres configurables no cambian.
+- Prueba realizada o pendiente: `node --check apps/viewer/src/flipbook.js`, `node --check apps/viewer/src/vendor/page-flip.browser.js` y `git diff --check` pendientes por ejecutar.
