@@ -482,7 +482,7 @@ async function init() {
   }
 
   function getSheetVisualLimitWidth(rect) {
-    return rect.width * 0.15
+    return rect.width * 0.10
   }
 
   function getDesktopFlipEdgeZone(e) {

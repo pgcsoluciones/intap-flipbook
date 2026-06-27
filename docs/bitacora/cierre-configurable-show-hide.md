@@ -102,6 +102,6 @@
 - Archivo tocado: `apps/viewer/src/flipbook.js`
 - Función o bloque modificado: cálculo de franjas en `getDesktopFlipEdgeZone` y limitación de movimiento en `installDesktopEdgeFlipGuard`.
 - Qué cambiaste: separé la zona de activación de la zona visual. El gesto solo puede iniciar en el 8% del ancho real de la hoja, con mínimo 36 px y máximo 64 px, siempre en bordes exteriores válidos.
-- Límite visual: durante un gesto válido, los movimientos que intentan llevar el doblez más allá del 15% del ancho real de la hoja se bloquean y se reenvían a PageFlip con coordenadas limitadas a ese borde visual. El `pointerup`/`mouseup` también se limita si hace falta para que PageFlip cierre o complete el gesto sin quedar atrapado.
+- Límite visual: durante un gesto válido, los movimientos que intentan llevar el doblez más allá del 10% del ancho real de la hoja se bloquean y se reenvían a PageFlip con coordenadas limitadas a ese borde visual. El `pointerup`/`mouseup` también se limita si hace falta para que PageFlip cierre o complete el gesto sin quedar atrapado.
 - Qué se preserva: no se volvió a navegación manual con `flipPrev()`/`flipNext()`; PageFlip sigue recibiendo el gesto nativo solo desde franjas válidas. Móvil, táctil, controles, teclado, widgets, hotspots, acciones y cierres configurables no cambian.
 - Prueba realizada o pendiente: `node --check apps/viewer/src/flipbook.js` exitoso, sin salida; `git diff --check` exitoso, sin salida.
