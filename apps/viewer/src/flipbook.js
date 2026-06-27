@@ -227,6 +227,7 @@ async function init() {
   })
 
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
+  installDesktopEdgeFlipGuard()
 
   // Ocultar la pantalla de carga. El flipbook-container siempre estuvo visible
   // debajo (necesario para que StPageFlip pueda medir sus dimensiones con size:'stretch');
@@ -386,54 +387,296 @@ async function init() {
   }
 
   // Registro de funciones de limpieza para elementos activos de show_hide.
-  // Clave: elementId del target. Valor: función hide() que cierra el elemento.
+  // Clave: elementId del target. Valor: registro con hide() y política de cambio de página.
   const dismissCleanupMap = {}
 
-  // Instala el mecanismo de cierre (X + clic fuera + timer) cuando show_hide muestra un elemento.
+  function getCloseOptionsForTarget(fabricTarget, domTarget) {
+    const opts = fabricTarget?.data?.widget?.config?.closeOptions
+      || fabricTarget?.data?.closeOptions
+      || domTarget?.__widget?.config?.closeOptions
+    return opts && typeof opts === 'object' ? opts : null
+  }
+
+  function setTargetVisibility(domTarget, fabricTarget, fcanvas, visible) {
+    if (fabricTarget) {
+      fabricTarget.visible = visible
+      fcanvas.renderAll()
+    }
+    if (domTarget) {
+      domTarget.style.visibility = visible ? 'visible' : 'hidden'
+      domTarget.dataset.visible = visible ? 'true' : 'false'
+    }
+  }
+
+  function isPrecisePointerDesktop() {
+    return window.matchMedia?.('(hover: hover) and (pointer: fine)')?.matches === true
+  }
+
+  function isFlipInteractiveTarget(target) {
+    return !!target?.closest?.([
+      'button', 'a', 'input', 'select', 'textarea', 'form', 'iframe', 'audio', 'video',
+      '[role="button"]', '[contenteditable="true"]', '[data-flip-interactive="true"]',
+      '#controls', '#thumbnail-panel', '#share-menu',
+    ].join(','))
+  }
+
+  function isPointInsideRect(x, y, rect) {
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+  }
+
+  function isPageVisiblyAtPoint(page, x, y) {
+    const top = document.elementFromPoint(x, y)
+    return top === page || page.contains(top)
+  }
+
+  function getVisibleSheetRects() {
+    const shell = document.getElementById('flipbook-container') || container.parentElement || container
+    const shellRect = shell.getBoundingClientRect()
+    const sheets = Array.from(container.querySelectorAll('.page'))
+      .map((page) => {
+        const rect = page.getBoundingClientRect()
+        return { page, rect }
+      })
+      .filter(({ page, rect }) => {
+        if (rect.width < 20 || rect.height < 20) return false
+        if (rect.right <= shellRect.left || rect.left >= shellRect.right || rect.bottom <= shellRect.top || rect.top >= shellRect.bottom) return false
+        const insetX = Math.min(24, rect.width / 4)
+        const insetY = Math.min(24, rect.height / 4)
+        const points = [
+          [rect.left + rect.width / 2, rect.top + rect.height / 2],
+          [rect.left + insetX, rect.top + insetY],
+          [rect.right - insetX, rect.top + insetY],
+          [rect.left + insetX, rect.bottom - insetY],
+          [rect.right - insetX, rect.bottom - insetY],
+        ]
+        return points.some(([x, y]) => isPointInsideRect(x, y, shellRect) && isPageVisiblyAtPoint(page, x, y))
+      })
+      .sort((a, b) => a.rect.left - b.rect.left)
+
+    const unique = []
+    sheets.forEach((sheet) => {
+      const duplicate = unique.some(({ rect }) =>
+        Math.abs(rect.left - sheet.rect.left) < 2
+        && Math.abs(rect.top - sheet.rect.top) < 2
+        && Math.abs(rect.width - sheet.rect.width) < 2
+        && Math.abs(rect.height - sheet.rect.height) < 2)
+      if (!duplicate) unique.push(sheet)
+    })
+    return unique
+  }
+
+  function getVisibleSheetLayout() {
+    const sheets = getVisibleSheetRects()
+    if (sheets.length >= 2) {
+      const left = sheets[0].rect
+      const right = sheets[sheets.length - 1].rect
+      const separated = Math.abs((right.left + right.width / 2) - (left.left + left.width / 2)) > Math.min(left.width, right.width) * 0.5
+      if (separated) return { mode: 'double', left, right }
+    }
+    if (sheets.length >= 1) return { mode: 'single', sheet: sheets[0].rect }
+    return null
+  }
+
+  function getSheetActivationWidth(rect) {
+    return Math.min(64, Math.max(36, rect.width * 0.08))
+  }
+
+  function getDesktopFlipEdgeZone(e) {
+    const layout = getVisibleSheetLayout()
+    if (!layout) return null
+    const idx = pageFlip.getCurrentPageIndex()
+    if (layout.mode === 'double') {
+      const leftEdge = getSheetActivationWidth(layout.left)
+      const rightEdge = getSheetActivationWidth(layout.right)
+      if (idx > firstIdx
+        && isPointInsideRect(e.clientX, e.clientY, layout.left)
+        && e.clientX <= layout.left.left + leftEdge) return { direction: 'prev', rect: layout.left }
+      if (idx < lastIdx
+        && isPointInsideRect(e.clientX, e.clientY, layout.right)
+        && e.clientX >= layout.right.right - rightEdge) return { direction: 'next', rect: layout.right }
+      return null
+    }
+
+    const edge = getSheetActivationWidth(layout.sheet)
+    if (!isPointInsideRect(e.clientX, e.clientY, layout.sheet)) return null
+    if (idx > firstIdx && e.clientX <= layout.sheet.left + edge) return { direction: 'prev', rect: layout.sheet }
+    if (idx < lastIdx && e.clientX >= layout.sheet.right - edge) return { direction: 'next', rect: layout.sheet }
+    return null
+  }
+
+  function installDesktopEdgeFlipGuard() {
+    const shell = document.getElementById('flipbook-container') || container.parentElement || container
+    let blockPointerSequence = false
+    let blockMouseSequence = false
+
+    const block = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation?.()
+    }
+
+    const getGestureStart = (e) => {
+      if (!isPrecisePointerDesktop()) return undefined
+      if (e.pointerType && e.pointerType !== 'mouse') return undefined
+      if (e.button != null && e.button !== 0) return
+      if (isFlipInteractiveTarget(e.target)) return undefined
+      return getDesktopFlipEdgeZone(e) || false
+    }
+
+    shell.addEventListener('pointerdown', (e) => {
+      const start = getGestureStart(e)
+      blockPointerSequence = start === false
+      if (blockPointerSequence) block(e)
+    }, true)
+    ;['pointermove', 'pointerup', 'click'].forEach((ev) => {
+      shell.addEventListener(ev, (e) => {
+        if (blockPointerSequence) block(e)
+        if (ev === 'click') blockPointerSequence = false
+      }, true)
+    })
+
+    shell.addEventListener('mousedown', (e) => {
+      const start = getGestureStart(e)
+      blockMouseSequence = start === false
+      if (blockMouseSequence) block(e)
+    }, true)
+    ;['mousemove', 'mouseup', 'click'].forEach((ev) => {
+      shell.addEventListener(ev, (e) => {
+        if (blockMouseSequence) block(e)
+        if (ev === 'click') blockMouseSequence = false
+      }, true)
+    })
+  }
+
+  function createShowHideCloseButton() {
+    const xBtn = document.createElement('button')
+    xBtn.type = 'button'
+    xBtn.setAttribute('aria-label', 'Cerrar elemento')
+    xBtn.textContent = '×'
+    xBtn.style.cssText = [
+      'width:32px', 'height:32px', 'border:none', 'border-radius:50%',
+      'background:rgba(15,23,42,.78)', 'color:#fff', 'cursor:pointer',
+      'font-size:22px', 'line-height:32px', 'font-family:Inter,sans-serif',
+      'font-weight:700', 'display:flex', 'align-items:center', 'justify-content:center',
+      'box-shadow:0 6px 18px rgba(0,0,0,.25)', 'padding:0', 'pointer-events:auto',
+    ].join(';')
+    return xBtn
+  }
+
+  function mountShowHideCloseButton(domTarget, fabricTarget, entry) {
+    const wrap = fabricTarget?.__showHideWrap
+    if (!domTarget && !(fabricTarget && wrap)) return null
+
+    const xBtn = createShowHideCloseButton()
+    xBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); entry.hide() })
+
+    if (domTarget) {
+      const currentPosition = window.getComputedStyle(domTarget).position
+      if (!currentPosition || currentPosition === 'static') domTarget.style.position = 'relative'
+      xBtn.style.cssText += ';position:absolute;top:10px;right:10px;z-index:30'
+      domTarget.appendChild(xBtn)
+      return xBtn
+    }
+
+    xBtn.style.cssText += ';position:absolute;z-index:20'
+    wrap.appendChild(xBtn)
+    positionFloatingCloseButton(xBtn, fabricTarget)
+    return xBtn
+  }
+
+  function positionFloatingCloseButton(xBtn, fabricTarget) {
+    if (!xBtn || !fabricTarget) return
+    fabricTarget.setCoords?.()
+    const r = fabricTarget.getBoundingRect(true)
+    const size = 32
+    const margin = 8
+    const minLeft = Math.max(0, r.left)
+    const maxLeft = Math.min(DESIGN_W - size, r.left + r.width - size)
+    const preferredLeft = r.left + r.width - size - margin
+    const minTop = Math.max(0, r.top)
+    const maxTop = Math.min(DESIGN_H - size, r.top + r.height - size)
+    const preferredTop = r.top + margin
+    xBtn.style.left = `${Math.min(Math.max(preferredLeft, minLeft), maxLeft)}px`
+    xBtn.style.top = `${Math.min(Math.max(preferredTop, minTop), maxTop)}px`
+  }
+
+  function isClickInsideFabricTarget(e, fabricTarget, fcanvas) {
+    if (!fabricTarget || !fcanvas) return false
+    fabricTarget.setCoords?.()
+    let p = fcanvas.getPointer ? fcanvas.getPointer(e) : null
+    if (!p) {
+      const canvasEl = fcanvas.getElement?.()
+      const rect = canvasEl?.getBoundingClientRect?.()
+      if (!rect) return false
+      p = {
+        x: ((e.clientX - rect.left) / rect.width) * fcanvas.getWidth(),
+        y: ((e.clientY - rect.top) / rect.height) * fcanvas.getHeight(),
+      }
+    }
+    if (!p) return false
+    const point = new fabric.Point(p.x, p.y)
+    if (fabricTarget.containsPoint) return fabricTarget.containsPoint(point)
+    const r = fabricTarget.getBoundingRect(true)
+    return point.x >= r.left && point.x <= r.left + r.width && point.y >= r.top && point.y <= r.top + r.height
+  }
+
+  // Instala solo compatibilidad heredada explícita de dismissAfter.
   // Retorna la función hide() para registrarla en dismissCleanupMap.
   function installShowHideDismiss(a, domTarget, fabricTarget, fcanvas) {
     let timer = null
-    let outsideHandler = null
+    const entry = { hide: null, closeOnPageChange: false }
 
-    // Botón flotante fijo en la pantalla — garantiza visibilidad independientemente
-    // de z-index, overflow o transforms del contenedor del flipbook.
-    const xBtn = document.createElement('button')
-    xBtn.innerHTML = '&#x2715;&nbsp;Cerrar'
-    xBtn.style.cssText = [
-      'position:fixed', 'bottom:72px', 'right:16px', 'z-index:99999',
-      'border:none', 'background:rgba(15,23,42,.88)', 'color:#fff',
-      'border-radius:24px', 'padding:8px 20px', 'cursor:pointer',
-      'font-size:13px', 'font-family:Inter,sans-serif', 'font-weight:700',
-      'letter-spacing:.03em', 'box-shadow:0 4px 20px rgba(0,0,0,.35)',
-      'display:flex', 'align-items:center', 'gap:6px',
-    ].join(';')
-    document.body.appendChild(xBtn)
-
-    const hide = () => {
-      if (fabricTarget) { fabricTarget.visible = false; fcanvas.renderAll() }
-      if (domTarget) { domTarget.style.visibility = 'hidden'; domTarget.dataset.visible = 'false' }
-      if (xBtn.parentNode) xBtn.parentNode.removeChild(xBtn)
-      if (outsideHandler) document.removeEventListener('click', outsideHandler, true)
+    entry.hide = () => {
+      setTargetVisibility(domTarget, fabricTarget, fcanvas, false)
       if (timer) clearTimeout(timer)
     }
 
-    xBtn.addEventListener('click', (e) => { e.stopPropagation(); hide() })
-
-    // Clic fuera del elemento mostrado → cerrar (fase capture, antes de otros handlers)
-    outsideHandler = (e) => {
-      if (xBtn.contains(e.target)) return
-      if (domTarget && domTarget.contains(e.target)) return
-      hide()
-    }
-    // Delay para que el clic disparador no cierre el elemento inmediatamente
-    setTimeout(() => document.addEventListener('click', outsideHandler, true), 160)
-
     // Timer opcional: dismissAfter en segundos
     if (a.dismissAfter && Number(a.dismissAfter) > 0) {
-      timer = setTimeout(hide, Number(a.dismissAfter) * 1000)
+      timer = setTimeout(() => entry.hide(), Number(a.dismissAfter) * 1000)
     }
 
-    return hide
+    return entry
+  }
+
+  function installConfiguredShowHideDismiss(options, domTarget, fabricTarget, fcanvas) {
+    let timer = null
+    let outsideHandler = null
+    let outsideDelay = null
+    let xBtn = null
+    const entry = { hide: null, closeOnPageChange: options.closeOnPageChange === true }
+
+    const cleanup = () => {
+      setTargetVisibility(domTarget, fabricTarget, fcanvas, false)
+      if (xBtn?.parentNode) xBtn.parentNode.removeChild(xBtn)
+      if (outsideDelay) { clearTimeout(outsideDelay); outsideDelay = null }
+      if (outsideHandler) document.removeEventListener('click', outsideHandler, true)
+      if (timer) clearTimeout(timer)
+    }
+    entry.hide = () => cleanup()
+
+    if (options.showCloseButton === true) {
+      xBtn = mountShowHideCloseButton(domTarget, fabricTarget, entry)
+    }
+
+    if (options.closeOnOutsideClick === true) {
+      outsideHandler = (e) => {
+        if (xBtn?.contains(e.target)) return
+        if (domTarget && domTarget.contains(e.target)) return
+        if (!domTarget && isClickInsideFabricTarget(e, fabricTarget, fcanvas)) return
+        entry.hide()
+      }
+      outsideDelay = setTimeout(() => {
+        outsideDelay = null
+        document.addEventListener('click', outsideHandler, true)
+      }, 160)
+    }
+
+    if (options.closeOnTimer === true && Number(options.timerSeconds) > 0) {
+      timer = setTimeout(() => entry.hide(), Number(options.timerSeconds) * 1000)
+    }
+
+    return entry
   }
 
   function runAction(a, fcanvas, selfObj, elementDomMap) {
@@ -525,19 +768,26 @@ async function init() {
         if (!a.target) break
         const fabricTgt = fcanvas ? fcanvas.getObjects().find((o) => (o.data || {}).elementId === a.target) : null
         const domTgt = (elementDomMap || {})[a.target]
+        const closeOptions = getCloseOptionsForTarget(fabricTgt, domTgt)
         const isVisible = domTgt ? domTgt.dataset.visible !== 'false' : (fabricTgt ? fabricTgt.visible : false)
         // Limpiar dismiss anterior para este target (si el usuario vuelve a clickear el disparador)
         const prevCleanup = dismissCleanupMap[a.target]
-        if (prevCleanup) { prevCleanup(); delete dismissCleanupMap[a.target] }
+        if (prevCleanup) prevCleanup.hide()
         if (isVisible) {
           // Ocultar manualmente (el dismiss ya fue limpiado arriba)
-          if (fabricTgt) { fabricTgt.visible = false; fcanvas.renderAll() }
-          if (domTgt) { domTgt.style.visibility = 'hidden'; domTgt.dataset.visible = 'false' }
+          setTargetVisibility(domTgt, fabricTgt, fcanvas, false)
         } else {
-          // Mostrar + instalar mecanismo de cierre (X, clic fuera, timer)
-          if (fabricTgt) { fabricTgt.visible = true; fcanvas.renderAll() }
-          if (domTgt) { domTgt.style.visibility = 'visible'; domTgt.dataset.visible = 'true' }
-          dismissCleanupMap[a.target] = installShowHideDismiss(a, domTgt, fabricTgt, fcanvas)
+          // Mostrar + instalar cierre heredado o cierre configurable del target.
+          setTargetVisibility(domTgt, fabricTgt, fcanvas, true)
+          const entry = closeOptions
+            ? installConfiguredShowHideDismiss(closeOptions, domTgt, fabricTgt, fcanvas)
+            : installShowHideDismiss(a, domTgt, fabricTgt, fcanvas)
+          const rawHide = entry.hide
+          entry.hide = () => {
+            rawHide()
+            if (dismissCleanupMap[a.target] === entry) delete dismissCleanupMap[a.target]
+          }
+          dismissCleanupMap[a.target] = entry
         }
         break
       }
@@ -1778,6 +2028,7 @@ async function init() {
       fcanvas.getObjects().slice().forEach((obj) => {
        try {
         const d = obj.data || {}
+        obj.__showHideWrap = wrap
         const r = obj.getBoundingRect(true)
 
         // Hotspot animado: reemplazar con div CSS
@@ -1788,6 +2039,7 @@ async function init() {
           const color = hsColor || '#ef4444'
           const hs = document.createElement('div')
           hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;pointer-events:auto;`
+          hs.dataset.flipInteractive = 'true'
           hs.innerHTML = `<div class="${animClass}" style="width:36px;height:36px;border-radius:50%;background:${color}44;border:2.5px solid ${color};display:flex;align-items:center;justify-content:center;"><div style="width:14px;height:14px;border-radius:50%;background:${color};"></div></div>`
           if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action, fcanvas, obj, elementDomMap) })
           blockFlipDrag(hs)
@@ -1802,6 +2054,8 @@ async function init() {
           if (node) {
             const holder = document.createElement('div')
             holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;pointer-events:auto;`
+            holder.dataset.flipInteractive = 'true'
+            holder.__widget = d.widget || {}
             // Visibilidad inicial para widgets con startHidden
             if (d.startHidden) { holder.style.visibility = 'hidden'; holder.dataset.visible = 'false' }
             else { holder.dataset.visible = 'true' }
@@ -1821,6 +2075,7 @@ async function init() {
         hot.href = 'javascript:void(0)'
         hot.title = ''
         hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;pointer-events:auto;`
+        hot.dataset.flipInteractive = 'true'
         hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action, fcanvas, obj, elementDomMap) })
         blockFlipDrag(hot)
         wrap.appendChild(hot)
@@ -1916,9 +2171,12 @@ async function init() {
     if (idx < firstIdx) { pageFlip.flip(firstIdx); return }
     if (idx > lastIdx) { pageFlip.flip(lastIdx); return }
     playFlipSound()
-    // Cerrar todos los elementos show_hide activos al cambiar de página
-    Object.values(dismissCleanupMap).forEach((fn) => fn())
-    Object.keys(dismissCleanupMap).forEach((k) => delete dismissCleanupMap[k])
+    // Cerrar al cambiar de página solo los show_hide activos cuya política lo permita.
+    Object.keys(dismissCleanupMap).forEach((k) => {
+      const entry = dismissCleanupMap[k]
+      if (!entry?.closeOnPageChange) return
+      entry.hide()
+    })
     // Al cambiar de página, deshacer el zoom (vuelve a 1x).
     currentScale = 1; zoomIdx = 0
     updatePageInfo()

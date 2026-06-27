@@ -2931,6 +2931,7 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
   const [, setTick] = React.useState(0)
   const set = (props: any) => { obj.set(props); canvas?.requestRenderAll(); onChange(); setTick((t) => t + 1) }
   const setData = (patch: any) => { (obj as any).data = { ...((obj as any).data ?? {}), ...patch }; onChange(); setTick((t) => t + 1) }
+  const [closeWarning, setCloseWarning] = React.useState('')
 
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'
   const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen', icon: 'Icono', widget: 'Widget', hotspot: 'Punto activo', svglib: 'Gráfico SVG' }
@@ -2944,6 +2945,48 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
   const namedTargets = (canvas?.getObjects?.() ?? [])
     .filter((o: any) => o !== obj && o.data?.name && o.data?.elementId)
     .map((o: any) => ({ id: o.data.elementId as string, name: o.data.name as string }))
+
+  const closeDefaults = {
+    showCloseButton: true,
+    closeOnOutsideClick: false,
+    closeOnPageChange: false,
+    closeOnTimer: false,
+    timerSeconds: 5,
+  }
+  const closeKeys = ['showCloseButton', 'closeOnOutsideClick', 'closeOnPageChange', 'closeOnTimer']
+  const rawCloseOptions = isWidget ? (obj as any).data?.widget?.config?.closeOptions : (obj as any).data?.closeOptions
+  const hasCustomCloseOptions = !!rawCloseOptions
+  const closeCfg = { ...closeDefaults, ...(rawCloseOptions ?? {}) }
+  const activeCloseCount = closeKeys.filter((k) => !!(closeCfg as any)[k]).length
+  const writeCloseOptions = (next: any | null) => {
+    const data = { ...((obj as any).data ?? {}) }
+    if (isWidget) {
+      const widget = { ...(data.widget ?? { type: 'map', config: {} }) }
+      const config = { ...(widget.config ?? {}) }
+      if (next) config.closeOptions = next
+      else delete config.closeOptions
+      widget.config = config
+      data.widget = widget
+    } else {
+      if (next) data.closeOptions = next
+      else delete data.closeOptions
+    }
+    ;(obj as any).data = data
+    onChange()
+    setTick((t) => t + 1)
+  }
+  const setCustomCloseEnabled = (enabled: boolean) => {
+    setCloseWarning('')
+    writeCloseOptions(enabled ? closeDefaults : null)
+  }
+  const setCloseOption = (key: string, value: boolean | number) => {
+    if (typeof value === 'boolean' && !value && closeKeys.includes(key) && activeCloseCount <= 1 && (closeCfg as any)[key]) {
+      setCloseWarning('Activa al menos una forma de cierre para usar opciones personalizadas.')
+      return
+    }
+    setCloseWarning('')
+    writeCloseOptions({ ...closeCfg, [key]: value })
+  }
 
   return (
     <div style={s.propsScroll}>
@@ -3028,6 +3071,42 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
             />
             Empieza oculto (se revela al hacer clic en el disparador)
           </label>
+        </PropGroup>
+
+        <PropGroup label="Opciones de cierre">
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, color: '#374151', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={hasCustomCloseOptions}
+              onChange={(e) => setCustomCloseEnabled(e.target.checked)}
+              style={{ marginTop: 2 }}
+            />
+            <span>Usar opciones de cierre personalizadas al mostrar este elemento</span>
+          </label>
+          {hasCustomCloseOptions && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10, paddingLeft: 22 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!closeCfg.showCloseButton} onChange={(e) => setCloseOption('showCloseButton', e.target.checked)} /> Mostrar X para cerrar
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!closeCfg.closeOnOutsideClick} onChange={(e) => setCloseOption('closeOnOutsideClick', e.target.checked)} /> Cerrar al hacer clic fuera
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!closeCfg.closeOnPageChange} onChange={(e) => setCloseOption('closeOnPageChange', e.target.checked)} /> Cerrar al cambiar de página
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!closeCfg.closeOnTimer} onChange={(e) => setCloseOption('closeOnTimer', e.target.checked)} /> Cerrar automáticamente después de un tiempo
+              </label>
+              {closeCfg.closeOnTimer && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input style={{ ...s.propInput, width: 80 }} type="number" min={1} max={3600} value={closeCfg.timerSeconds} onChange={(e) => setCloseOption('timerSeconds', Math.max(1, +e.target.value || 1))} />
+                  <span style={{ fontSize: 12, color: '#6b7280' }}>segundos</span>
+                </div>
+              )}
+            </div>
+          )}
+          {closeWarning && <p style={{ ...cp.hint, color: '#b45309', marginTop: 8 }}>{closeWarning}</p>}
+          <p style={cp.hint}>Sin opciones personalizadas, Mostrar/Ocultar conserva su cierre heredado. Estas opciones solo aplican cuando este elemento se abre mediante esa acción.</p>
         </PropGroup>
 
         <PropGroup label="Visibilidad en el lienzo">
