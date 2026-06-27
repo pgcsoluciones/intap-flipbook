@@ -592,13 +592,11 @@ function refreshPopupPreviewGroup(obj: any, canvas: any) {
   const url = cfg.image || ''
   const token = ((obj as any).__popupPreviewToken ?? 0) + 1
   ;(obj as any).__popupPreviewToken = token
-  const wasActive = canvas.getActiveObject?.() === obj
   const apply = (next: any) => {
     const stillOnCanvas = canvas.getObjects?.().includes(obj)
     const currentUrl = obj.data?.widget?.config?.image || ''
     if ((obj as any).__popupPreviewToken !== token || currentUrl !== url || !stillOnCanvas) return
     replacePopupPreviewContents(obj, next)
-    if (wasActive) canvas.setActiveObject(obj)
     canvas.requestRenderAll()
   }
   if (url) getPopupPreviewImage(url, (img) => apply(buildPopupPreview(obj.data?.widget?.config ?? cfg, img ?? undefined)))
@@ -745,6 +743,8 @@ export default function EditPublication() {
   const [uploading, setUploading]   = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [selected, setSelected] = useState<any>(null)
+  const selectedRef = useRef<any>(null)
+  useEffect(() => { selectedRef.current = selected }, [selected])
   const [defaultFont, setDefaultFont] = useState<string>(FONTS[0].family) // tipografía para texto nuevo
   const [imageBank, setImageBank] = useState<string[]>([]) // banco de imágenes subidas en este proyecto
   const [selectVersion, setSelectVersion] = useState(0) // fuerza refresco del panel de props
@@ -983,6 +983,7 @@ export default function EditPublication() {
     }
     pageIdRef.current = activePage.id
     if (fabricRef.current) { fabricRef.current.dispose(); fabricRef.current = null }
+    selectedRef.current = null
     setSelected(null)
     // Cancela cualquier reemplazo in-situ pendiente y el modo "Ajustar hoja" al cambiar de página
     replaceTargetRef.current = null
@@ -1053,12 +1054,18 @@ export default function EditPublication() {
       installPageBackground(() => pushHistory(serializedCanvasWithoutBackgroundImage(canvas)))
     }
 
-    const onSel = (e: any) => { setSelected(e.selected?.[0] ?? canvas.getActiveObject() ?? null); setSelectVersion((v) => v + 1) }
+    const updateSelectedObject = (next: any) => {
+      if (selectedRef.current === next) return
+      selectedRef.current = next
+      setSelected(next)
+      setSelectVersion((v) => v + 1)
+    }
+    const onSel = (e: any) => updateSelectedObject(canvas.getActiveObject() ?? e.selected?.[0] ?? null)
     canvas.on('selection:created', onSel)
     canvas.on('selection:updated', onSel)
     canvas.on('selection:cleared', (e: any) => {
       if (rightPanelRef.current && e?.e?.target && rightPanelRef.current.contains(e.e.target as Node)) return
-      setSelected(null)
+      updateSelectedObject(null)
     })
 
     // Arrastre para reencuadrar la hoja (solo en "Ajustar hoja").
