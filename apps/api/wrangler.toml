@@ -30,3 +30,26 @@ crons = ["0 6 * * *"]
 [dev]
 port = 8787
 local_protocol = "http"
+
+[env.preview]
+name = "intap-flipbook-api-preview"
+
+[env.preview.vars]
+APP_ENV = "preview"
+CORS_ORIGIN = "http://localhost:5173,http://localhost:4173"
+ALLOWED_WRITE_ORIGINS = "http://localhost:5173,http://localhost:4173"
+JWT_EXPIRY_DAYS = "7"
+R2_PUBLIC_BASE_URL = "https://preview-r2-public-base-url.example.com"
+
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "pgc-landing-saas-db"
+database_id = "f1c1eab5-6c9d-414d-b08c-870fde708898"
+
+[[env.preview.kv_namespaces]]
+binding = "SESSIONS"
+id = "1ccdc84b62194c4eae83cab31ce47deb"
+
+[[env.preview.r2_buckets]]
+binding = "MEDIA"
+bucket_name = "intap-flipbook-media-preview"
