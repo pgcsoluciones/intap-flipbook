@@ -96,3 +96,12 @@
 - Prioridad interactiva: botones, enlaces, formularios, media embebida, controles, widgets DOM, hotspots y objetos con acción quedan marcados o detectados como interactivos, por lo que sus clics no pasan página aunque estén cerca del borde.
 - Qué se preserva: móvil mantiene el comportamiento táctil/deslizamiento porque el guard solo corre con hover y puntero fino; no se tocaron flechas, teclado, cierre Mostrar/Ocultar, X, clic fuera, temporizador ni cierre por cambio de página configurado.
 - Prueba realizada o pendiente: `node --check apps/viewer/src/flipbook.js` exitoso, sin salida; `git diff --check` exitoso, sin salida.
+
+## 8. Límite visual del doblez en escritorio
+
+- Archivo tocado: `apps/viewer/src/flipbook.js`
+- Función o bloque modificado: cálculo de franjas en `getDesktopFlipEdgeZone` y limitación de movimiento en `installDesktopEdgeFlipGuard`.
+- Qué cambiaste: separé la zona de activación de la zona visual. El gesto solo puede iniciar en el 8% del ancho real de la hoja, con mínimo 36 px y máximo 64 px, siempre en bordes exteriores válidos.
+- Límite visual: durante un gesto válido, los movimientos que intentan llevar el doblez más allá del 15% del ancho real de la hoja se bloquean y se reenvían a PageFlip con coordenadas limitadas a ese borde visual. El `pointerup`/`mouseup` también se limita si hace falta para que PageFlip cierre o complete el gesto sin quedar atrapado.
+- Qué se preserva: no se volvió a navegación manual con `flipPrev()`/`flipNext()`; PageFlip sigue recibiendo el gesto nativo solo desde franjas válidas. Móvil, táctil, controles, teclado, widgets, hotspots, acciones y cierres configurables no cambian.
+- Prueba realizada o pendiente: `node --check apps/viewer/src/flipbook.js` exitoso, sin salida; `git diff --check` exitoso, sin salida.

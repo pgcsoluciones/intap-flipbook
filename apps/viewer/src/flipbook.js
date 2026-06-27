@@ -477,8 +477,12 @@ async function init() {
     return null
   }
 
-  function getSheetEdgeWidth(rect) {
-    return Math.min(56, Math.max(36, rect.width * 0.06))
+  function getSheetActivationWidth(rect) {
+    return Math.min(64, Math.max(36, rect.width * 0.08))
+  }
+
+  function getSheetVisualLimitWidth(rect) {
+    return rect.width * 0.15
   }
 
   function getDesktopFlipEdgeZone(e) {
@@ -486,21 +490,21 @@ async function init() {
     if (!layout) return null
     const idx = pageFlip.getCurrentPageIndex()
     if (layout.mode === 'double') {
-      const leftEdge = getSheetEdgeWidth(layout.left)
-      const rightEdge = getSheetEdgeWidth(layout.right)
+      const leftEdge = getSheetActivationWidth(layout.left)
+      const rightEdge = getSheetActivationWidth(layout.right)
       if (idx > firstIdx
         && isPointInsideRect(e.clientX, e.clientY, layout.left)
-        && e.clientX <= layout.left.left + leftEdge) return 'prev'
+        && e.clientX <= layout.left.left + leftEdge) return { direction: 'prev', rect: layout.left }
       if (idx < lastIdx
         && isPointInsideRect(e.clientX, e.clientY, layout.right)
-        && e.clientX >= layout.right.right - rightEdge) return 'next'
+        && e.clientX >= layout.right.right - rightEdge) return { direction: 'next', rect: layout.right }
       return null
     }
 
-    const edge = getSheetEdgeWidth(layout.sheet)
+    const edge = getSheetActivationWidth(layout.sheet)
     if (!isPointInsideRect(e.clientX, e.clientY, layout.sheet)) return null
-    if (idx > firstIdx && e.clientX <= layout.sheet.left + edge) return 'prev'
-    if (idx < lastIdx && e.clientX >= layout.sheet.right - edge) return 'next'
+    if (idx > firstIdx && e.clientX <= layout.sheet.left + edge) return { direction: 'prev', rect: layout.sheet }
+    if (idx < lastIdx && e.clientX >= layout.sheet.right - edge) return { direction: 'next', rect: layout.sheet }
     return null
   }
 
@@ -508,6 +512,9 @@ async function init() {
     const shell = document.getElementById('flipbook-container') || container.parentElement || container
     let blockPointerSequence = false
     let blockMouseSequence = false
+    let pointerGesture = null
+    let mouseGesture = null
+    let forwardingClampedEvent = false
 
     const block = (e) => {
       e.preventDefault()
@@ -515,33 +522,124 @@ async function init() {
       e.stopImmediatePropagation?.()
     }
 
-    const shouldBlockStart = (e) => {
-      if (!isPrecisePointerDesktop()) return
-      if (e.pointerType && e.pointerType !== 'mouse') return false
+    const getGestureStart = (e) => {
+      if (!isPrecisePointerDesktop()) return undefined
+      if (e.pointerType && e.pointerType !== 'mouse') return undefined
       if (e.button != null && e.button !== 0) return
-      if (isFlipInteractiveTarget(e.target)) return false
-      return !getDesktopFlipEdgeZone(e)
+      if (isFlipInteractiveTarget(e.target)) return undefined
+      return getDesktopFlipEdgeZone(e) || false
+    }
+
+    const clampGesturePoint = (gesture, e) => {
+      const rect = gesture.rect
+      const limit = getSheetVisualLimitWidth(rect)
+      const minX = gesture.direction === 'prev' ? rect.left : rect.right - limit
+      const maxX = gesture.direction === 'prev' ? rect.left + limit : rect.right
+      return {
+        x: Math.min(Math.max(e.clientX, minX), maxX),
+        y: Math.min(Math.max(e.clientY, rect.top), rect.bottom),
+      }
+    }
+
+    const isBeyondVisualLimit = (gesture, e) => {
+      if (!gesture) return false
+      const limit = getSheetVisualLimitWidth(gesture.rect)
+      if (e.clientY < gesture.rect.top || e.clientY > gesture.rect.bottom) return true
+      if (gesture.direction === 'prev') return e.clientX > gesture.rect.left + limit || e.clientX < gesture.rect.left
+      return e.clientX < gesture.rect.right - limit || e.clientX > gesture.rect.right
+    }
+
+    const forwardClampedEvent = (e, gesture) => {
+      if (forwardingClampedEvent || !gesture) return
+      const point = clampGesturePoint(gesture, e)
+      const common = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+        detail: e.detail || 0,
+        screenX: e.screenX,
+        screenY: e.screenY,
+        clientX: point.x,
+        clientY: point.y,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        metaKey: e.metaKey,
+        button: e.button ?? 0,
+        buttons: e.type.endsWith('up') ? 0 : (e.buttons || 1),
+        relatedTarget: e.relatedTarget || null,
+      }
+      let cloned
+      if (e.type.startsWith('pointer') && typeof PointerEvent !== 'undefined') {
+        cloned = new PointerEvent(e.type, {
+          ...common,
+          pointerId: e.pointerId,
+          width: e.width,
+          height: e.height,
+          pressure: e.type.endsWith('up') ? 0 : (e.pressure || 0.5),
+          tangentialPressure: e.tangentialPressure || 0,
+          tiltX: e.tiltX || 0,
+          tiltY: e.tiltY || 0,
+          twist: e.twist || 0,
+          pointerType: e.pointerType || 'mouse',
+          isPrimary: e.isPrimary !== false,
+        })
+      } else {
+        cloned = new MouseEvent(e.type, common)
+      }
+      forwardingClampedEvent = true
+      container.dispatchEvent(cloned)
+      forwardingClampedEvent = false
+    }
+
+    const limitGestureEvent = (e, gesture, clearAfter = false) => {
+      if (!gesture || !isPrecisePointerDesktop() || forwardingClampedEvent) {
+        if (clearAfter) return null
+        return false
+      }
+      if (!isBeyondVisualLimit(gesture, e)) {
+        if (clearAfter) return null
+        return false
+      }
+      block(e)
+      forwardClampedEvent(e, gesture)
+      return true
     }
 
     shell.addEventListener('pointerdown', (e) => {
-      blockPointerSequence = shouldBlockStart(e) === true
+      const start = getGestureStart(e)
+      pointerGesture = start && typeof start === 'object' ? start : null
+      blockPointerSequence = start === false
       if (blockPointerSequence) block(e)
     }, true)
     ;['pointermove', 'pointerup', 'click'].forEach((ev) => {
       shell.addEventListener(ev, (e) => {
         if (blockPointerSequence) block(e)
-        if (ev === 'click') blockPointerSequence = false
+        else if (ev === 'pointermove') limitGestureEvent(e, pointerGesture)
+        else if (ev === 'pointerup') {
+          limitGestureEvent(e, pointerGesture, true)
+          pointerGesture = null
+        }
+        if (ev === 'click') { blockPointerSequence = false; pointerGesture = null }
       }, true)
     })
 
     shell.addEventListener('mousedown', (e) => {
-      blockMouseSequence = shouldBlockStart(e) === true
+      const start = getGestureStart(e)
+      mouseGesture = start && typeof start === 'object' ? start : null
+      blockMouseSequence = start === false
       if (blockMouseSequence) block(e)
     }, true)
     ;['mousemove', 'mouseup', 'click'].forEach((ev) => {
       shell.addEventListener(ev, (e) => {
         if (blockMouseSequence) block(e)
-        if (ev === 'click') blockMouseSequence = false
+        else if (ev === 'mousemove') limitGestureEvent(e, mouseGesture)
+        else if (ev === 'mouseup') {
+          limitGestureEvent(e, mouseGesture, true)
+          mouseGesture = null
+        }
+        if (ev === 'click') { blockMouseSequence = false; mouseGesture = null }
       }, true)
     })
   }
