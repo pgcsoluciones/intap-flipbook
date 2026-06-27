@@ -18,16 +18,38 @@ export type Env = {
   MEDIA: R2Bucket
   JWT_SECRET: string
   CORS_ORIGIN: string
+  APP_ENV?: string
+  ALLOWED_WRITE_ORIGINS?: string
   JWT_EXPIRY_DAYS: string
   R2_PUBLIC_BASE_URL: string
 }
 
 const app = new Hono<{ Bindings: Env }>()
 
+function parseOrigins(value?: string): string[] {
+  return (value ?? '').split(',').map((origin) => origin.trim()).filter(Boolean)
+}
+
+function isMutation(method: string): boolean {
+  return method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE'
+}
+
+function isPagesDevOrigin(origin: string): boolean {
+  try {
+    return new URL(origin).hostname.endsWith('.pages.dev')
+  } catch {
+    return false
+  }
+}
+
+function isViewerWritePath(path: string): boolean {
+  return /^\/view\/[^/]+\/(track|event|response)$/.test(path)
+}
+
 app.use('*', async (c, next) => {
-  const allowedOrigins = c.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+  const allowedOrigins = parseOrigins(c.env.CORS_ORIGIN)
   const corsMiddleware = cors({
-    origin: (origin) => (allowedOrigins.includes(origin) ? origin : allowedOrigins[0]),
+    origin: (origin) => (allowedOrigins.includes(origin) ? origin : null),
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     // navigator.sendBeacon() (analítica del viewer) siempre envía la petición en modo
@@ -37,6 +59,33 @@ app.use('*', async (c, next) => {
     maxAge: 86400,
   })
   return corsMiddleware(c, next)
+})
+
+app.use('*', async (c, next) => {
+  if (!isMutation(c.req.method)) return next()
+
+  const origin = c.req.header('Origin') ?? ''
+  const appEnv = c.env.APP_ENV ?? 'production'
+  const allowedWriteOrigins = parseOrigins(c.env.ALLOWED_WRITE_ORIGINS)
+  const isProduction = appEnv === 'production'
+
+  if (!origin) {
+    return c.json({ success: false, error: 'Origen requerido para operaciones de escritura' }, 403)
+  }
+
+  if (isProduction && isPagesDevOrigin(origin)) {
+    return c.json({ success: false, error: 'Origen preview no autorizado en producción' }, 403)
+  }
+
+  if (!allowedWriteOrigins.includes(origin)) {
+    return c.json({ success: false, error: 'Origen no autorizado para operaciones de escritura' }, 403)
+  }
+
+  if (origin === 'https://flip.intaprd.com' && !isViewerWritePath(c.req.path)) {
+    return c.json({ success: false, error: 'Origen viewer no autorizado para esta operación' }, 403)
+  }
+
+  return next()
 })
 
 app.get('/', (c) => c.json({ service: 'intap-flipbook-api', status: 'ok' }))
