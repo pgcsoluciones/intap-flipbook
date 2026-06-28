@@ -41,6 +41,17 @@ function computeCover(iw: number, ih: number, fr: { zoom?: number; fx?: number; 
   return { cropX, cropY, cropW, cropH, scaleX: targetW / cropW, scaleY: targetH / cropH }
 }
 
+function stripBackgroundImage(json: any) {
+  if (!json || typeof json !== 'object') return json
+  const next = { ...json }
+  delete next.backgroundImage
+  return next
+}
+
+function serializeCanvasJson(canvas: any) {
+  return stripBackgroundImage(canvas?.toJSON?.(['data']) as any)
+}
+
 // ─── Iconos SVG monocromáticos (estilo línea, 20px, stroke uniforme) ──────────
 // "stroke" = trazo. Todos comparten grosor 1.6 y currentColor para mantener
 // consistencia visual en toda la barra de herramientas.
@@ -813,7 +824,7 @@ export default function EditPublication() {
       // Serializa el canvas restaurando la opacidad real de los objetos ocultos en el editor.
       // data.hiddenInEditor = true → en el editor muestran opacity 0.07 para ser clicables,
       // pero al guardar el viewer tiene que ver la opacidad real (data.originalOpacity).
-      const rawJson = canvas.toJSON(['data']) as any
+      const rawJson = serializeCanvasJson(canvas) as any
       if (rawJson?.objects) {
         rawJson.objects = rawJson.objects.map((obj: any) => {
           if (obj.data?.hiddenInEditor && obj.data?.originalOpacity != null) {
@@ -931,17 +942,21 @@ export default function EditPublication() {
     fabric.Image.fromURL(activePage.image_url, (img: any) => {
       img.set({ selectable: false, evented: false })
       if (img && img.width && img.height) {
-        bgImgRef.current = img
         bgNatRef.current = { iw: img.width, ih: img.height }
         const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
         img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
       }
       canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
+      bgImgRef.current = canvas.backgroundImage ?? img
     })
 
     if (activePage.canvas_json) {
-      canvas.loadFromJSON(activePage.canvas_json, () => {
-        isLoading = false
+        const pageJson = typeof activePage.canvas_json === 'string'
+          ? JSON.parse(activePage.canvas_json)
+          : activePage.canvas_json
+        const jsonWithoutBg = stripBackgroundImage(pageJson)
+        canvas.loadFromJSON(jsonWithoutBg, () => {
+          isLoading = false
         // Aplicar visibilidad de editor: elementos marcados como ocultos en el editor
         // se muestran con opacidad mínima para que sean clicables pero no distraigan.
         canvas.getObjects().forEach((o: any) => {
@@ -951,12 +966,12 @@ export default function EditPublication() {
         })
         canvas.renderAll()
         // Estado inicial en el historial
-        pushHistory(JSON.stringify(canvas.toJSON(['data'])))
+        pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
       })
     } else {
       isLoading = false
       // Página vacía: estado inicial
-      pushHistory(JSON.stringify(canvas.toJSON(['data'])))
+      pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
     }
 
     const updateSelectedObject = (next: any) => {
@@ -1026,7 +1041,7 @@ export default function EditPublication() {
     // Autoguardado + historial en cada cambio del lienzo
     const onChange = () => {
       if (isLoading) return  // no guardar durante la carga inicial del JSON
-      if (!isUndoRedoRef.current) pushHistory(JSON.stringify(canvas.toJSON(['data'])))
+      if (!isUndoRedoRef.current) pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
       scheduleAutosave()
     }
     // Reemplazo in-situ: si hay un objeto marcado para reemplazar y el usuario
@@ -1133,7 +1148,7 @@ export default function EditPublication() {
     const handler = () => {
       if (fabricRef.current && pageIdRef.current) {
         try {
-          const json = JSON.stringify(fabricRef.current.toJSON(['data']))
+          const json = JSON.stringify(serializeCanvasJson(fabricRef.current))
           api.pages.saveCanvas(pageIdRef.current, json).catch(() => {})
         } catch {}
       }
@@ -1472,7 +1487,7 @@ export default function EditPublication() {
       let canvasJson = page.canvas_json ?? null
       let coverJson = page.cover_json ?? null
       if (page.id === pageIdRef.current && fabricRef.current) {
-        canvasJson = JSON.stringify(fabricRef.current.toJSON(['data']))
+        canvasJson = JSON.stringify(serializeCanvasJson(fabricRef.current))
         coverJson = page.cover_json ?? null
       }
       // 1. Crear la página nueva con la misma imagen de fondo.
@@ -1693,7 +1708,9 @@ export default function EditPublication() {
       o.setCoords(); c.requestRenderAll()
       return
     }
-    const img = bgImgRef.current; const { iw, ih } = bgNatRef.current
+    const img = c.backgroundImage ?? bgImgRef.current
+    if (img && bgImgRef.current !== img) bgImgRef.current = img
+    const { iw, ih } = bgNatRef.current
     if (!img || !iw || !ih) return
     const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(iw, ih, coverRef.current)
     img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, left: 0, top: 0, originX: 'left', originY: 'top' })
