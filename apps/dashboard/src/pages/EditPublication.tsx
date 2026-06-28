@@ -2434,7 +2434,7 @@ function SheetPreviewModal({ data, onClose }: { data: { imageUrl: string; cover:
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
       </div>
       <span style={{ color: '#cbd5e1', fontSize: 11, maxWidth: PW + 80, textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
-        Vista del diseño actual. Los widgets interactivos (mapa, video, formulario…) se ven en su forma final en la “Vista previa” global del proyecto.
+        Vista del diseño actual. Los widgets interactivos (mapa, video, formulario…) se ven en su forma final en la "Vista previa" global del proyecto.
       </span>
     </div>
   )
@@ -2801,7 +2801,7 @@ function ContextPanel(p: any) {
           {!p.svgLibLoaded ? (
             <p style={cp.hint}>Cargando biblioteca…</p>
           ) : filtered.length === 0 ? (
-            <p style={cp.hint}>No hay íconos para este filtro. El administrador puede agregar más desde el panel “Biblioteca SVG”.</p>
+            <p style={cp.hint}>No hay íconos para este filtro. El administrador puede agregar más desde el panel "Biblioteca SVG".</p>
           ) : (
             groups.map((g) => (
               <div key={g.name}>
@@ -3269,7 +3269,7 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
             >
               ⤢ Reencuadrar imagen (zoom y posición)
             </button>
-            <p style={cp.hint}>Ajusta qué parte de la imagen se ve dentro de su recuadro, sin deformarla — igual que “Ajustar hoja”. También puedes usar las esquinas para redimensionar y rotar.</p>
+            <p style={cp.hint}>Ajusta qué parte de la imagen se ve dentro de su recuadro, sin deformarla — igual que "Ajustar hoja". También puedes usar las esquinas para redimensionar y rotar.</p>
           </PropGroup>
         )}
 
@@ -3615,7 +3615,7 @@ function MapWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void })
       <Collapsible title="Interacción" defaultOpen={false}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#374151', cursor: 'pointer' }}>
           <input type="checkbox" checked={cfg.openInApp !== false} onChange={(e) => setCfg({ openInApp: e.target.checked })} />
-          Mostrar botón “Abrir en Google Maps”
+          Mostrar botón "Abrir en Google Maps"
         </label>
         <p style={cp.hint}>Agrega un botón sobre el mapa que abre la ubicación en Google Maps (rastreable por analítica).</p>
       </Collapsible>
@@ -4046,7 +4046,7 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
         </>
       )}
 
-      <p style={cp.hint}>Pulsa “👁 Vista previa” para ver la ficha completa tal como se verá publicada. En el lienzo verás un boceto para colocarla y dimensionarla.</p>
+      <p style={cp.hint}>Pulsa "👁 Vista previa" para ver la ficha completa tal como se verá publicada. En el lienzo verás un boceto para colocarla y dimensionarla.</p>
     </>
   )
 }
@@ -4556,7 +4556,7 @@ function TriggerSelector({ data, setData }: { data: any; setData: (p: any) => vo
       <select style={s.propInput} value={trigger} onChange={(e) => setData({ trigger: e.target.value })}>
         {TRIGGERS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
       </select>
-      {trigger !== 'click' && <p style={cp.hint}>El disparador “{TRIGGERS.find((t) => t.key === trigger)?.label}” se guardará; por ahora el visor ejecuta la acción al hacer clic/tap (soporte ampliado próximamente).</p>}
+      {trigger !== 'click' && <p style={cp.hint}>El disparador "{TRIGGERS.find((t) => t.key === trigger)?.label}" se guardará; por ahora el visor ejecuta la acción al hacer clic/tap (soporte ampliado próximamente).</p>}
     </PropGroup>
   )
 }
@@ -4698,17 +4698,33 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
         <PropGroup label="Elemento a mostrar u ocultar">
           {targets.length === 0 ? (
             <p style={cp.hint}>
-              Primero selecciona el elemento objetivo y asígnale un “Nombre del elemento”
-              en su panel de propiedades. Luego vuelve aquí a configurar la acción.
+              Primero selecciona el elemento objetivo y dale un nombre en su panel de propiedades. Luego vuelve aqui a configurar la accion.
             </p>
           ) : (
             <select style={s.propInput} value={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })}>
-              <option value="">— Selecciona un elemento —</option>
+              <option value="">-- Selecciona un elemento --</option>
               {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           )}
-          <p style={cp.hint}>
-            Para que el elemento empiece oculto, selecciónalo y marca “Empieza oculto” en su panel de propiedades.
+          <p style={{ ...cp.hint, marginTop: 6 }}>
+            El viewer oculta el elemento al cargar la pagina para que el primer clic lo muestre.
+          </p>
+        </PropGroup>
+      )}
+      {action.type === 'show_hide' && (
+        <PropGroup label="Cierre automatico (segundos)">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="number" min={0} max={300} step={1}
+              style={{ ...s.propInput, width: 80 }}
+              placeholder="0"
+              value={action.dismissAfter ?? ''}
+              onChange={(e) => setAction({ dismissAfter: e.target.value ? +e.target.value : undefined })}
+            />
+            <span style={{ fontSize: 12, color: '#6b7280' }}>seg - 0 = solo manual</span>
+          </div>
+          <p style={{ ...cp.hint, marginTop: 4 }}>
+            El elemento se cierra solo tras N segundos. El boton X Cerrar siempre aparece flotando.
           </p>
         </PropGroup>
       )}
@@ -4969,7 +4985,7 @@ function AnimationControl({ obj, setData }: { obj: any; setData: (p: any) => voi
           <input type="range" min={0.3} max={2.5} step={0.1} defaultValue={speed} onChange={(e) => setData({ anim: { ...anim, type, speed: +e.target.value } })} style={{ flex: 1 }} />
         </div>
       )}
-      {type && <p style={cp.hint}>La animación se reproduce en bucle en el flipbook publicado y en la “Vista previa” del proyecto (no en el editor, para no estorbar la edición).</p>}
+      {type && <p style={cp.hint}>La animación se reproduce en bucle en el flipbook publicado y en la "Vista previa" del proyecto (no en el editor, para no estorbar la edición).</p>}
     </PropGroup>
   )
 }
@@ -5019,7 +5035,7 @@ function EntranceControl({ obj, setData }: { obj: any; setData: (p: any) => void
             <input style={{ ...s.propInput, width: 70 }} type="number" min={0} max={20} step={0.1} defaultValue={ent.delay ?? 0} onChange={(e) => patch({ delay: +e.target.value })} />
             <span style={{ fontSize: 11, color: '#6b7280' }}>seg</span>
           </div>
-          <p style={cp.hint}>Se reproduce al mostrarse la página en el flipbook publicado y en la “Vista previa”. Usa el retardo para escalonar la aparición de varios elementos.</p>
+          <p style={cp.hint}>Se reproduce al mostrarse la página en el flipbook publicado y en la "Vista previa". Usa el retardo para escalonar la aparición de varios elementos.</p>
         </>
       )}
     </PropGroup>

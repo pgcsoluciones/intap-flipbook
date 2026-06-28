@@ -2092,6 +2092,26 @@ async function init() {
         if ((obj.data || {}).startHidden) obj.visible = false
       })
 
+      // Auto-ocultar elementos referenciados como target de show_hide.
+      // Garantiza que el primer clic en el disparador siempre MUESTRE el objetivo
+      // (nunca lo oculte), sin requerir que el diseñador marque "Empieza oculto" manualmente.
+      const showHideTargetIds = new Set()
+      ;(parsed.objects || []).forEach((o) => {
+        const a = (o.data || {}).action
+        if (a && a.type === 'show_hide' && a.target) showHideTargetIds.add(a.target)
+      })
+      if (showHideTargetIds.size) {
+        fcanvas.getObjects().forEach((obj) => {
+          if (showHideTargetIds.has((obj.data || {}).elementId)) obj.visible = false
+        })
+        Object.keys(elementDomMap).forEach((id) => {
+          if (showHideTargetIds.has(id)) {
+            elementDomMap[id].style.visibility = 'hidden'
+            elementDomMap[id].dataset.visible = 'false'
+          }
+        })
+      }
+
       // Animaciones de ENTRADA (data.entrance): se preparan ocultas y se reproducen al
       // mostrarse la página. Se registra un "player" indexado por la página del flipbook.
       const entranceObjs = []
