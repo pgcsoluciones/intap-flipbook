@@ -660,6 +660,7 @@ export default function EditPublication() {
   const [uploading, setUploading]   = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [selected, setSelected] = useState<any>(null)
+  const selectedRef = useRef<any>(null)
   const [defaultFont, setDefaultFont] = useState<string>(FONTS[0].family) // tipografía para texto nuevo
   const [imageBank, setImageBank] = useState<string[]>([]) // banco de imágenes subidas en este proyecto
   const [selectVersion, setSelectVersion] = useState(0) // fuerza refresco del panel de props
@@ -890,6 +891,7 @@ export default function EditPublication() {
     }
     pageIdRef.current = activePage.id
     if (fabricRef.current) { fabricRef.current.dispose(); fabricRef.current = null }
+    selectedRef.current = null
     setSelected(null)
     // Cancela cualquier reemplazo in-situ pendiente y el modo "Ajustar hoja" al cambiar de página
     replaceTargetRef.current = null
@@ -957,12 +959,20 @@ export default function EditPublication() {
       pushHistory(JSON.stringify(canvas.toJSON(['data'])))
     }
 
-    const onSel = (e: any) => { setSelected(e.selected?.[0] ?? canvas.getActiveObject() ?? null); setSelectVersion((v) => v + 1) }
-    canvas.on('selection:created', onSel)
-    canvas.on('selection:updated', onSel)
+    const updateSelectedObject = (next: any) => {
+      if (selectedRef.current === next) return
+      selectedRef.current = next
+      setSelected(next)
+      setSelectVersion((v) => v + 1)
+    }
+    const onSel = (kind: string) => (e: any) => {
+      updateSelectedObject(canvas.getActiveObject() ?? e.selected?.[0] ?? null)
+    }
+    canvas.on('selection:created', onSel('selection:created'))
+    canvas.on('selection:updated', onSel('selection:updated'))
     canvas.on('selection:cleared', (e: any) => {
       if (rightPanelRef.current && e?.e?.target && rightPanelRef.current.contains(e.e.target as Node)) return
-      setSelected(null)
+      updateSelectedObject(null)
     })
 
     // Arrastre para reencuadrar la hoja (solo en "Ajustar hoja").
@@ -3876,7 +3886,6 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
     setUploading(false)
   }
 
-  const Group = ({ label, children }: { label: string; children: React.ReactNode }) => <PropGroup label={label}>{children}</PropGroup>
   const CtaActionFields = ({ prefix }: { prefix: 'primary' | 'secondary' }) => {
     const action = cfg[`${prefix}Action`] ?? 'none'
     return (
@@ -3903,7 +3912,7 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
 
   return (
     <>
-      <Group label={`Imágenes (${images.length}/${MAX})`}>
+      <PropGroup label={`Imágenes (${images.length}/${MAX})`}>
         {images.map((url, i) => (
           <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 6 }}>
             {url ? <img src={url} alt="" style={{ width: 30, height: 30, objectFit: 'cover', borderRadius: 4, flex: 'none', border: '1px solid #e5e7eb' }} /> : <div style={{ width: 30, height: 30, borderRadius: 4, background: '#f1f5f9', flex: 'none' }} />}
@@ -3926,10 +3935,10 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
           </button>
         )}
         <p style={cp.hint}>La primera imagen es la portada. Usa ▲▼ para reordenar. Si subes varias, la ficha muestra una mini-galería con flechas.</p>
-      </Group>
+      </PropGroup>
 
       {images.length > 1 && (
-        <Group label="Galería">
+        <PropGroup label="Galería">
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', marginBottom: 6 }}>
             <input type="checkbox" checked={!!cfg.galleryAutoplay} onChange={(e) => setCfg({ galleryAutoplay: e.target.checked })} /> Avance automático
           </label>
@@ -3940,37 +3949,37 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
               <span style={{ fontSize: 12, color: '#6b7280' }}>segundos</span>
             </div>
           )}
-        </Group>
+        </PropGroup>
       )}
 
-      <Group label="Título">
+      <PropGroup label="Título">
         <input style={s.propInput} value={cfg.title ?? ''} onChange={(e) => setCfg({ title: e.target.value })} />
-      </Group>
+      </PropGroup>
 
-      <Group label="Categoría / etiqueta">
+      <PropGroup label="Categoría / etiqueta">
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', marginBottom: 6 }}>
           <input type="checkbox" checked={cfg.showCategory !== false} onChange={(e) => setCfg({ showCategory: e.target.checked })} /> Mostrar
         </label>
         {cfg.showCategory !== false && <input style={s.propInput} value={cfg.category ?? ''} onChange={(e) => setCfg({ category: e.target.value })} />}
-      </Group>
+      </PropGroup>
 
-      <Group label="Precio">
+      <PropGroup label="Precio">
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', marginBottom: 6 }}>
           <input type="checkbox" checked={cfg.showPrice !== false} onChange={(e) => setCfg({ showPrice: e.target.checked })} /> Mostrar
         </label>
         {cfg.showPrice !== false && <input style={s.propInput} placeholder="RD$ 4,692.31" value={cfg.price ?? ''} onChange={(e) => setCfg({ price: e.target.value })} />}
-      </Group>
+      </PropGroup>
 
-      <Group label="Descripción">
+      <PropGroup label="Descripción">
         <textarea style={{ ...s.propInput, height: 70, resize: 'vertical' } as any} value={cfg.description ?? ''} onChange={(e) => setCfg({ description: e.target.value })} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
           <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>Tamaño:</span>
           <input type="range" min={10} max={22} step={1} value={cfg.descriptionSize ?? 14} onChange={(e) => setCfg({ descriptionSize: +e.target.value })} style={{ flex: 1 }} />
           <span style={{ fontSize: 11, color: '#6b7280', minWidth: 28, textAlign: 'right' }}>{cfg.descriptionSize ?? 14}px</span>
         </div>
-      </Group>
+      </PropGroup>
 
-      <Group label="Especificaciones técnicas">
+      <PropGroup label="Especificaciones técnicas">
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', marginBottom: 8 }}>
           <input type="checkbox" checked={cfg.showSpecs !== false} onChange={(e) => setCfg({ showSpecs: e.target.checked })} /> Mostrar
         </label>
@@ -3986,37 +3995,37 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
             </div>
           </>
         )}
-      </Group>
+      </PropGroup>
 
-      <Group label="Color de acento (precio, categoría, ✓)">
+      <PropGroup label="Color de acento (precio, categoría, ✓)">
         <input type="color" value={cfg.accent ?? '#4d7c0f'} onChange={(e) => setCfg({ accent: e.target.value })} style={s.colorInput} />
-      </Group>
+      </PropGroup>
 
       <div style={s.actionDivider}>Botón principal</div>
-      <Group label="Texto del botón">
+      <PropGroup label="Texto del botón">
         <input style={s.propInput} value={cfg.primaryText ?? ''} onChange={(e) => setCfg({ primaryText: e.target.value })} />
-      </Group>
-      <Group label="Color del botón">
+      </PropGroup>
+      <PropGroup label="Color del botón">
         <input type="color" value={cfg.primaryColor ?? '#9aab3c'} onChange={(e) => setCfg({ primaryColor: e.target.value })} style={s.colorInput} />
-      </Group>
-      <Group label="Acción al hacer clic">
+      </PropGroup>
+      <PropGroup label="Acción al hacer clic">
         <CtaActionFields prefix="primary" />
-      </Group>
+      </PropGroup>
 
       <div style={s.actionDivider}>Botón secundario</div>
-      <Group label="Mostrar segundo botón">
+      <PropGroup label="Mostrar segundo botón">
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
           <input type="checkbox" checked={cfg.showSecondary !== false} onChange={(e) => setCfg({ showSecondary: e.target.checked })} /> Mostrar
         </label>
-      </Group>
+      </PropGroup>
       {cfg.showSecondary !== false && (
         <>
-          <Group label="Texto del botón">
+          <PropGroup label="Texto del botón">
             <input style={s.propInput} value={cfg.secondaryText ?? ''} onChange={(e) => setCfg({ secondaryText: e.target.value })} />
-          </Group>
-          <Group label="Acción al hacer clic">
+          </PropGroup>
+          <PropGroup label="Acción al hacer clic">
             <CtaActionFields prefix="secondary" />
-          </Group>
+          </PropGroup>
         </>
       )}
 
@@ -4119,10 +4128,6 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
   const setCfg = (patch: any) => setData({ widget: { ...widget, config: { ...cfg, ...patch } } })
   const [quizQuestions, setQuizQuestions] = React.useState<any[]>(cfg.questions ?? [{ text: '¿Tu pregunta?', options: ['Opción A', 'Opción B'], type: 'single' }])
   const [showPreview, setShowPreview] = React.useState(false)
-
-  const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <PropGroup label={label}>{children}</PropGroup>
-  )
   const Check = ({ k, label, def = true }: { k: string; label: string; def?: boolean }) => (
     <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer' }}>
       <input type="checkbox" defaultChecked={cfg[k] !== undefined ? !!cfg[k] : def} onChange={(e) => setCfg({ [k]: e.target.checked })} />
@@ -4155,16 +4160,16 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
 
       {type === 'contact' && (
         <>
-          <Field label="Título">
+          <WidgetField label="Título">
             <input style={s.propInput} defaultValue={cfg.title ?? ''} onChange={(e) => setCfg({ title: e.target.value })} />
-          </Field>
-          <Field label="Email destino">
+          </WidgetField>
+          <WidgetField label="Email destino">
             <input style={s.propInput} placeholder="ventas@dominio.com" defaultValue={cfg.toEmail ?? ''} onChange={(e) => setCfg({ toEmail: e.target.value })} />
-          </Field>
-          <Field label="Texto del botón">
+          </WidgetField>
+          <WidgetField label="Texto del botón">
             <input style={s.propInput} defaultValue={cfg.button ?? 'Enviar'} onChange={(e) => setCfg({ button: e.target.value })} />
-          </Field>
-          <Field label="Campos y obligatorios">
+          </WidgetField>
+          <WidgetField label="Campos y obligatorios">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <Check k="showPhone"     label="Incluir Teléfono / Móvil" />
               <Check k="showComment"   label="Incluir Comentario / Mensaje" />
@@ -4172,69 +4177,69 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
               <Check k="emailRequired" label="Email obligatorio (*)" />
               <Check k="phoneRequired" label="Teléfono obligatorio (*)" def={false} />
             </div>
-          </Field>
+          </WidgetField>
         </>
       )}
 
       {type === 'video' && (
         <>
-          <Field label="URL del video (YouTube o Vimeo)">
+          <WidgetField label="URL del video (YouTube o Vimeo)">
             <input style={s.propInput} placeholder="https://youtube.com/watch?v=..." defaultValue={cfg.url ?? ''} onChange={(e) => setCfg({ url: e.target.value })} />
-          </Field>
-          <Field label="…o sube un archivo de video (MP4/WebM)">
+          </WidgetField>
+          <WidgetField label="…o sube un archivo de video (MP4/WebM)">
             <FileField value={/^https?:\/\/(www\.)?(youtube|youtu\.be|vimeo)/.test(cfg.url ?? '') ? '' : (cfg.url ?? '')} onChange={(url) => setCfg({ url })} accept={ACCEPT_VIDEO} preview={false} hint="MP4, WebM · máx 50 MB" />
-          </Field>
-          <Field label="Portada / thumbnail (opcional, para MP4)">
+          </WidgetField>
+          <WidgetField label="Portada / thumbnail (opcional, para MP4)">
             <FileField value={cfg.poster ?? ''} onChange={(url) => setCfg({ poster: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP" />
-          </Field>
-          <Field label="Botón de reproducción — elige un estilo">
+          </WidgetField>
+          <WidgetField label="Botón de reproducción — elige un estilo">
             <PlayerGallery value={cfg.playerStyle ?? 'native'} color={cfg.playerColor ?? '#ef4444'} presets={VIDEO_PRESETS} onPick={(id) => setCfg({ playerStyle: id })} />
             <p style={cp.hint}>Los botones de play aplican a videos subidos (MP4/WebM). YouTube/Vimeo usan su propio reproductor.</p>
-          </Field>
+          </WidgetField>
           {(cfg.playerStyle ?? 'native') !== 'native' && (
-            <Field label="Color del botón de play">
+            <WidgetField label="Color del botón de play">
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input type="color" defaultValue={cfg.playerColor ?? '#ef4444'} onChange={(e) => setCfg({ playerColor: e.target.value })} style={s.colorInput} />
                 <span style={{ fontSize: 11, color: '#6b7280' }}>Color del botón sobre el video</span>
               </div>
-            </Field>
+            </WidgetField>
           )}
-          <Field label="Opciones de reproducción">
+          <WidgetField label="Opciones de reproducción">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <Check k="autoplay" label="Autoplay (inicia automáticamente)" def={false} />
               <Check k="controls" label="Mostrar controles de reproducción" />
               <Check k="muted"    label="Silenciar (recomendado con autoplay)" def={false} />
               <Check k="loop"     label="Repetir en bucle" def={false} />
             </div>
-          </Field>
+          </WidgetField>
         </>
       )}
 
       {type === 'audio' && (
         <>
-          <Field label="Archivo de audio">
+          <WidgetField label="Archivo de audio">
             <FileField value={cfg.url ?? ''} onChange={(url) => setCfg({ url })} accept={ACCEPT_AUDIO} preview={false} hint="MP3, OGG, WAV, M4A · máx 50 MB" />
-          </Field>
-          <Field label="Botón de reproducción — elige un estilo">
+          </WidgetField>
+          <WidgetField label="Botón de reproducción — elige un estilo">
             <PlayerGallery value={cfg.playerStyle ?? 'circle'} color={cfg.playerColor ?? '#7c3aed'} presets={AUDIO_PRESETS} onPick={(id) => setCfg({ playerStyle: id })} />
-          </Field>
+          </WidgetField>
           {(cfg.playerStyle ?? 'circle') === 'pill' && (
-            <Field label="Texto del botón">
+            <WidgetField label="Texto del botón">
               <input style={s.propInput} placeholder="Escuchar" defaultValue={cfg.label ?? ''} onChange={(e) => setCfg({ label: e.target.value })} />
-            </Field>
+            </WidgetField>
           )}
-          <Field label="Color del reproductor">
+          <WidgetField label="Color del reproductor">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input type="color" defaultValue={cfg.playerColor ?? '#7c3aed'} onChange={(e) => setCfg({ playerColor: e.target.value })} style={s.colorInput} />
               <span style={{ fontSize: 11, color: '#6b7280' }}>Color del botón / barra</span>
             </div>
-          </Field>
-          <Field label="Opciones">
+          </WidgetField>
+          <WidgetField label="Opciones">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <Check k="autoplay" label="Autoplay al abrir la página" def={false} />
               <Check k="loop"     label="Repetir en bucle" def={false} />
             </div>
-          </Field>
+          </WidgetField>
         </>
       )}
 
@@ -4249,51 +4254,51 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
       {type === 'product_card' && <ProductCardWidgetProps cfg={cfg} setCfg={setCfg} />}
 
       {type === 'table' && (
-        <Field label="Datos (fila por línea, columnas separadas por coma)">
+        <WidgetField label="Datos (fila por línea, columnas separadas por coma)">
           <textarea style={{ ...s.propInput, height: 120, resize: 'vertical', fontFamily: 'monospace', fontSize: 11 } as any} defaultValue={cfg.csv ?? ''} onChange={(e) => setCfg({ csv: e.target.value })} />
-        </Field>
+        </WidgetField>
       )}
 
       {type === 'like' && (
-        <Field label="Texto del botón">
+        <WidgetField label="Texto del botón">
           <input style={s.propInput} defaultValue={cfg.label ?? 'Me gusta'} onChange={(e) => setCfg({ label: e.target.value })} />
-        </Field>
+        </WidgetField>
       )}
 
       {type === 'download' && (
         <>
-          <Field label="Archivo a descargar">
+          <WidgetField label="Archivo a descargar">
             <FileField value={cfg.url ?? ''} onChange={(url) => setCfg({ url })} accept={ACCEPT_FILE} preview={false} hint="PDF, ZIP, Office, imágenes · máx 50 MB" />
-          </Field>
-          <Field label="Título">
+          </WidgetField>
+          <WidgetField label="Título">
             <input style={s.propInput} defaultValue={cfg.title ?? 'Descarga aquí'} onChange={(e) => setCfg({ title: e.target.value })} />
-          </Field>
-          <Field label="Texto del botón">
+          </WidgetField>
+          <WidgetField label="Texto del botón">
             <input style={s.propInput} defaultValue={cfg.button ?? 'Descargar'} onChange={(e) => setCfg({ button: e.target.value })} />
-          </Field>
-          <Field label="Nombre del archivo descargado (opcional)">
+          </WidgetField>
+          <WidgetField label="Nombre del archivo descargado (opcional)">
             <input style={s.propInput} placeholder="catalogo.pdf" defaultValue={cfg.filename ?? ''} onChange={(e) => setCfg({ filename: e.target.value })} />
-          </Field>
-          <Field label="Color del botón">
+          </WidgetField>
+          <WidgetField label="Color del botón">
             <input type="color" defaultValue={cfg.buttonColor ?? '#4F46E5'} onChange={(e) => setCfg({ buttonColor: e.target.value })} style={s.colorInput} />
-          </Field>
+          </WidgetField>
         </>
       )}
 
       {type === 'embed' && (
         <>
-          <Field label="Código HTML / iframe a incrustar">
+          <WidgetField label="Código HTML / iframe a incrustar">
             <textarea style={{ ...s.propInput, height: 120, resize: 'vertical', fontFamily: 'monospace', fontSize: 11 } as any} placeholder={'<iframe src="https://..." ...></iframe>\no código HTML corto'} defaultValue={cfg.html ?? ''} onChange={(e) => setCfg({ html: e.target.value })} />
-          </Field>
+          </WidgetField>
           <p style={cp.hint}>Pegá el código de inserción de cualquier servicio externo (Google Forms, Typeform, calendarios, mapas custom, etc.).</p>
         </>
       )}
 
       {type === 'quiz' && (
         <>
-          <Field label="Título del cuestionario">
+          <WidgetField label="Título del cuestionario">
             <input style={s.propInput} defaultValue={cfg.title ?? 'Cuestionario'} onChange={(e) => setCfg({ title: e.target.value })} />
-          </Field>
+          </WidgetField>
           <div style={cp.sectionLabel}>Preguntas</div>
           {quizQuestions.map((q: any, qi: number) => (
             <div key={qi} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, marginBottom: 8 }}>
@@ -4321,7 +4326,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
 
       {type === 'popup_banner' && (
         <>
-          <Field label="Plantilla rápida">
+          <WidgetField label="Plantilla rápida">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
               {POPUP_TEMPLATES.map((t) => (
                 <button key={t.key} onClick={() => setCfg({ ...cfg, template: t.key, ...t.defaults })} style={{ padding: '6px 4px', border: `2px solid ${cfg.template === t.key ? '#4F46E5' : '#e5e7eb'}`, borderRadius: 6, background: cfg.template === t.key ? '#eef2ff' : '#fff', cursor: 'pointer', fontSize: 10, color: '#374151', textAlign: 'center' as const }}>
@@ -4329,8 +4334,8 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
                 </button>
               ))}
             </div>
-          </Field>
-          <Field label="Ubicación">
+          </WidgetField>
+          <WidgetField label="Ubicación">
             <select style={s.propInput} defaultValue={cfg.position ?? 'left'} onChange={(e) => setCfg({ position: e.target.value })}>
               <option value="left">Lateral izquierdo</option>
               <option value="right">Lateral derecho</option>
@@ -4339,17 +4344,17 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
             {cfg.position === 'custom' && (
               <p style={cp.hint}>El pop-up aparecerá exactamente donde colocaste y dimensionaste este cuadro en la página, no en un lateral.</p>
             )}
-          </Field>
-          <Field label="Cuándo aparecer">
+          </WidgetField>
+          <WidgetField label="Cuándo aparecer">
             <select style={s.propInput} defaultValue={cfg.trigger ?? 'delay'} onChange={(e) => setCfg({ trigger: e.target.value })}>
               <option value="delay">Después de X segundos</option>
               <option value="immediate">Al abrir el flipbook</option>
               <option value="exit">Al intentar salir</option>
             </select>
-          </Field>
+          </WidgetField>
           {(cfg.trigger === 'delay' || !cfg.trigger) && (
             <>
-              <Field label="Inicio del contador">
+              <WidgetField label="Inicio del contador">
                 <select style={s.propInput} defaultValue={cfg.timer_scope ?? 'global'} onChange={(e) => setCfg({ timer_scope: e.target.value })}>
                   <option value="global">Al abrir el flipbook (global)</option>
                   <option value="page">Al llegar a esta página (focalizado)</option>
@@ -4359,13 +4364,13 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
                     ? 'El contador arranca desde que se abre el flipbook, sin importar en qué página esté el lector.'
                     : 'El contador arranca solo cuando el lector llega a la página donde colocaste este widget.'}
                 </p>
-              </Field>
-              <Field label="Demora (segundos)">
+              </WidgetField>
+              <WidgetField label="Demora (segundos)">
                 <input style={s.propInput} type="number" min={0} max={120} defaultValue={cfg.delay ?? 5} onChange={(e) => setCfg({ delay: +e.target.value })} />
-              </Field>
+              </WidgetField>
             </>
           )}
-          <Field label="Animación de entrada">
+          <WidgetField label="Animación de entrada">
             <select style={s.propInput} defaultValue={cfg.animation ?? 'slide'} onChange={(e) => setCfg({ animation: e.target.value })}>
               <option value="slide">Deslizar (suave)</option>
               <option value="bounce">Saltos</option>
@@ -4373,45 +4378,55 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
               <option value="zoom">Zoom</option>
               <option value="none">Sin animación</option>
             </select>
-          </Field>
-          <Field label="Cerrar solo tras X segundos (0 = no cerrar)">
+          </WidgetField>
+          <WidgetField label="Cerrar solo tras X segundos (0 = no cerrar)">
             <input style={s.propInput} type="number" min={0} max={120} defaultValue={cfg.autoClose ?? 0} onChange={(e) => setCfg({ autoClose: +e.target.value })} />
-          </Field>
-          <Field label="Título del pop-up">
+          </WidgetField>
+          <WidgetField label="Título del pop-up">
             <input style={s.propInput} defaultValue={cfg.title ?? ''} onChange={(e) => setCfg({ title: e.target.value })} />
-          </Field>
-          <Field label="Texto del pop-up">
+          </WidgetField>
+          <WidgetField label="Texto del pop-up">
             <textarea style={{ ...s.propInput, height: 64, resize: 'vertical' } as any} defaultValue={cfg.text ?? ''} onChange={(e) => setCfg({ text: e.target.value })} />
-          </Field>
-          <Field label="Texto del botón">
+          </WidgetField>
+          <WidgetField label="Texto del botón">
             <input style={s.propInput} defaultValue={cfg.buttonText ?? ''} onChange={(e) => setCfg({ buttonText: e.target.value })} />
-          </Field>
-          <Field label="URL del botón">
+          </WidgetField>
+          <WidgetField label="URL del botón">
             <input style={s.propInput} placeholder="https://..." defaultValue={cfg.buttonUrl ?? ''} onChange={(e) => setCfg({ buttonUrl: e.target.value })} />
-          </Field>
-          <Field label="Imagen (opcional)">
+          </WidgetField>
+          <WidgetField label="Imagen (opcional)">
             <FileField value={cfg.image ?? ''} onChange={(url) => setCfg({ image: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP" />
-          </Field>
+          </WidgetField>
           {cfg.image && (
-            <Field label="Lado de la imagen">
+            <WidgetField label="Lado de la imagen">
               <select style={s.propInput} defaultValue={cfg.imagePosition ?? 'left'} onChange={(e) => setCfg({ imagePosition: e.target.value })}>
                 <option value="left">Imagen a la izquierda</option>
                 <option value="right">Imagen a la derecha</option>
               </select>
-            </Field>
+            </WidgetField>
           )}
           {cfg.image && (
-            <Field label="Ajustar imagen">
-              <ImageAdjuster
+            <WidgetField label="Ajustar imagen">
+              <ImageFitToggle
+                key={`fit-${cfg.image}`}
                 url={cfg.image}
-                zoom={cfg.imageZoom ?? 1}
-                posX={cfg.imagePosX ?? 50}
-                posY={cfg.imagePosY ?? 50}
-                onChange={(p) => setCfg(p)}
+                fitMap={{
+                  [cfg.image]: {
+                    zoom: cfg.imageZoom ?? 1,
+                    x: cfg.imagePosX ?? 50,
+                    y: cfg.imagePosY ?? 50,
+                  },
+                }}
+                setFit={(_, f) => setCfg({
+                  imageZoom: f.zoom,
+                  imagePosX: f.x,
+                  imagePosY: f.y,
+                })}
+                aspect={4 / 3}
               />
-            </Field>
+            </WidgetField>
           )}
-          <Field label="Colores">
+          <WidgetField label="Colores">
             <div style={{ display: 'flex', gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={s.miniLabel}>Fondo</div>
@@ -4422,34 +4437,34 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
                 <input type="color" defaultValue={cfg.textColor ?? '#ffffff'} onChange={(e) => setCfg({ textColor: e.target.value })} style={s.colorInput} />
               </div>
             </div>
-          </Field>
-          <Field label="Opciones">
+          </WidgetField>
+          <WidgetField label="Opciones">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <Check k="showOnce" label="Mostrar una sola vez por visitante" />
             </div>
-          </Field>
+          </WidgetField>
         </>
       )}
 
       {type === 'units_table' && (
         <>
-          <Field label="ID de publicación (se completa automáticamente)">
+          <WidgetField label="ID de publicación (se completa automáticamente)">
             <input style={s.propInput} value={cfg.publication_id ?? ''} readOnly />
-          </Field>
-          <Field label="Filtrar estado">
+          </WidgetField>
+          <WidgetField label="Filtrar estado">
             <select style={s.propInput} defaultValue={cfg.filter_status ?? 'all'} onChange={(e) => setCfg({ filter_status: e.target.value })}>
               <option value="all">Todos</option>
               <option value="available">Solo disponibles</option>
               <option value="reserved">Solo reservadas</option>
               <option value="sold">Solo vendidas</option>
             </select>
-          </Field>
-          <Field label="Columnas visibles">
+          </WidgetField>
+          <WidgetField label="Columnas visibles">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <Check k="show_price" label="Mostrar precio" />
               <Check k="show_area"  label="Mostrar m²" />
             </div>
-          </Field>
+          </WidgetField>
         </>
       )}
 
@@ -4888,6 +4903,10 @@ function PropGroup({ label, children }: { label: string; children: React.ReactNo
       {children}
     </div>
   )
+}
+
+function WidgetField({ label, children }: { label: string; children: React.ReactNode }) {
+  return <PropGroup label={label}>{children}</PropGroup>
 }
 
 // Sección colapsable reutilizable del inspector (patrón del mockup).
