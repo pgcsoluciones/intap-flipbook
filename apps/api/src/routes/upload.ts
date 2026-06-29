@@ -8,6 +8,35 @@ type Variables = AuthVariables
 
 const upload = new Hono<{ Bindings: Env; Variables: Variables }>()
 
+function isPublicUploadKey(key: string) {
+  return /^uploads\/[^/]+\/[^/]+$/.test(key)
+}
+
+async function servePublicUpload(c: any) {
+  const key = `uploads/${c.req.param('key')}`
+  if (!key || !isPublicUploadKey(key)) {
+    return c.json({ success: false, error: 'Archivo no encontrado' }, 404)
+  }
+
+  const obj = await c.env.MEDIA.get(key)
+  if (!obj) {
+    return c.json({ success: false, error: 'Archivo no encontrado' }, 404)
+  }
+
+  const headers = new Headers()
+  obj.writeHttpMetadata(headers)
+  headers.set('etag', obj.httpEtag)
+
+  if (c.req.method === 'HEAD') {
+    return new Response(null, { status: 200, headers })
+  }
+
+  return new Response(obj.body, { status: 200, headers })
+}
+
+upload.get('/uploads/:key{.+}', servePublicUpload)
+upload.on('HEAD', '/uploads/:key{.+}', servePublicUpload)
+
 upload.use('*', jwtMiddleware)
 
 // Tipos MIME permitidos y su extensión de archivo asociada.

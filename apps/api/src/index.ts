@@ -95,8 +95,8 @@ app.route('/auth', authRoutes)
 
 // Protected API
 app.route('/api/publications', publicationRoutes)
-app.route('/api', pageRoutes)
 app.route('/api/upload', uploadRoutes)
+app.route('/api', pageRoutes)
 app.route('/admin', adminRoutes)
 app.route('/admin/svg', svgRoutes)
 app.route('/', proposalRoutes)

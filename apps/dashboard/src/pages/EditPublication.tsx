@@ -154,15 +154,18 @@ async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas
     const parsedJson = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson
     if (!parsedJson) return null
     const clonedJson = JSON.parse(JSON.stringify(parsedJson))
-    const baseJson = stripBackgroundImage(clonedJson)
-    // Excluir imágenes raster: sin crossOrigin tainarían el canvas; con crossOrigin
-    // R2 las rechaza (sin CORS headers). Texto, formas, SVG/path, grupos: seguros.
-    const nonImageObjects = (baseJson.objects ?? []).filter((o: any) => o.type !== 'image')
-    if (nonImageObjects.length === 0) return null // nada que renderizar → fondo solo vía <img>
-    const noImagesJson = { ...baseJson, objects: nonImageObjects }
+    const safeJson = stripBackgroundImage(normalizeFabricAssetJson(clonedJson))
+    const urls = [...collectThumbnailImageUrls(safeJson)]
+
+    if (urls.length) {
+      const loaded = await Promise.all(
+        urls.map((url) => loadFabricImageForSnapshot(url))
+      )
+      if (loaded.some((image) => !image)) return null
+    }
 
     await new Promise<void>((resolve) => {
-      sc.loadFromJSON(noImagesJson, () => resolve())
+      sc.loadFromJSON(safeJson, () => resolve())
     })
     // canvas_json hereda backgroundColor:'#ffffff' del canvas principal (bgColor state).
     // Si no lo limpiamos, renderAll() rellena el canvas con blanco antes de los objetos
