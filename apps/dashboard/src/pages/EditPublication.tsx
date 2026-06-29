@@ -135,44 +135,34 @@ function collectThumbnailImageUrls(node: any, out = new Set<string>()): Set<stri
   return out
 }
 
+// Renderiza solo los objetos no-imagen del canvas_json en un StaticCanvas transparente.
+// No carga la imagen de fondo (R2 no sirve CORS headers → toDataURL fallaría).
+// El fondo se muestra mediante un <img> CSS superpuesto en la JSX de miniaturas.
 async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas_json: any; cover_json: any }) {
   if (typeof document === 'undefined') return null
   const el = document.createElement('canvas')
   const sc = new fabric.StaticCanvas(el, {
     width: CANVAS_W,
     height: CANVAS_H,
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(0,0,0,0)',
   })
   try {
     const rawJson = snapshot.canvas_json
     const parsedJson = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson
-    const clonedJson = parsedJson ? JSON.parse(JSON.stringify(parsedJson)) : { version: '5.3.0', objects: [] }
-    const safeJson = stripBackgroundImage(normalizeFabricAssetJson(clonedJson))
-
-    const urls = [...collectThumbnailImageUrls(safeJson)]
-    if (urls.length) {
-      const loaded = await Promise.all(urls.map((url) => loadFabricImageForSnapshot(url)))
-      if (loaded.length !== urls.length) return null
+    if (!parsedJson) return null
+    const clonedJson = JSON.parse(JSON.stringify(parsedJson))
+    const baseJson = stripBackgroundImage(clonedJson)
+    // Excluir objetos raster (type:'image') — cargarlos con crossOrigin contaminaría el canvas
+    // y sin crossOrigin toDataURL() lanzaría SecurityError. El resto (texto, formas, SVG) es seguro.
+    const noImagesJson = {
+      ...baseJson,
+      objects: (baseJson.objects ?? []).filter((o: any) => o.type !== 'image'),
     }
 
     await new Promise<void>((resolve) => {
-      sc.loadFromJSON(safeJson ?? { version: '5.3.0', objects: [] }, () => resolve())
+      sc.loadFromJSON(noImagesJson, () => resolve())
     })
-
-    const bgUrl = snapshot.image_url || BLANK_PAGE_URL
-    const bg = await loadFabricImageForSnapshot(bgUrl)
-    bg.set({ selectable: false, evented: false })
-    if (bg && bg.width && bg.height) {
-      const cover = parseCoverFrame(snapshot.cover_json)
-      const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(bg.width, bg.height, cover, CANVAS_W, CANVAS_H)
-      bg.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
-    }
-    await new Promise<void>((resolve) => {
-      sc.setBackgroundImage(bg, () => {
-        sc.renderAll()
-        resolve()
-      })
-    })
+    sc.renderAll()
     return sc.toDataURL({ format: 'png', quality: 0.92, multiplier: THUMB_W / CANVAS_W, enableRetinaScaling: false })
   } catch (error) {
     console.error('[thumbnail] persisted snapshot failed', error)
@@ -1045,10 +1035,19 @@ export default function EditPublication() {
       if ((thumbnailTokensRef.current[job.pageId] ?? 0) !== job.token) return
       if (!pagesRef.current.some((page) => page.id === job.pageId)) return
 
-      const persistedSnapshot = job.mode === 'live' ? null : buildPersistedThumbnailSnapshot(job.pageId)
-      const dataUrl = job.mode === 'live'
-        ? captureLiveThumbnailDataUrl(job.pageId, pageIdRef, fabricRef)
-        : persistedSnapshot ? await renderPageThumbnailSnapshot(persistedSnapshot) : null
+      // Para 'live': serializa el canvas activo (sin fondo) y renderiza miniatura igual que 'persisted'.
+      // No usar captureLiveThumbnailDataUrl: el canvas principal está tintado (background sin crossOrigin).
+      let snapshot
+      if (job.mode === 'live' && pageIdRef.current === job.pageId && fabricRef.current) {
+        const page = pagesRef.current.find((p) => p.id === job.pageId)
+        if (page) {
+          const liveJson = serializeCanvasJson(fabricRef.current)
+          snapshot = { image_url: page.image_url, canvas_json: liveJson, cover_json: page.cover_json }
+        }
+      } else {
+        snapshot = buildPersistedThumbnailSnapshot(job.pageId)
+      }
+      const dataUrl = snapshot ? await renderPageThumbnailSnapshot(snapshot) : null
       if (!thumbnailMountedRef.current) return
       if ((thumbnailTokensRef.current[job.pageId] ?? 0) !== job.token) return
       if (!pagesRef.current.some((page) => page.id === job.pageId)) return
@@ -1303,42 +1302,42 @@ export default function EditPublication() {
     // el timer de 1.2s expira con el canvas a medio cargar, sobreescribiendo datos.
     let isLoading = true
 
-    // Fondo de página en modo "cubrir": la hoja llena el recuadro A4 (W×H) sin
-    // deformarse. Replica el `object-fit:cover` del viewer (flipbook.js) y respeta
-    // el encuadre manual (zoom + posición) guardado en cover_json.
-    fabric.Image.fromURL(activePage.image_url, (img: any) => {
-      img.set({ selectable: false, evented: false })
-      if (img && img.width && img.height) {
-        bgNatRef.current = { iw: img.width, ih: img.height }
-        const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
-        img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
-      }
-      canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
-      bgImgRef.current = canvas.backgroundImage ?? img
-    })
+    // Carga el fondo DESPUÉS de loadFromJSON porque loadFromJSON llama canvas.clear()
+    // internamente, lo que borra cualquier backgroundImage ya puesta. Llamar fromURL
+    // antes del clear hace que el fondo desaparezca.
+    const loadBg = () => {
+      fabric.Image.fromURL(activePage.image_url, (img: any) => {
+        img.set({ selectable: false, evented: false })
+        if (img && img.width && img.height) {
+          bgNatRef.current = { iw: img.width, ih: img.height }
+          const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
+          img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
+        }
+        canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
+        bgImgRef.current = canvas.backgroundImage ?? img
+      })
+    }
 
     if (activePage.canvas_json) {
-        const pageJson = typeof activePage.canvas_json === 'string'
-          ? JSON.parse(activePage.canvas_json)
-          : activePage.canvas_json
-        const jsonWithoutBg = stripBackgroundImage(pageJson)
-        canvas.loadFromJSON(jsonWithoutBg, () => {
-          isLoading = false
-        // Aplicar visibilidad de editor: elementos marcados como ocultos en el editor
-        // se muestran con opacidad mínima para que sean clicables pero no distraigan.
+      const pageJson = typeof activePage.canvas_json === 'string'
+        ? JSON.parse(activePage.canvas_json)
+        : activePage.canvas_json
+      const jsonWithoutBg = stripBackgroundImage(pageJson)
+      canvas.loadFromJSON(jsonWithoutBg, () => {
+        isLoading = false
         canvas.getObjects().forEach((o: any) => {
           if (o.data?.hiddenInEditor) {
             o.set({ opacity: 0.07, selectable: false, evented: false, hasControls: false, hasBorders: false })
           }
         })
         canvas.renderAll()
-        // Estado inicial en el historial
         pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
+        loadBg()
       })
     } else {
       isLoading = false
-      // Página vacía: estado inicial
       pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
+      loadBg()
     }
 
     const updateSelectedObject = (next: any) => {
@@ -2876,11 +2875,21 @@ function ContextPanel(p: any) {
                 onClick={() => p.setActivePage(page)}
                 style={{ ...cp.thumbItem, borderColor: p.activePage?.id === page.id ? '#4F46E5' : 'transparent' }}
               >
-                <img
-                  src={p.thumbnailByPageId[page.id] || page.image_url || BLANK_PAGE_URL}
-                  alt={`p${i + 1}`}
-                  style={cp.thumbImg}
-                />
+                {/* Capa de fondo (image_url) + overlay transparente de elementos (thumbnailByPageId) */}
+                <div style={{ position: 'relative', width: '100%', aspectRatio: '0.707', overflow: 'hidden', background: '#e5e7eb' }}>
+                  <img
+                    src={page.image_url || BLANK_PAGE_URL}
+                    alt=""
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                  {p.thumbnailByPageId[page.id] && (
+                    <img
+                      src={p.thumbnailByPageId[page.id]}
+                      alt=""
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill', display: 'block', pointerEvents: 'none' }}
+                    />
+                  )}
+                </div>
                 <div style={cp.thumbNum}>{i + 1}</div>
                 <button
                   title="Duplicar página (copia con todo el contenido)"
