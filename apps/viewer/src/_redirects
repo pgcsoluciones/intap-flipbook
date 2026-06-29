@@ -1,3 +1,1 @@
-# Cualquier ruta (p. ej. /mi-negocio/catalogo-verano) sirve el viewer.
-# El JS lee el último segmento de la URL como slug del flipbook.
-/*  /index.html  200
+/* /index.html 200

@@ -63,16 +63,6 @@ function applyCoverStyle(el, coverJson, src, boxAspect) {
   probe.src = src
 }
 
-function waitForImages(container) {
-  // Solo espera las primeras 2 imágenes de página (las visibles al abrir).
-  // El resto tiene loading="lazy" y carga en diferido mientras el usuario hojea.
-  // Esto reduce el tiempo de inicio de varios segundos a <500 ms en la mayoría de conexiones.
-  const sheets = Array.from(container.querySelectorAll('.page [data-bg]')).slice(0, 2)
-  return Promise.all(
-    sheets.map((el) => new Promise((r) => { const im = new Image(); im.onload = r; im.onerror = r; im.src = el.getAttribute('data-bg') }))
-  )
-}
-
 function makeBlank(w, h) {
   const d = document.createElement('div')
   d.className = 'page'
@@ -174,6 +164,18 @@ async function init() {
     const div = document.createElement('div')
     div.className = 'page'
     div.style.cssText = `width:${pageWidth}px;height:${pageHeight}px;overflow:hidden;background:#fff;position:relative;`
+    // PROTECTED: The untransformed A4 viewport clips zoomed page content.
+    // Zoom must never render outside its active page boundary.
+    const pageZoomViewport = document.createElement('div')
+    pageZoomViewport.className = 'page-zoom-viewport'
+    pageZoomViewport.style.cssText = 'position:absolute;inset:0;overflow:hidden;clip-path:inset(0);contain:paint;isolation:isolate;'
+    const pageContent = document.createElement('div')
+    pageContent.className = 'page-zoom-content'
+    pageContent.style.cssText = 'position:absolute;inset:0;overflow:hidden;transform-origin:top left;will-change:transform;'
+    div.__pageData = page
+    div.__pageBackgroundLoaded = false
+    div.__zoomViewport = pageZoomViewport
+    div.__zoomContent = pageContent
     // La hoja se pinta como BACKGROUND-IMAGE (no <img> con transform). Motivo: StPageFlip
     // usa transformaciones 3D (preserve-3d) para voltear, y bajo eso el overflow:hidden NO
     // recorta el transform:scale → la imagen con zoom se desbordaba. Un background siempre
@@ -181,20 +183,18 @@ async function init() {
     // background-size + background-position (idéntico a computeCover del editor).
     const sheet = document.createElement('div')
     sheet.style.cssText = 'position:absolute;inset:0;overflow:hidden;background-repeat:no-repeat;background-position:center;background-size:cover;'
-    sheet.style.backgroundImage = `url("${page.image_url}")`
-    sheet.setAttribute('data-bg', page.image_url)
-    // Encuadre manual de la hoja (zoom + posición) elegido en el editor (cover_json).
-    // El overlay de elementos es un canvas hermano y NO se ve afectado por esto.
-    applyCoverStyle(sheet, page.cover_json, page.image_url, pageWidth / pageHeight)
-    div.appendChild(sheet)
+    div.__pageSheet = sheet
+    pageContent.appendChild(sheet)
     pageDivs.push(div)
     if (page.title || page.price) {
       const label = document.createElement('div')
       label.style.cssText = 'position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.55);color:#fff;padding:6px 10px;font-size:0.75rem;display:flex;justify-content:space-between;'
       if (page.title) { const t = document.createElement('span'); t.textContent = page.title; label.appendChild(t) }
       if (page.price) { const p = document.createElement('span'); p.textContent = page.price; p.style.fontWeight = 'bold'; label.appendChild(p) }
-      div.appendChild(label)
+      pageContent.appendChild(label)
     }
+    pageZoomViewport.appendChild(pageContent)
+    div.appendChild(pageZoomViewport)
     container.appendChild(div)
   })
 
@@ -204,8 +204,6 @@ async function init() {
   // Índices de página real dentro del flipbook (incluye blanks en escritorio)
   const firstIdx = lead                 // primera página real
   const lastIdx  = lead + realCount - 1 // última página real
-
-  await waitForImages(container)
 
   // Dar dimensiones explícitas al contenedor para que size:'stretch' sepa hasta dónde crecer
   container.style.width  = (portrait ? pageWidth : pageWidth * 2) + 'px'
@@ -1991,12 +1989,44 @@ async function init() {
     })
   }
 
+  // Convierte el índice del flipbook (con blanks) al número de página real (1..realCount)
+  function pageNumOf(idx) {
+    return Math.max(1, Math.min(idx - lead + 1, realCount))
+  }
+
+  // PROTECTED: Load page backgrounds only when the page becomes relevant.
+  // Eager background assignment downloads hidden catalog pages on mobile.
+  function ensurePageBackgroundLoaded(pageIndex) {
+    const realPage = pageNumOf(pageIndex)
+    const realIdx = realPage - 1
+    const div = pageDivs[realIdx]
+    if (!div || div.__pageBackgroundLoaded) return
+    const page = div.__pageData
+    const sheet = div.__pageSheet
+    if (!page?.image_url || !sheet) {
+      div.__pageBackgroundLoaded = true
+      return
+    }
+    sheet.style.backgroundImage = `url("${page.image_url}")`
+    applyCoverStyle(sheet, page.cover_json, page.image_url, pageWidth / pageHeight)
+    div.__pageBackgroundLoaded = true
+  }
+
+  function ensureNearbyPageBackgrounds(pageIndex) {
+    const realPage = pageNumOf(pageIndex)
+    ;[realPage - 1, realPage, realPage + 1].forEach((pageNumber) => {
+      if (pageNumber < 1 || pageNumber > realCount) return
+      ensurePageBackgroundLoaded(lead + pageNumber - 1)
+    })
+  }
+
   function buildOverlay(div, canvasJson, pageIndex) {
     if (!canvasJson || typeof fabric === 'undefined') return
     let parsed
     try { parsed = typeof canvasJson === 'string' ? JSON.parse(canvasJson) : canvasJson } catch { return }
     if (!parsed || !parsed.objects || !parsed.objects.length) return
 
+    const overlayHost = div.__zoomContent || div
     const wrap = document.createElement('div')
     // pointer-events:none en el contenedor — StPageFlip necesita recibir los gestos
     // de arrastre en toda la página. Los elementos interactivos hijos sobreescriben
@@ -2005,7 +2035,7 @@ async function init() {
     const cv = document.createElement('canvas')
     cv.style.cssText = 'pointer-events:none;'
     wrap.appendChild(cv)
-    div.appendChild(wrap)
+    overlayHost.appendChild(wrap)
 
     // Detiene los eventos que StPageFlip usa para iniciar el volteo de página
     // (mousedown/touchstart/pointerdown). Así un clic dentro de un widget o
@@ -2140,20 +2170,402 @@ async function init() {
     })
   }
 
-  // Construye overlays para cada página real (pasa el índice real dentro del flipbook
-  // = lead + i, para disparar las animaciones de entrada al mostrarse esa hoja).
-  pageDivs.forEach((div, i) => buildOverlay(div, data.pages[i] && data.pages[i].canvas_json, lead + i))
+  // PROTECTED: Build Fabric overlays only when a page becomes relevant.
+  // Eagerly building all pages delays mobile startup and loads hidden assets.
+  function ensureOverlayBuilt(pageIndex) {
+    const realPage = pageNumOf(pageIndex)
+    const realIdx = realPage - 1
+    const div = pageDivs[realIdx]
+    if (!div || div.__overlayBuilt || div.__overlayBuilding) return
+    div.__overlayBuilding = true
+    try {
+      buildOverlay(div, data.pages[realIdx] && data.pages[realIdx].canvas_json, lead + realIdx)
+      div.__overlayBuilt = true
+    } finally {
+      div.__overlayBuilding = false
+    }
+  }
+
+  function ensureNearbyOverlays(pageIndex) {
+    const realPage = pageNumOf(pageIndex)
+    ;[realPage - 1, realPage, realPage + 1].forEach((pageNumber) => {
+      if (pageNumber < 1 || pageNumber > realCount) return
+      ensureOverlayBuilt(lead + pageNumber - 1)
+    })
+  }
+
+  ensureNearbyPageBackgrounds(pageFlip.getCurrentPageIndex())
+  ensureNearbyOverlays(pageFlip.getCurrentPageIndex())
 
   // Centrado dinámico: cubre/contraportada centradas, spreads interiores sin desplazamiento
   let currentShift = 0
-  let currentScale = 1
   function applyTransform() {
-    container.style.transform = `translateX(${currentShift}px) scale(${currentScale})`
+    container.style.transform = `translateX(${currentShift}px)`
     container.style.transformOrigin = 'center center'
     container.style.transition = 'transform 0.3s ease'
   }
-  // Convierte el índice del flipbook (con blanks) al número de página real (1..realCount)
-  const pageNumOf = (idx) => Math.max(1, Math.min(idx - lead + 1, realCount))
+
+  // PROTECTED: Double-click / double-tap cycles page zoom levels.
+  // Required for small-text catalogs on mobile and desktop.
+  const zoomLevels = [1, 1.5, 2.25, 3]
+  let zoomIdx = 0
+  let zoomScale = 1
+  let panX = 0
+  let panY = 0
+  let zoomPage = null
+  let isPanning = false
+  let dragMoved = false
+  let suppressNextClick = false
+  let activePointerId = null
+  let panStart = null
+  let lastTap = { time: 0, x: 0, y: 0 }
+  const activeTouchPointers = new Map()
+  let isPinching = false
+  let pinchStart = null
+  let pendingDoubleTapPointerId = null
+
+  function getZoomContent(page) {
+    return page?.__zoomContent || null
+  }
+
+  function getZoomViewport(page) {
+    return page?.__zoomViewport || page || null
+  }
+
+  function resetPageZoomContent(page) {
+    const content = getZoomContent(page)
+    const viewport = getZoomViewport(page)
+    if (content) {
+      content.style.transform = ''
+      content.style.transition = ''
+      content.style.cursor = ''
+    }
+    if (viewport) viewport.style.touchAction = ''
+  }
+
+  function getPageFromEventTarget(target) {
+    const page = target?.closest?.('.page')
+    return pageDivs.includes(page) ? page : null
+  }
+
+  // PROTECTED: Double-click/tap zoom must not start from interactive overlay controls.
+  // Otherwise the same gesture can trigger buttons, linkzones, WhatsApp, galleries or forms.
+  function isZoomBlockedTarget(target) {
+    return !!target?.closest?.([
+      'a', 'button', 'input', 'textarea', 'select', 'form', 'iframe', 'audio', 'video',
+      '[role="button"]', '[contenteditable="true"]', '[data-flip-interactive="true"]',
+      '#controls', '#thumbnail-panel', '#share-menu',
+    ].join(','))
+  }
+
+  function getCurrentPageElement() {
+    const idx = pageFlip.getCurrentPageIndex()
+    return pageDivs[pageNumOf(idx) - 1] || null
+  }
+
+  function getZoomTargetAtPoint(clientX, clientY) {
+    const page = getPageFromEventTarget(document.elementFromPoint(clientX, clientY))
+    if (page) return page
+    return getCurrentPageElement()
+  }
+
+  function clampPanFor(page, scale, x, y) {
+    if (!page || scale <= 1) return { x: 0, y: 0 }
+    const viewport = getZoomViewport(page)
+    const w = viewport?.clientWidth || page.clientWidth || pageWidth
+    const h = viewport?.clientHeight || page.clientHeight || pageHeight
+    const minX = Math.min(0, w - w * scale)
+    const minY = Math.min(0, h - h * scale)
+    return {
+      x: Math.min(0, Math.max(minX, x)),
+      y: Math.min(0, Math.max(minY, y)),
+    }
+  }
+
+  function applyPageZoom(animate = true) {
+    pageDivs.forEach((page) => {
+      if (page !== zoomPage) resetPageZoomContent(page)
+    })
+    if (!zoomPage) return
+    const content = getZoomContent(zoomPage)
+    const viewport = getZoomViewport(zoomPage)
+    if (!content) return
+    const clamped = clampPanFor(zoomPage, zoomScale, panX, panY)
+    panX = clamped.x
+    panY = clamped.y
+    content.style.transition = animate ? 'transform .22s ease' : 'none'
+    content.style.transform = zoomScale > 1 ? `translate(${panX}px, ${panY}px) scale(${zoomScale})` : ''
+    content.style.cursor = zoomScale > 1 ? (isPanning ? 'grabbing' : 'grab') : ''
+    if (viewport) viewport.style.touchAction = zoomScale > 1 || isPinching ? 'none' : ''
+  }
+
+  function resetPageZoom() {
+    zoomIdx = 0
+    zoomScale = 1
+    panX = 0
+    panY = 0
+    isPanning = false
+    isPinching = false
+    dragMoved = false
+    activePointerId = null
+    panStart = null
+    pinchStart = null
+    pendingDoubleTapPointerId = null
+    activeTouchPointers.clear()
+    const previous = zoomPage
+    zoomPage = null
+    if (previous) resetPageZoomContent(previous)
+    pageDivs.forEach(resetPageZoomContent)
+  }
+
+  function cyclePageZoom(clientX, clientY, sourceTarget = null) {
+    if (sourceTarget && isZoomBlockedTarget(sourceTarget)) return
+    const targetPage = getZoomTargetAtPoint(clientX, clientY)
+    if (!targetPage) return
+    if (zoomPage && zoomPage !== targetPage) resetPageZoom()
+
+    const nextIdx = zoomScale >= zoomLevels[zoomLevels.length - 1] - 0.01
+      ? 0
+      : zoomLevels.findIndex((scale) => scale > zoomScale + 0.01)
+    const nextScale = zoomLevels[nextIdx]
+    if (nextScale === 1) {
+      resetPageZoom()
+      return
+    }
+
+    const viewport = getZoomViewport(targetPage)
+    const rect = viewport.getBoundingClientRect()
+    const pageX = ((clientX - rect.left) / Math.max(1, rect.width)) * (viewport.clientWidth || targetPage.clientWidth || pageWidth)
+    const pageY = ((clientY - rect.top) / Math.max(1, rect.height)) * (viewport.clientHeight || targetPage.clientHeight || pageHeight)
+    const viewportX = pageX * zoomScale + panX
+    const viewportY = pageY * zoomScale + panY
+    zoomPage = targetPage
+    zoomIdx = nextIdx
+    zoomScale = nextScale
+    panX = viewportX - pageX * zoomScale
+    panY = viewportY - pageY * zoomScale
+    applyPageZoom(true)
+  }
+
+  function isZoomed() {
+    return zoomScale > 1 && !!zoomPage
+  }
+
+  function blockZoomEvent(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    e.stopImmediatePropagation?.()
+  }
+
+  function distanceBetween(a, b) {
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+  }
+
+  function midpointBetween(a, b) {
+    return {
+      clientX: (a.clientX + b.clientX) / 2,
+      clientY: (a.clientY + b.clientY) / 2,
+    }
+  }
+
+  function viewportPointFor(page, clientX, clientY) {
+    const viewport = getZoomViewport(page)
+    const rect = viewport.getBoundingClientRect()
+    return {
+      x: ((clientX - rect.left) / Math.max(1, rect.width)) * (viewport.clientWidth || page.clientWidth || pageWidth),
+      y: ((clientY - rect.top) / Math.max(1, rect.height)) * (viewport.clientHeight || page.clientHeight || pageHeight),
+    }
+  }
+
+  function syncZoomIdxFromScale() {
+    zoomIdx = zoomLevels.reduce((bestIdx, level, idx) => (
+      Math.abs(level - zoomScale) < Math.abs(zoomLevels[bestIdx] - zoomScale) ? idx : bestIdx
+    ), 0)
+  }
+
+  function installPageZoom() {
+    const shell = document.getElementById('flipbook-container') || container.parentElement || container
+
+    shell.addEventListener('dblclick', (e) => {
+      if (isZoomBlockedTarget(e.target)) return
+      const page = getZoomTargetAtPoint(e.clientX, e.clientY)
+      if (!page) return
+      blockZoomEvent(e)
+      suppressNextClick = true
+      cyclePageZoom(e.clientX, e.clientY, e.target)
+    }, true)
+
+    function beginPinch() {
+      if (activeTouchPointers.size < 2) return false
+      const touches = Array.from(activeTouchPointers.values()).slice(0, 2)
+      const center = midpointBetween(touches[0], touches[1])
+      const targetPage = zoomPage || getZoomTargetAtPoint(center.clientX, center.clientY)
+      if (!targetPage) return false
+      if (zoomPage && zoomPage !== targetPage) resetPageZoom()
+
+      zoomPage = targetPage
+      const centerPoint = viewportPointFor(zoomPage, center.clientX, center.clientY)
+      pinchStart = {
+        distance: Math.max(1, distanceBetween(touches[0], touches[1])),
+        scale: zoomScale,
+        contentX: (centerPoint.x - panX) / zoomScale,
+        contentY: (centerPoint.y - panY) / zoomScale,
+      }
+      isPinching = true
+      isPanning = false
+      activePointerId = null
+      panStart = null
+      dragMoved = true
+      applyPageZoom(false)
+      return true
+    }
+
+    function updatePinch() {
+      if (!isPinching || !pinchStart || activeTouchPointers.size < 2 || !zoomPage) return
+      const touches = Array.from(activeTouchPointers.values()).slice(0, 2)
+      const center = midpointBetween(touches[0], touches[1])
+      const centerPoint = viewportPointFor(zoomPage, center.clientX, center.clientY)
+      zoomScale = Math.min(3, Math.max(1, pinchStart.scale * (distanceBetween(touches[0], touches[1]) / pinchStart.distance)))
+      panX = centerPoint.x - pinchStart.contentX * zoomScale
+      panY = centerPoint.y - pinchStart.contentY * zoomScale
+      const clamped = clampPanFor(zoomPage, zoomScale, panX, panY)
+      panX = clamped.x
+      panY = clamped.y
+      syncZoomIdxFromScale()
+      applyPageZoom(false)
+    }
+
+    // PROTECTED: The second mobile tap must be intercepted before StPageFlip.
+    // Otherwise a zoom gesture can accidentally turn the page.
+    shell.addEventListener('pointerdown', (e) => {
+      if (e.button != null && e.button !== 0) return
+      const page = getPageFromEventTarget(e.target)
+      if (e.pointerType === 'touch') {
+        const now = Date.now()
+        const moved = Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y)
+        if (page && !isZoomBlockedTarget(e.target) && now - lastTap.time < 320 && moved < 28) {
+          blockZoomEvent(e)
+          pendingDoubleTapPointerId = e.pointerId
+          lastTap = { time: 0, x: 0, y: 0 }
+          return
+        }
+
+        if (page && (!isZoomBlockedTarget(e.target) || isZoomed())) {
+          activeTouchPointers.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY, page })
+          try { shell.setPointerCapture?.(e.pointerId) } catch (_) {}
+          if (activeTouchPointers.size >= 2 && beginPinch()) {
+            blockZoomEvent(e)
+            return
+          }
+        }
+      }
+
+      if (!isZoomed()) return
+      if (page !== zoomPage) return
+      blockZoomEvent(e)
+      isPanning = true
+      dragMoved = false
+      activePointerId = e.pointerId
+      panStart = { x: e.clientX, y: e.clientY, panX, panY }
+      try { shell.setPointerCapture?.(e.pointerId) } catch (_) {}
+      applyPageZoom(false)
+    }, true)
+
+    // PROTECTED: Two-finger pinch owns the gesture while active.
+    // It must never leak to page-flip navigation or interactive overlays.
+    shell.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'touch' && activeTouchPointers.has(e.pointerId)) {
+        activeTouchPointers.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY, page: activeTouchPointers.get(e.pointerId).page })
+        if (isPinching) {
+          blockZoomEvent(e)
+          updatePinch()
+          return
+        }
+      }
+
+      if (!isPanning || e.pointerId !== activePointerId || !panStart) return
+      blockZoomEvent(e)
+      const dx = e.clientX - panStart.x
+      const dy = e.clientY - panStart.y
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragMoved = true
+      const next = clampPanFor(zoomPage, zoomScale, panStart.panX + dx, panStart.panY + dy)
+      panX = next.x
+      panY = next.y
+      applyPageZoom(false)
+    }, true)
+
+    function finishPointer(e) {
+      if (pendingDoubleTapPointerId === e.pointerId) {
+        blockZoomEvent(e)
+        pendingDoubleTapPointerId = null
+        suppressNextClick = true
+        activeTouchPointers.delete(e.pointerId)
+        cyclePageZoom(e.clientX, e.clientY, e.target)
+        return
+      }
+
+      if (e.pointerType === 'touch') activeTouchPointers.delete(e.pointerId)
+
+      if (isPinching) {
+        blockZoomEvent(e)
+        isPinching = false
+        pinchStart = null
+        if (zoomScale <= 1.01) {
+          resetPageZoom()
+          return
+        }
+        syncZoomIdxFromScale()
+        applyPageZoom(false)
+
+        const remaining = Array.from(activeTouchPointers.entries())[0]
+        if (remaining && isZoomed()) {
+          activePointerId = remaining[0]
+          isPanning = true
+          dragMoved = true
+          panStart = { x: remaining[1].clientX, y: remaining[1].clientY, panX, panY }
+        }
+        return
+      }
+
+      const wasPanning = isPanning && e.pointerId === activePointerId
+      if (wasPanning) {
+        blockZoomEvent(e)
+        try { shell.releasePointerCapture?.(e.pointerId) } catch (_) {}
+        isPanning = false
+        activePointerId = null
+        panStart = null
+        applyPageZoom(false)
+      }
+
+      const now = Date.now()
+      if (!dragMoved && e.pointerType === 'touch' && !isZoomBlockedTarget(e.target)) {
+        lastTap = { time: now, x: e.clientX, y: e.clientY }
+      }
+    }
+
+    shell.addEventListener('pointerup', finishPointer, true)
+    shell.addEventListener('pointercancel', finishPointer, true)
+
+    shell.addEventListener('click', (e) => {
+      if (!suppressNextClick && !(isZoomed() && dragMoved)) return
+      blockZoomEvent(e)
+      suppressNextClick = false
+      dragMoved = false
+    }, true)
+
+    const reclampZoom = () => {
+      if (!isZoomed()) return
+      const next = clampPanFor(zoomPage, zoomScale, panX, panY)
+      panX = next.x
+      panY = next.y
+      applyPageZoom(false)
+    }
+    window.addEventListener('resize', reclampZoom)
+    window.addEventListener('orientationchange', reclampZoom)
+    window.addEventListener('pagehide', resetPageZoom)
+  }
+
+  installPageZoom()
 
   function applyCenter() {
     if (portrait) return
@@ -2198,11 +2610,13 @@ async function init() {
       entry.hide()
     })
     // Al cambiar de página, deshacer el zoom (vuelve a 1x).
-    currentScale = 1; zoomIdx = 0
+    resetPageZoom()
     updatePageInfo()
     applyCenter()
     updateNavButtons()
     updateActiveThumbnail()
+    ensureNearbyPageBackgrounds(idx)
+    ensureNearbyOverlays(idx)
     startPageTimer(pageNumOf(idx))
     triggerEntrances(idx)
     firePendingBannersForPage(idx)
@@ -2268,13 +2682,12 @@ async function init() {
     document.getElementById('btn-autoplay').classList.remove('playing')
   }
 
-  // Zoom simple: cicla entre 3 escalas
-  const zoomLevels = [1, 1.5, 2, 2.5, 3]
-  let zoomIdx = 0
+  // Botón de zoom: usa el mismo ciclo que doble clic / doble toque sobre la hoja activa.
   document.getElementById('btn-zoom').addEventListener('click', () => {
-    zoomIdx = (zoomIdx + 1) % zoomLevels.length
-    currentScale = zoomLevels[zoomIdx]
-    applyTransform()
+    const page = zoomPage || getCurrentPageElement()
+    const rect = page?.getBoundingClientRect()
+    if (!rect) return
+    cyclePageZoom(rect.left + rect.width / 2, rect.top + rect.height / 2)
   })
 
   document.getElementById('btn-first').addEventListener('click', () => pageFlip.flip(firstIdx))
