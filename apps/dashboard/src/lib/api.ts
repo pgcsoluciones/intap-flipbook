@@ -1,12 +1,19 @@
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787'
+const API_ORIGIN = new URL(API_BASE).origin
 
-// Normaliza URLs de activos (imágenes R2) para que puedan cargarse con
-// crossOrigin:'anonymous' en canvas off-screen (generación de miniaturas).
-// Las URLs de R2 ya son HTTPS públicas — se devuelven sin cambio.
-// BLANK_PAGE_URL (data:) también pasa sin cambio.
-export function toCanvasSafeAssetUrl(url: string): string {
-  if (!url) return ''
-  return url
+export function toCanvasSafeAssetUrl(url: string) {
+  const value = (url ?? '').trim()
+  if (!value) return value
+  try {
+    const parsed = new URL(value)
+    if (parsed.origin === API_ORIGIN && parsed.pathname.startsWith('/api/upload/')) return value
+    if (parsed.hostname.endsWith('.r2.dev') && parsed.pathname.startsWith('/uploads/')) {
+      return `${API_ORIGIN}/api/upload${parsed.pathname}${parsed.search}${parsed.hash}`
+    }
+  } catch {
+    return value
+  }
+  return value
 }
 
 function getToken(): string | null {
