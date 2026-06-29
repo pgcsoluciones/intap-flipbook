@@ -95,6 +95,8 @@ app.route('/auth', authRoutes)
 
 // Protected API
 app.route('/api/publications', publicationRoutes)
+// PROTECTED: Upload routes must be mounted before the general /api routes.
+// Otherwise the public read-only upload asset route can be intercepted.
 app.route('/api/upload', uploadRoutes)
 app.route('/api', pageRoutes)
 app.route('/admin', adminRoutes)

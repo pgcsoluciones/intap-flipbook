@@ -13,6 +13,7 @@
     "build": "npm run build --workspaces --if-present",
     "deploy:api": "npm run deploy --workspace=apps/api",
     "deploy:dashboard": "npm run deploy --workspace=apps/dashboard",
-    "deploy:viewer": "npm run deploy --workspace=apps/viewer"
+    "deploy:viewer": "npm run deploy --workspace=apps/viewer",
+    "verify:protected-editor": "node scripts/verify-protected-editor-guardrails.mjs"
   }
 }

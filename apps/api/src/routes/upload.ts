@@ -12,6 +12,8 @@ function isPublicUploadKey(key: string) {
   return /^uploads\/[^/]+\/[^/]+$/.test(key)
 }
 
+// PROTECTED: Public read-only asset route required by Fabric thumbnail rendering.
+// POST, DELETE and administration must remain JWT-protected below.
 async function servePublicUpload(c: any) {
   const key = `uploads/${c.req.param('key')}`
   if (!key || !isPublicUploadKey(key)) {
@@ -37,6 +39,7 @@ async function servePublicUpload(c: any) {
 upload.get('/uploads/:key{.+}', servePublicUpload)
 upload.on('HEAD', '/uploads/:key{.+}', servePublicUpload)
 
+// PROTECTED: All non-public upload routes remain authenticated.
 upload.use('*', jwtMiddleware)
 
 // Tipos MIME permitidos y su extensión de archivo asociada.

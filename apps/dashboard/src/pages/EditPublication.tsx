@@ -23,6 +23,8 @@ export const BLANK_PAGE_URL = 'data:image/svg+xml,' + encodeURIComponent(
 const CANVAS_W = 580
 const CANVAS_H = Math.round(CANVAS_W * 1.414)
 const THUMB_W = 220
+// PROTECTED: 3-second editor autosave debounce.
+// Reducing this can reintroduce excessive saves and focus loss while editing.
 const AUTOSAVE_DELAY_MS = 3000
 
 // Calcula el recorte "cubrir" de una imagen dentro de un recuadro destino según el
@@ -68,6 +70,8 @@ function isHttpUrl(url: any) {
   return typeof url === 'string' && /^https?:\/\//i.test(url)
 }
 
+// PROTECTED: Rewrites legacy direct R2 image URLs for Fabric-safe thumbnail loading.
+// Removing this causes bank/uploaded raster images to disappear from thumbnails.
 function normalizeFabricAssetJson(json: any): any {
   if (!json) return json
   let root = json
@@ -96,6 +100,7 @@ function normalizeFabricAssetJson(json: any): any {
   return visit(root)
 }
 
+// PROTECTED: Preloads Fabric images with CORS before snapshot to avoid tainted canvases.
 function loadFabricImageForSnapshot(url: string) {
   return new Promise<any>((resolve, reject) => {
     const safeUrl = toCanvasSafeAssetUrl(url)
@@ -123,6 +128,7 @@ function loadCanvasFabricImage(url: string, onLoad: (img: any) => void, onError?
   }, options as any)
 }
 
+// PROTECTED: Recurses through Fabric object/group/clipPath trees to find raster images.
 function collectThumbnailImageUrls(node: any, out = new Set<string>()): Set<string> {
   if (!node || typeof node !== 'object') return out
   const list = Array.isArray(node) ? node : [node]
@@ -136,7 +142,8 @@ function collectThumbnailImageUrls(node: any, out = new Set<string>()): Set<stri
   return out
 }
 
-// Renderiza solo los objetos no-imagen del canvas_json en un StaticCanvas transparente.
+// PROTECTED: Renders canvas_json into a transparent thumbnail overlay, including images.
+// Do not filter out `type === "image"`; that causes bank/uploaded images to disappear.
 // No carga el fondo (R2 sin CORS headers → toDataURL fallaría si hay imágenes tainted).
 // El fondo se muestra como <img> CSS en la JSX; este PNG es el overlay de elementos.
 //
@@ -916,6 +923,7 @@ export default function EditPublication() {
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
   const isTextEditingRef = useRef(false)
+  // PROTECTED: Per-page save sequencing/queue prevents stale saves overwriting newer edits.
   const saveSeqRef = useRef<Record<string, number>>({})
   const saveChainRef = useRef<Record<string, Promise<void>>>({})
 
@@ -944,6 +952,8 @@ export default function EditPublication() {
 
   const scheduleAutosaveRef = useRef<() => void>(() => {})
 
+  // PROTECTED: Restores page background after history load.
+  // Removing this causes a blank canvas after Undo/Redo.
   const restoreCanvasBackground = useCallback((canvas: any, page: any) => {
     return new Promise<void>((resolve) => {
       const src = page?.image_url || BLANK_PAGE_URL
@@ -965,6 +975,7 @@ export default function EditPublication() {
     })
   }, [])
 
+  // PROTECTED: Undo/Redo must reload objects and then restore the page background before render.
   const applyHistory = useCallback((json: string) => {
     const c = fabricRef.current
     if (!c) return
@@ -1458,7 +1469,7 @@ export default function EditPublication() {
     }
     window.addEventListener('keydown', onKeyDown)
 
-    // Autoguardado + historial en cada cambio del lienzo
+    // Autoguardado + historial en cada cambio confirmado del lienzo.
     const onChange = () => {
       if (isLoading) return  // no guardar durante la carga inicial del JSON
       if (isTextEditingRef.current) return
@@ -1525,6 +1536,8 @@ export default function EditPublication() {
     canvas.on('object:modified', onChange)
     canvas.on('object:added', onChange)
     canvas.on('object:removed', onChange)
+    // PROTECTED: Do not replace with text:changed.
+    // Saving per keystroke causes focus loss and stale saves.
     canvas.on('text:editing:entered', onTextEditingEntered)
     canvas.on('text:editing:exited', onTextEditingExited)
 
@@ -4364,6 +4377,8 @@ function ImageFitToggle({ url, fitMap, setFit, aspect }: { url: string; fitMap: 
   )
 }
 
+// PROTECTED: Stable external component with local drafts prevents product action inputs
+// from remounting or updating Fabric data on every keystroke.
 function CtaActionFields({ cfg, setCfg, prefix }: { cfg: any; setCfg: (p: any) => void; prefix: 'primary' | 'secondary' }) {
   const action = cfg[`${prefix}Action`] ?? 'none'
   const externalValue = cfg[`${prefix}Value`] ?? ''
