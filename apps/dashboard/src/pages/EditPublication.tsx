@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 // @ts-ignore
 import { fabric } from 'fabric'
-import { api } from '../lib/api'
+import { api, toCanvasSafeAssetUrl } from '../lib/api'
 import FileField from '../components/FileField'
 import WidgetPreview from '../components/WidgetPreview'
 
@@ -22,6 +22,7 @@ export const BLANK_PAGE_URL = 'data:image/svg+xml,' + encodeURIComponent(
 // mismas (DESIGN_W/DESIGN_H en flipbook.js) para que editor y publicado coincidan.
 const CANVAS_W = 580
 const CANVAS_H = Math.round(CANVAS_W * 1.414)
+const THUMB_W = 220
 
 // Calcula el recorte "cubrir" de una imagen dentro de un recuadro destino según el
 // encuadre { zoom>=1, fx 0..1, fy 0..1 }. zoom=1 y fx=fy=0.5 → cubrir centrado.
@@ -51,6 +52,169 @@ function stripBackgroundImage(json: any) {
 function serializeCanvasJson(canvas: any) {
   return stripBackgroundImage(canvas?.toJSON?.(['data']) as any)
 }
+
+function parseCoverFrame(coverJson: any) {
+  try {
+    return coverJson
+      ? { zoom: 1, fx: 0.5, fy: 0.5, ...(typeof coverJson === 'string' ? JSON.parse(coverJson) : coverJson) }
+      : { zoom: 1, fx: 0.5, fy: 0.5 }
+  } catch {
+    return { zoom: 1, fx: 0.5, fy: 0.5 }
+  }
+}
+
+function isHttpUrl(url: any) {
+  return typeof url === 'string' && /^https?:\/\//i.test(url)
+}
+
+function normalizeFabricAssetJson(json: any): any {
+  if (!json) return json
+  let root = json
+  if (typeof root === 'string') {
+    try {
+      root = JSON.parse(root)
+    } catch {
+      return json
+    }
+  }
+  const visit = (node: any): any => {
+    if (!node || typeof node !== 'object') return node
+    if (Array.isArray(node)) return node.map((item) => visit(item))
+    const next = { ...node }
+    if (typeof next.src === 'string' && isHttpUrl(next.src)) {
+      next.src = toCanvasSafeAssetUrl(next.src)
+      next.crossOrigin = 'anonymous'
+    }
+    if (next.backgroundImage) next.backgroundImage = visit(next.backgroundImage)
+    if (next.overlayImage) next.overlayImage = visit(next.overlayImage)
+    if (next.clipPath) next.clipPath = visit(next.clipPath)
+    if (Array.isArray(next.objects)) next.objects = next.objects.map((item: any) => visit(item))
+    if (Array.isArray(next._objects)) next._objects = next._objects.map((item: any) => visit(item))
+    return next
+  }
+  return visit(root)
+}
+
+function loadFabricImageForSnapshot(url: string) {
+  return new Promise<any>((resolve, reject) => {
+    const safeUrl = toCanvasSafeAssetUrl(url)
+    const options = isHttpUrl(safeUrl) ? { crossOrigin: 'anonymous' } : undefined
+    fabric.Image.fromURL(safeUrl, (img: any, isError: boolean) => {
+      if (isError || !img) {
+        reject(new Error(`No se pudo cargar la imagen: ${safeUrl}`))
+        return
+      }
+      resolve(img)
+    }, options as any)
+  })
+}
+
+function loadCanvasFabricImage(url: string, onLoad: (img: any) => void, onError?: (message: string) => void) {
+  const safeUrl = toCanvasSafeAssetUrl(url)
+  const options = isHttpUrl(safeUrl) ? { crossOrigin: 'anonymous' } : undefined
+  fabric.Image.fromURL(safeUrl, (img: any, isError: boolean) => {
+    if (isError || !img) {
+      console.error('[thumbnail] canvas image load failed', safeUrl)
+      onError?.(`No se pudo cargar la imagen: ${safeUrl}`)
+      return
+    }
+    onLoad(img)
+  }, options as any)
+}
+
+function collectThumbnailImageUrls(node: any, out = new Set<string>()): Set<string> {
+  if (!node || typeof node !== 'object') return out
+  const list = Array.isArray(node) ? node : [node]
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue
+    if (item.type === 'image' && isHttpUrl(item.src)) out.add(item.src)
+    if (Array.isArray(item.objects)) collectThumbnailImageUrls(item.objects, out)
+    if (Array.isArray(item._objects)) collectThumbnailImageUrls(item._objects, out)
+    if (item.clipPath) collectThumbnailImageUrls(item.clipPath, out)
+  }
+  return out
+}
+
+async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas_json: any; cover_json: any }) {
+  if (typeof document === 'undefined') return null
+  const el = document.createElement('canvas')
+  const sc = new fabric.StaticCanvas(el, {
+    width: CANVAS_W,
+    height: CANVAS_H,
+    backgroundColor: '#fff',
+  })
+  try {
+    const rawJson = snapshot.canvas_json
+    const parsedJson = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson
+    const clonedJson = parsedJson ? JSON.parse(JSON.stringify(parsedJson)) : { version: '5.3.0', objects: [] }
+    const safeJson = stripBackgroundImage(normalizeFabricAssetJson(clonedJson))
+
+    const urls = [...collectThumbnailImageUrls(safeJson)]
+    if (urls.length) {
+      const loaded = await Promise.all(urls.map((url) => loadFabricImageForSnapshot(url)))
+      if (loaded.length !== urls.length) return null
+    }
+
+    await new Promise<void>((resolve) => {
+      sc.loadFromJSON(safeJson ?? { version: '5.3.0', objects: [] }, () => resolve())
+    })
+
+    const bgUrl = snapshot.image_url || BLANK_PAGE_URL
+    const bg = await loadFabricImageForSnapshot(bgUrl)
+    bg.set({ selectable: false, evented: false })
+    if (bg && bg.width && bg.height) {
+      const cover = parseCoverFrame(snapshot.cover_json)
+      const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(bg.width, bg.height, cover, CANVAS_W, CANVAS_H)
+      bg.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
+    }
+    await new Promise<void>((resolve) => {
+      sc.setBackgroundImage(bg, () => {
+        sc.renderAll()
+        resolve()
+      })
+    })
+    return sc.toDataURL({ format: 'png', quality: 0.92, multiplier: THUMB_W / CANVAS_W, enableRetinaScaling: false })
+  } catch (error) {
+    console.error('[thumbnail] persisted snapshot failed', error)
+    return null
+  } finally {
+    sc.dispose()
+  }
+}
+
+function captureLiveThumbnailDataUrl(pageId: string, pageIdRef: React.MutableRefObject<string | null>, canvasRef: React.MutableRefObject<any>, width = THUMB_W, canvasWidth = CANVAS_W) {
+  if (pageIdRef.current !== pageId) return null
+  const canvas = canvasRef.current
+  if (!canvas) return null
+  try {
+    canvas.renderAll()
+    return canvas.toDataURL({
+      format: 'png',
+      quality: 0.92,
+      multiplier: width / canvasWidth,
+      enableRetinaScaling: false,
+    })
+  } catch (error) {
+    console.error('[thumbnail] live snapshot failed', error)
+    return null
+  }
+}
+
+type ThumbJob = {
+  pageId: string
+  token: number
+  mode: 'live' | 'persisted'
+  snapshot?: {
+    image_url: string
+    canvas_json: any
+    cover_json: any
+  }
+  priority?: boolean
+}
+
+type ThumbnailPumpHandle =
+  | { kind: 'idle'; handle: number }
+  | { kind: 'timeout'; handle: number }
 
 // ─── Iconos SVG monocromáticos (estilo línea, 20px, stroke uniforme) ──────────
 // "stroke" = trazo. Todos comparten grosor 1.6 y currentColor para mantener
@@ -85,6 +249,7 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
     case 'star':      return <svg {...p}><path d="M12 3l2.7 5.5 6 .9-4.3 4.2 1 6L12 17.8 6.6 19.6l1-6L3.3 9.4l6-.9z"/></svg>
     case 'undo':      return <svg {...p}><path d="M3 10h10a6 6 0 0 1 0 12H8"/><path d="M3 6l-3 4 3 4"/></svg>
     case 'redo':      return <svg {...p}><path d="M21 10H11A6 6 0 0 0 11 22h5"/><path d="M21 6l3 4-3 4"/></svg>
+    case 'refresh':   return <svg {...p}><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v6h-6"/></svg>
     case 'arrow':     return <svg {...p}><path d="M4 12h14M13 6l6 6-6 6"/></svg>
     case 'badge':     return <svg {...p}><circle cx="12" cy="9" r="6"/><path d="m8 14-1 7 5-3 5 3-1-7"/></svg>
     case 'map':       return <svg {...p}><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg>
@@ -675,6 +840,21 @@ export default function EditPublication() {
   const [defaultFont, setDefaultFont] = useState<string>(FONTS[0].family) // tipografía para texto nuevo
   const [imageBank, setImageBank] = useState<string[]>([]) // banco de imágenes subidas en este proyecto
   const [selectVersion, setSelectVersion] = useState(0) // fuerza refresco del panel de props
+  // Miniaturas reales por página: conserva solo el último dataURL válido por page.id.
+  const [thumbnailByPageId, setThumbnailByPageId] = useState<Record<string, string>>({})
+  // Debounce por página para agrupar cambios reales antes de pedir un snapshot.
+  const thumbnailTimersRef = useRef<Record<string, any>>({})
+  // Tokens por página: invalidan resultados viejos cuando entra un trabajo nuevo.
+  const thumbnailTokensRef = useRef<Record<string, number>>({})
+  // Cola de trabajos de miniatura; cada página mantiene como máximo un job pendiente.
+  const thumbnailQueueRef = useRef<ThumbJob[]>([])
+  // Indica si el pump está procesando un trabajo de miniatura.
+  const thumbnailProcessingRef = useRef(false)
+  // Solo cancela el requestIdleCallback / setTimeout pendiente al desmontar.
+  const thumbnailPumpHandleRef = useRef<ThumbnailPumpHandle | null>(null)
+  // Evita escribir miniaturas después de desmontar el editor.
+  const thumbnailMountedRef = useRef(true)
+  const thumbnailPumpRef = useRef<(() => Promise<void>) | null>(null)
   const [zoom, setZoom]   = useState(100)
 
   // Estado de autoguardado: 'idle' | 'saving' | 'saved'
@@ -699,6 +879,10 @@ export default function EditPublication() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
   const pageIdRef = useRef<string | null>(null)
+  // Fuente estable para resolver trabajos persisted sin closures viejos.
+  const pagesRef = useRef<any[]>([])
+  // Solo para priorización/verificación de página activa; no reconstruye snapshots live.
+  const activePageRef = useRef<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imgInputRef  = useRef<HTMLInputElement>(null)
   const svgInputRef = useRef<HTMLInputElement>(null)
@@ -757,7 +941,7 @@ export default function EditPublication() {
     const c = fabricRef.current
     if (!c) return
     isUndoRedoRef.current = true
-    c.loadFromJSON(json, () => {
+    c.loadFromJSON(stripBackgroundImage(normalizeFabricAssetJson(json)), () => {
       c.renderAll()
       isUndoRedoRef.current = false
       scheduleAutosaveRef.current()
@@ -765,10 +949,174 @@ export default function EditPublication() {
   }, [])
 
   useEffect(() => {
+    pagesRef.current = pages
+  }, [pages])
+
+  useEffect(() => {
+    activePageRef.current = activePage?.id ?? null
+  }, [activePage?.id])
+
+  useEffect(() => {
+    thumbnailMountedRef.current = true
+    return () => {
+      thumbnailMountedRef.current = false
+      for (const timer of Object.values(thumbnailTimersRef.current)) clearTimeout(timer)
+      thumbnailTimersRef.current = {}
+      if (thumbnailPumpHandleRef.current) {
+        const handle = thumbnailPumpHandleRef.current
+        const win = typeof window !== 'undefined' ? (window as Window & {
+          cancelIdleCallback?: (id: number) => void
+        }) : null
+        if (handle.kind === 'idle' && win?.cancelIdleCallback) {
+          win.cancelIdleCallback(handle.handle)
+        } else {
+          clearTimeout(handle.handle)
+        }
+        thumbnailPumpHandleRef.current = null
+      }
+      thumbnailProcessingRef.current = false
+      thumbnailQueueRef.current = []
+      thumbnailTokensRef.current = {}
+    }
+  }, [])
+
+  const buildPersistedThumbnailSnapshot = useCallback((pageId: string) => {
+    const page = pagesRef.current.find((p) => p.id === pageId)
+    if (!page) return null
+    return {
+      image_url: toCanvasSafeAssetUrl(page.image_url || BLANK_PAGE_URL),
+      canvas_json: page.canvas_json ?? { version: '5.3.0', objects: [] },
+      cover_json: page.cover_json ?? { zoom: 1, fx: 0.5, fy: 0.5 },
+    }
+  }, [])
+
+  const invalidateThumbnailJob = useCallback((pageId: string) => {
+    if (!pageId) return 0
+    const nextToken = (thumbnailTokensRef.current[pageId] ?? 0) + 1
+    thumbnailTokensRef.current[pageId] = nextToken
+    clearTimeout(thumbnailTimersRef.current[pageId])
+    delete thumbnailTimersRef.current[pageId]
+    thumbnailQueueRef.current = thumbnailQueueRef.current.filter((job) => job.pageId !== pageId)
+    return nextToken
+  }, [])
+
+  const scheduleThumbnailPump = useCallback(() => {
+    if (
+      thumbnailPumpHandleRef.current ||
+      thumbnailProcessingRef.current ||
+      thumbnailQueueRef.current.length === 0
+    ) return
+    if (typeof window === 'undefined') return
+    const win = window as Window & {
+      requestIdleCallback?: (cb: IdleRequestCallback) => number
+    }
+    const run = () => {
+      thumbnailPumpHandleRef.current = null
+      void thumbnailPumpRef.current?.()
+    }
+    if (typeof win.requestIdleCallback === 'function') {
+      const handle = win.requestIdleCallback(run)
+      thumbnailPumpHandleRef.current = { kind: 'idle', handle }
+    } else {
+      const handle = window.setTimeout(run, 0)
+      thumbnailPumpHandleRef.current = { kind: 'timeout', handle }
+    }
+  }, [])
+
+  const enqueueThumbnailJob = useCallback((job: ThumbJob) => {
+    if (!job?.pageId) return
+    if ((thumbnailTokensRef.current[job.pageId] ?? 0) !== job.token) return
+
+    const nextQueue = thumbnailQueueRef.current.filter((item) => item.pageId !== job.pageId)
+    if (job.priority) nextQueue.unshift(job)
+    else nextQueue.push(job)
+    thumbnailQueueRef.current = nextQueue
+    scheduleThumbnailPump()
+  }, [scheduleThumbnailPump])
+
+  const pumpThumbnailQueue = useCallback(async () => {
+    if (thumbnailProcessingRef.current) return
+    const job = thumbnailQueueRef.current.shift()
+    if (!job) return
+    thumbnailProcessingRef.current = true
+
+    try {
+      if (!thumbnailMountedRef.current) return
+      if ((thumbnailTokensRef.current[job.pageId] ?? 0) !== job.token) return
+      if (!pagesRef.current.some((page) => page.id === job.pageId)) return
+
+      const persistedSnapshot = job.mode === 'live' ? null : buildPersistedThumbnailSnapshot(job.pageId)
+      const dataUrl = job.mode === 'live'
+        ? captureLiveThumbnailDataUrl(job.pageId, pageIdRef, fabricRef)
+        : persistedSnapshot ? await renderPageThumbnailSnapshot(persistedSnapshot) : null
+      if (!thumbnailMountedRef.current) return
+      if ((thumbnailTokensRef.current[job.pageId] ?? 0) !== job.token) return
+      if (!pagesRef.current.some((page) => page.id === job.pageId)) return
+      if (!dataUrl) return
+
+      setThumbnailByPageId((prev) => {
+        if (!thumbnailMountedRef.current) return prev
+        if (prev[job.pageId] === dataUrl) return prev
+        return { ...prev, [job.pageId]: dataUrl }
+      })
+    } finally {
+      thumbnailProcessingRef.current = false
+      if (thumbnailQueueRef.current.length > 0) scheduleThumbnailPump()
+    }
+  }, [buildPersistedThumbnailSnapshot, scheduleThumbnailPump])
+
+  useEffect(() => {
+    thumbnailPumpRef.current = pumpThumbnailQueue
+    return () => {
+      thumbnailPumpRef.current = null
+    }
+  }, [pumpThumbnailQueue])
+
+  const requestThumbnailUpdate = useCallback((pageId: string, mode: ThumbJob['mode'], opts?: {
+    immediate?: boolean
+    priority?: boolean
+  }) => {
+    if (!pageId) return
+    const immediate = !!opts?.immediate
+    const priority = opts?.priority ?? pageId === activePageRef.current
+
+    const token = invalidateThumbnailJob(pageId)
+    const job: ThumbJob = {
+      pageId,
+      token,
+      mode,
+      priority,
+    }
+
+    if (immediate) {
+      clearTimeout(thumbnailTimersRef.current[pageId])
+      delete thumbnailTimersRef.current[pageId]
+      enqueueThumbnailJob(job)
+      return
+    }
+
+    clearTimeout(thumbnailTimersRef.current[pageId])
+    thumbnailTimersRef.current[pageId] = window.setTimeout(() => {
+      delete thumbnailTimersRef.current[pageId]
+      enqueueThumbnailJob(job)
+    }, 400)
+  }, [enqueueThumbnailJob, invalidateThumbnailJob])
+
+  const refreshCurrentThumbnail = useCallback((immediate = false) => {
+    const pageId = pageIdRef.current
+    if (!pageId) return
+    requestThumbnailUpdate(pageId, 'live', { immediate, priority: true })
+  }, [requestThumbnailUpdate])
+
+  useEffect(() => {
     if (!id) return
+    let cancelled = false
+    let bootstrapTimer: ReturnType<typeof setTimeout> | null = null
     api.publications.get(id).then((res) => {
+      if (cancelled) return
       setPub(res.data)
       const ps = res.data.pages ?? []
+      pagesRef.current = ps
       setPages(ps)
       if (ps.length > 0) setActivePage(ps[0])
       // Banco de imágenes: imágenes del proyecto + las guardadas localmente (subidas pero quizá no colocadas)
@@ -776,8 +1124,22 @@ export default function EditPublication() {
       try { stored = JSON.parse(localStorage.getItem(`imgbank_${id}`) ?? '[]') } catch {}
       const merged = Array.from(new Set([...collectBankFromPages(ps), ...stored]))
       setImageBank(merged)
+      bootstrapTimer = setTimeout(() => {
+        if (cancelled || !thumbnailMountedRef.current) return
+        const currentPages = pagesRef.current
+        const firstPageId = ps[0]?.id
+        for (const page of currentPages) {
+          if (!page?.id) continue
+          if (!pagesRef.current.some((current) => current.id === page.id)) continue
+          requestThumbnailUpdate(page.id, 'persisted', { immediate: true, priority: page.id === firstPageId })
+        }
+      }, 0)
     })
     api.templates.list().then((r) => setTemplates(r.data ?? [])).catch(() => {})
+    return () => {
+      cancelled = true
+      if (bootstrapTimer) clearTimeout(bootstrapTimer)
+    }
   }, [id])
 
   // Agrega una URL al banco de imágenes del proyecto (sin duplicar) y lo persiste
@@ -811,10 +1173,6 @@ export default function EditPublication() {
     })
   }, [id])
 
-  // Ref a pages para acceder dentro de persistCanvas sin re-crear el callback
-  const pagesRef = useRef<any[]>([])
-  useEffect(() => { pagesRef.current = pages }, [pages])
-
   // ── Autoguardado: guarda el canvas actual en segundo plano ──
   // Se llama tras cada cambio (debounce) y al cambiar de página.
   const persistCanvas = useCallback(async (pageId: string, canvas: any, flash = true) => {
@@ -835,7 +1193,11 @@ export default function EditPublication() {
       }
       const json = JSON.stringify(rawJson)
       await api.pages.saveCanvas(pageId, json)
-      setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, canvas_json: json } : p)))
+      setPages((prev) => {
+        const next = prev.map((p) => (p.id === pageId ? { ...p, canvas_json: json } : p))
+        pagesRef.current = next
+        return next
+      })
 
       // Propagar objetos con syncGroupId a otras páginas.
       // syncGroupId (identificador de sincronización) marca SVGs que deben ser iguales en todas las páginas.
@@ -860,7 +1222,11 @@ export default function EditPublication() {
               if (changed) {
                 const newJson = JSON.stringify({ ...pj, objects: updatedObjs })
                 await api.pages.saveCanvas(page.id, newJson)
-                setPages((prev) => prev.map((p) => (p.id === page.id ? { ...p, canvas_json: newJson } : p)))
+                setPages((prev) => {
+                  const next = prev.map((p) => (p.id === page.id ? { ...p, canvas_json: newJson } : p))
+                  pagesRef.current = next
+                  return next
+                })
               }
             } catch { /* página con JSON inválido — se ignora */ }
           }
@@ -883,6 +1249,7 @@ export default function EditPublication() {
   const scheduleAutosave = useCallback(() => {
     if (!pageIdRef.current) return
     clearTimeout(autosaveTimer.current)
+    refreshCurrentThumbnail(false)
     autosaveTimer.current = setTimeout(() => {
       if (fabricRef.current && pageIdRef.current) persistCanvas(pageIdRef.current, fabricRef.current)
     }, 1200)
@@ -939,7 +1306,7 @@ export default function EditPublication() {
     // Fondo de página en modo "cubrir": la hoja llena el recuadro A4 (W×H) sin
     // deformarse. Replica el `object-fit:cover` del viewer (flipbook.js) y respeta
     // el encuadre manual (zoom + posición) guardado en cover_json.
-    fabric.Image.fromURL(activePage.image_url, (img: any) => {
+    loadCanvasFabricImage(activePage.image_url, (img: any) => {
       img.set({ selectable: false, evented: false })
       if (img && img.width && img.height) {
         bgNatRef.current = { iw: img.width, ih: img.height }
@@ -954,7 +1321,7 @@ export default function EditPublication() {
         const pageJson = typeof activePage.canvas_json === 'string'
           ? JSON.parse(activePage.canvas_json)
           : activePage.canvas_json
-        const jsonWithoutBg = stripBackgroundImage(pageJson)
+        const jsonWithoutBg = stripBackgroundImage(normalizeFabricAssetJson(pageJson))
         canvas.loadFromJSON(jsonWithoutBg, () => {
           isLoading = false
         // Aplicar visibilidad de editor: elementos marcados como ocultos en el editor
@@ -1007,7 +1374,7 @@ export default function EditPublication() {
     canvas.on('mouse:up', () => {
       if (!panning) return
       panning = false
-      if (adjustModeRef.current) { canvas.setCursor('grab'); scheduleCoverSave() }
+      if (adjustModeRef.current) { canvas.setCursor('grab'); scheduleCoverSave(); refreshCurrentThumbnail(false) }
     })
 
     // Tecla Supr / Delete para eliminar el objeto seleccionado
@@ -1043,6 +1410,7 @@ export default function EditPublication() {
       if (isLoading) return  // no guardar durante la carga inicial del JSON
       if (!isUndoRedoRef.current) pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
       scheduleAutosave()
+      refreshCurrentThumbnail(false)
     }
     // Reemplazo in-situ: si hay un objeto marcado para reemplazar y el usuario
     // inserta uno nuevo desde el panel, lo intercambiamos conservando posición,
@@ -1167,6 +1535,7 @@ export default function EditPublication() {
       fontFamily: defaultFont, data: { kind: 'text' }, ...opts,
     })
     c.add(t); c.setActiveObject(t); c.requestRenderAll()
+    scheduleAutosave()
   }
   function addShape(kind: 'rect' | 'circle' | 'ellipse' | 'triangle' | 'line' | 'star') {
     const c = fabricRef.current; if (!c) return
@@ -1189,6 +1558,7 @@ export default function EditPublication() {
       o = new fabric.Polygon(pts, { ...common, fill: '#F59E0B' })
     }
     c.add(o); c.setActiveObject(o); c.requestRenderAll()
+    scheduleAutosave()
   }
 
   // Crea un botón con texto + estilo coherente y una acción por defecto (enlace)
@@ -1221,6 +1591,7 @@ export default function EditPublication() {
     })
     c.add(btn); c.setActiveObject(btn); c.requestRenderAll()
     setActiveTool('buttons')
+    scheduleAutosave()
   }
 
   // Crea un botón con icono SVG de la biblioteca a la izquierda del texto.
@@ -1277,7 +1648,7 @@ export default function EditPublication() {
   // Inserta una imagen ya subida (del banco) como elemento editable, sin re-subir
   function addImageFromUrl(url: string) {
     const c = fabricRef.current; if (!c) return
-    fabric.Image.fromURL(url, (img: any) => {
+      loadCanvasFabricImage(url, (img: any) => {
       // Escala la imagen para que no ocupe más del 60 % del ancho del canvas
       const maxW = c.getWidth() * 0.6
       if (img.width > maxW) img.scaleToWidth(maxW)
@@ -1338,9 +1709,11 @@ export default function EditPublication() {
         const res = await api.pages.add(id!, { image_url: up.data.url })
         setPages((prev) => {
           const next = [...prev, res.data]
+          pagesRef.current = next
           if (pageNum === total) setActivePage(res.data)
           return next
         })
+        requestThumbnailUpdate(res.data.id, 'persisted', { immediate: true, priority: pageNum === total })
       }
     } catch (err: any) {
       alert(err.message ?? 'Error al importar el PDF')
@@ -1357,6 +1730,7 @@ export default function EditPublication() {
       data: { kind: 'linkzone', action: { type: 'link' as ActionType, url: 'https://' } },
     })
     c.add(zone); c.setActiveObject(zone); c.requestRenderAll()
+    scheduleAutosave()
   }
 
   // Agrega un punto activo animado. En el editor aparece como círculo con anillo;
@@ -1433,7 +1807,7 @@ export default function EditPublication() {
     // y dimensionable en el lienzo), no como tarjeta.
     if (w.type === 'qr' || w.type === 'barcode' || w.type === 'social') {
       const v = WIDGET_VISUAL[w.type]
-      fabric.Image.fromURL(codeImageUrl(w.type, defaultCfg), (img: any) => {
+      loadCanvasFabricImage(codeImageUrl(w.type, defaultCfg), (img: any) => {
         // Escalado robusto: algunos SVG no reportan dimensiones (img.width = 0) y
         // scaleToWidth daría escala infinita. Usamos un fallback de 240px.
         const nat = img.width && img.width > 1 ? img.width : 240
@@ -1459,7 +1833,8 @@ export default function EditPublication() {
       if (!up.success) throw new Error('Upload falló')
       addToBank(up.data.url)
       const res = await api.pages.add(id!, { image_url: up.data.url })
-      setPages((prev) => { const next = [...prev, res.data]; setActivePage(res.data); return next })
+      setPages((prev) => { const next = [...prev, res.data]; pagesRef.current = next; setActivePage(res.data); return next })
+      requestThumbnailUpdate(res.data.id, 'persisted', { immediate: true, priority: true })
     } finally { setUploading(false) }
   }
   async function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1473,9 +1848,19 @@ export default function EditPublication() {
     await api.pages.delete(pageId)
     setPages((prev) => {
       const next = prev.filter((p) => p.id !== pageId)
+      pagesRef.current = next
+      invalidateThumbnailJob(pageId)
+      setThumbnailByPageId((curr) => {
+        if (!(pageId in curr)) return curr
+        const nextCache = { ...curr }
+        delete nextCache[pageId]
+        return nextCache
+      })
       if (activePage?.id === pageId) setActivePage(next[0] ?? null)
       return next
     })
+    const nextPage = pagesRef.current.find((p) => p.id !== pageId)
+    if (nextPage?.id) requestThumbnailUpdate(nextPage.id, 'persisted', { immediate: true, priority: true })
   }
 
   // Duplica una página existente con todo su contenido (imagen de fondo + canvas_json + cover_json).
@@ -1504,11 +1889,13 @@ export default function EditPublication() {
         const idx = prev.findIndex((p) => p.id === page.id)
         const next = [...prev]
         next.splice(idx + 1, 0, newPage)
+        pagesRef.current = next
         // Reordenar en la API para que los page_number reflejen la posición.
         api.pages.reorder(id!, next.map((p) => p.id))
         return next
       })
       setActivePage(newPage)
+      requestThumbnailUpdate(newPage.id, 'persisted', { immediate: true, priority: true })
     } catch (e: any) {
       alert(e.message ?? 'No se pudo duplicar la página')
     } finally { setUploading(false) }
@@ -1520,7 +1907,8 @@ export default function EditPublication() {
     setUploading(true)
     try {
       const res = await api.pages.add(id!, { image_url: BLANK_PAGE_URL })
-      setPages((prev) => { const next = [...prev, res.data]; setActivePage(res.data); return next })
+      setPages((prev) => { const next = [...prev, res.data]; pagesRef.current = next; setActivePage(res.data); return next })
+      requestThumbnailUpdate(res.data.id, 'persisted', { immediate: true, priority: true })
     } catch (e: any) {
       alert(e.message ?? 'No se pudo agregar la página en blanco')
     } finally { setUploading(false) }
@@ -1533,8 +1921,14 @@ export default function EditPublication() {
       const r = await api.templates.apply(tpl.id, { publication_id: id! })
       const res = await api.publications.get(id!)
       const ps = res.data.pages ?? []
+      pagesRef.current = ps
       setPages(ps)
       if (ps.length > 0) setActivePage(ps[ps.length - (r.data.pages_added || 1)] ?? ps[0])
+      const firstPageId = ps[0]?.id
+      for (const page of ps) {
+        if (!page?.id) continue
+        requestThumbnailUpdate(page.id, 'persisted', { immediate: true, priority: page.id === firstPageId })
+      }
     } catch (e: any) {
       alert(e.message ?? 'No se pudo aplicar la plantilla')
     }
@@ -1548,6 +1942,7 @@ export default function EditPublication() {
     const next = [...pages]
     const [moved] = next.splice(dragRef.current, 1)
     next.splice(i, 0, moved)
+    pagesRef.current = next
     setPages(next)
     api.pages.reorder(id!, next.map((p) => p.id))
     dragRef.current = null
@@ -1569,7 +1964,11 @@ export default function EditPublication() {
     if (c) { c.setBackgroundColor(color, c.renderAll.bind(c)); scheduleAutosave() }
     if (all) {
       // Aplica a todas las páginas (solo visual local; cada página lo persiste al abrirse)
-      setPages((prev) => prev.map((p) => ({ ...p, bg_color: color })))
+      setPages((prev) => {
+        const next = prev.map((p) => ({ ...p, bg_color: color }))
+        pagesRef.current = next
+        return next
+      })
     }
   }
 
@@ -1599,7 +1998,7 @@ export default function EditPublication() {
   function deleteSelected() {
     const c = fabricRef.current
     const o = c?.getActiveObject()
-    if (o) { c!.remove(o); setSelected(null) }
+    if (o) { c!.remove(o); setSelected(null); scheduleAutosave() }
   }
   function duplicateSelected() {
     const c = fabricRef.current
@@ -1608,6 +2007,7 @@ export default function EditPublication() {
     o.clone((clone: any) => {
       clone.set({ left: (o.left ?? 0) + 20, top: (o.top ?? 0) + 20 })
       c!.add(clone); c!.setActiveObject(clone); c!.requestRenderAll()
+      scheduleAutosave()
     }, ['data'])
   }
   function bringToFront() { const o = fabricRef.current?.getActiveObject(); if (o) { o.bringToFront(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
@@ -1739,14 +2139,14 @@ export default function EditPublication() {
   function setCoverZoomValue(z: number) {
     coverRef.current = { ...coverRef.current, zoom: z }
     setCoverZoom(z)
-    applyCover(); scheduleCoverSave()
+    applyCover(); scheduleCoverSave(); refreshCurrentThumbnail(false)
   }
 
   // Restablece el encuadre a "cubrir centrado".
   function resetCover() {
     coverRef.current = { zoom: 1, fx: 0.5, fy: 0.5 }
     setCoverZoom(1)
-    applyCover(); scheduleCoverSave()
+    applyCover(); scheduleCoverSave(); refreshCurrentThumbnail(false)
   }
 
   // Guarda el encuadre (debounce). Fondo → cover_json vía PUT; imagen → canvas_json
@@ -1771,7 +2171,7 @@ export default function EditPublication() {
     const c = fabricRef.current; if (!c || !activePage) return
     c.discardActiveObject(); c.requestRenderAll(); setSelected(null)
     const json = c.toJSON(['data'])
-    setSheetPreview({ imageUrl: activePage.image_url, cover: { ...coverRef.current }, json })
+    setSheetPreview({ imageUrl: toCanvasSafeAssetUrl(activePage.image_url), cover: { ...coverRef.current }, json })
   }
 
   // Reemplazar el elemento seleccionado — enruta al panel de origen según tipo.
@@ -1820,7 +2220,7 @@ export default function EditPublication() {
     const prevOriginX = o.originX ?? 'left', prevOriginY = o.originY ?? 'top'
     const prevData = { ...(o.data ?? {}), kind: 'image', src: url }
     const idx = c.getObjects().indexOf(o)
-    fabric.Image.fromURL(url, (img: any) => {
+    loadCanvasFabricImage(url, (img: any) => {
       if (!img || !img.width || !img.height) { alert('No se pudo cargar la imagen de reemplazo'); return }
       const iw = img.width, ih = img.height
       // Modo "cubrir": recorta el sobrante para que la región mostrada tenga la misma
@@ -1847,6 +2247,8 @@ export default function EditPublication() {
       c.setActiveObject(img)
       img.setCoords(); c.requestRenderAll(); scheduleAutosave()
       setSelected(img); setSelectVersion((v) => v + 1)
+    }, (message) => {
+      alert(message)
     })
     addToBank(url)
     setReplaceModal(false)
@@ -2026,7 +2428,9 @@ export default function EditPublication() {
             <ContextPanel
               tool={activeTool}
               pages={pages}
+              thumbnailByPageId={thumbnailByPageId}
               activePage={activePage}
+              requestThumbnailUpdate={requestThumbnailUpdate}
               setActivePage={setActivePage}
               onDragStart={onDragStart}
               onDropReorder={onDropReorder}
@@ -2400,7 +2804,7 @@ function SheetPreviewModal({ data, onClose }: { data: { imageUrl: string; cover:
     if (!canvasRef.current) return
     const sc = new fabric.StaticCanvas(canvasRef.current, { width: PW, height: PH, backgroundColor: 'transparent' })
     // Sin fondo en el canvas: el fondo lo pinta el <img> de abajo (igual que el viewer)
-    const objectsOnly = Object.assign({}, data.json, { background: '', backgroundImage: null })
+    const objectsOnly = stripBackgroundImage(normalizeFabricAssetJson(Object.assign({}, data.json, { background: '', backgroundImage: null })))
     sc.setZoom(PW / CANVAS_W)
     sc.loadFromJSON(objectsOnly, () => sc.renderAll())
     return () => { sc.dispose() }
@@ -2472,13 +2876,29 @@ function ContextPanel(p: any) {
                 onClick={() => p.setActivePage(page)}
                 style={{ ...cp.thumbItem, borderColor: p.activePage?.id === page.id ? '#4F46E5' : 'transparent' }}
               >
-                <img src={page.image_url} alt={`p${i + 1}`} style={cp.thumbImg} />
+                <img
+                  src={p.thumbnailByPageId[page.id] || page.image_url || BLANK_PAGE_URL}
+                  alt={`p${i + 1}`}
+                  style={cp.thumbImg}
+                />
                 <div style={cp.thumbNum}>{i + 1}</div>
                 <button
                   title="Duplicar página (copia con todo el contenido)"
                   style={{ ...cp.thumbDel, right: 22, background: 'rgba(79,70,229,0.82)', color: '#fff', fontSize: 11 }}
                   onClick={(e: React.MouseEvent) => { e.stopPropagation(); p.duplicatePage(page) }}
                 >⧉</button>
+                <button
+                  title="Actualizar miniatura"
+                  aria-label="Actualizar miniatura"
+                  style={{ ...cp.thumbDel, right: 44, background: 'rgba(17,24,39,0.85)', color: '#fff', fontSize: 11 }}
+                  onClick={(e: React.MouseEvent) => {
+                    e.stopPropagation()
+                    const isActive = p.activePage?.id === page.id
+                    p.requestThumbnailUpdate?.(page.id, isActive ? 'live' : 'persisted', { immediate: true, priority: isActive })
+                  }}
+                >
+                  <Icon name="refresh" size={11} />
+                </button>
                 <button style={cp.thumbDel} onClick={(e: React.MouseEvent) => { e.stopPropagation(); p.handleDeletePage(page.id) }}>✕</button>
               </div>
             ))}
