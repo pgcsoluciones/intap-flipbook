@@ -141,11 +141,10 @@ function collectThumbnailImageUrls(node: any, out = new Set<string>()): Set<stri
 async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas_json: any; cover_json: any }) {
   if (typeof document === 'undefined') return null
   const el = document.createElement('canvas')
-  const sc = new fabric.StaticCanvas(el, {
-    width: CANVAS_W,
-    height: CANVAS_H,
-    backgroundColor: 'rgba(0,0,0,0)',
-  })
+  // Sin backgroundColor → canvas HTML nativo queda transparente → PNG con alpha real.
+  // 'rgba(0,0,0,0)' en Fabric.js rellena con negro transparente antes de renderizar
+  // pero algunos entornos lo interpretan como blanco opaco; omitirlo es más seguro.
+  const sc = new fabric.StaticCanvas(el, { width: CANVAS_W, height: CANVAS_H })
   try {
     const rawJson = snapshot.canvas_json
     const parsedJson = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson
@@ -2875,21 +2874,20 @@ function ContextPanel(p: any) {
                 onClick={() => p.setActivePage(page)}
                 style={{ ...cp.thumbItem, borderColor: p.activePage?.id === page.id ? '#4F46E5' : 'transparent' }}
               >
-                {/* Capa de fondo (image_url) + overlay transparente de elementos (thumbnailByPageId) */}
-                <div style={{ position: 'relative', width: '100%', aspectRatio: '0.707', overflow: 'hidden', background: '#e5e7eb' }}>
+                {/* La <img> de fondo define la altura del thumbItem (aspectRatio en <img> es fiable).
+                    El overlay PNG de elementos se posiciona encima como absolute. */}
+                <img
+                  src={page.image_url || BLANK_PAGE_URL}
+                  alt={`p${i + 1}`}
+                  style={cp.thumbImg}
+                />
+                {p.thumbnailByPageId[page.id] && (
                   <img
-                    src={page.image_url || BLANK_PAGE_URL}
+                    src={p.thumbnailByPageId[page.id]}
                     alt=""
-                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'fill', display: 'block', pointerEvents: 'none' }}
                   />
-                  {p.thumbnailByPageId[page.id] && (
-                    <img
-                      src={p.thumbnailByPageId[page.id]}
-                      alt=""
-                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill', display: 'block', pointerEvents: 'none' }}
-                    />
-                  )}
-                </div>
+                )}
                 <div style={cp.thumbNum}>{i + 1}</div>
                 <button
                   title="Duplicar página (copia con todo el contenido)"
