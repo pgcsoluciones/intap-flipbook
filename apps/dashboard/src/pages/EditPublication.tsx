@@ -136,14 +136,18 @@ function collectThumbnailImageUrls(node: any, out = new Set<string>()): Set<stri
 }
 
 // Renderiza solo los objetos no-imagen del canvas_json en un StaticCanvas transparente.
-// No carga la imagen de fondo (R2 no sirve CORS headers → toDataURL fallaría).
-// El fondo se muestra mediante un <img> CSS superpuesto en la JSX de miniaturas.
+// No carga el fondo (R2 sin CORS headers → toDataURL fallaría si hay imágenes tainted).
+// El fondo se muestra como <img> CSS en la JSX; este PNG es el overlay de elementos.
+//
+// Transparencia garantizada: usamos `lowerCanvasEl.toDataURL()` directo en lugar de
+// `sc.toDataURL({ multiplier })`. El método de Fabric crea un canvas intermediario
+// interno que puede inicializarse en blanco en algunos entornos; el canvas HTML que
+// nosotros creamos con `document.createElement('canvas')` empieza siempre transparente.
 async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas_json: any; cover_json: any }) {
   if (typeof document === 'undefined') return null
   const el = document.createElement('canvas')
-  // Sin backgroundColor → canvas HTML nativo queda transparente → PNG con alpha real.
-  // 'rgba(0,0,0,0)' en Fabric.js rellena con negro transparente antes de renderizar
-  // pero algunos entornos lo interpretan como blanco opaco; omitirlo es más seguro.
+  el.width = CANVAS_W
+  el.height = CANVAS_H
   const sc = new fabric.StaticCanvas(el, { width: CANVAS_W, height: CANVAS_H })
   try {
     const rawJson = snapshot.canvas_json
@@ -151,18 +155,21 @@ async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas
     if (!parsedJson) return null
     const clonedJson = JSON.parse(JSON.stringify(parsedJson))
     const baseJson = stripBackgroundImage(clonedJson)
-    // Excluir objetos raster (type:'image') — cargarlos con crossOrigin contaminaría el canvas
-    // y sin crossOrigin toDataURL() lanzaría SecurityError. El resto (texto, formas, SVG) es seguro.
-    const noImagesJson = {
-      ...baseJson,
-      objects: (baseJson.objects ?? []).filter((o: any) => o.type !== 'image'),
-    }
+    // Excluir imágenes raster: sin crossOrigin tainarían el canvas; con crossOrigin
+    // R2 las rechaza (sin CORS headers). Texto, formas, SVG/path, grupos: seguros.
+    const nonImageObjects = (baseJson.objects ?? []).filter((o: any) => o.type !== 'image')
+    if (nonImageObjects.length === 0) return null // nada que renderizar → fondo solo vía <img>
+    const noImagesJson = { ...baseJson, objects: nonImageObjects }
 
     await new Promise<void>((resolve) => {
       sc.loadFromJSON(noImagesJson, () => resolve())
     })
     sc.renderAll()
-    return sc.toDataURL({ format: 'png', quality: 0.92, multiplier: THUMB_W / CANVAS_W, enableRetinaScaling: false })
+
+    // Acceder al canvas HTML nativo que creamos — siempre transparente por defecto.
+    const lower = (sc as any).lowerCanvasEl as HTMLCanvasElement | null
+    if (!lower) return null
+    return lower.toDataURL('image/png')
   } catch (error) {
     console.error('[thumbnail] persisted snapshot failed', error)
     return null
