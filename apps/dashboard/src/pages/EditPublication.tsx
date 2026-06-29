@@ -164,6 +164,10 @@ async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas
     await new Promise<void>((resolve) => {
       sc.loadFromJSON(noImagesJson, () => resolve())
     })
+    // canvas_json hereda backgroundColor:'#ffffff' del canvas principal (bgColor state).
+    // Si no lo limpiamos, renderAll() rellena el canvas con blanco antes de los objetos
+    // → overlay opaco que tapa la foto de fondo. Forzar vacío → canvas transparente.
+    ;(sc as any).backgroundColor = ''
     sc.renderAll()
 
     // Acceder al canvas HTML nativo que creamos — siempre transparente por defecto.
