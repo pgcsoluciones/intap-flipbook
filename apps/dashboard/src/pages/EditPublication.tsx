@@ -941,7 +941,7 @@ export default function EditPublication() {
     const c = fabricRef.current
     if (!c) return
     isUndoRedoRef.current = true
-    c.loadFromJSON(stripBackgroundImage(normalizeFabricAssetJson(json)), () => {
+    c.loadFromJSON(stripBackgroundImage(json), () => {
       c.renderAll()
       isUndoRedoRef.current = false
       scheduleAutosaveRef.current()
@@ -1306,7 +1306,7 @@ export default function EditPublication() {
     // Fondo de página en modo "cubrir": la hoja llena el recuadro A4 (W×H) sin
     // deformarse. Replica el `object-fit:cover` del viewer (flipbook.js) y respeta
     // el encuadre manual (zoom + posición) guardado en cover_json.
-    loadCanvasFabricImage(activePage.image_url, (img: any) => {
+    fabric.Image.fromURL(activePage.image_url, (img: any) => {
       img.set({ selectable: false, evented: false })
       if (img && img.width && img.height) {
         bgNatRef.current = { iw: img.width, ih: img.height }
@@ -1321,7 +1321,7 @@ export default function EditPublication() {
         const pageJson = typeof activePage.canvas_json === 'string'
           ? JSON.parse(activePage.canvas_json)
           : activePage.canvas_json
-        const jsonWithoutBg = stripBackgroundImage(normalizeFabricAssetJson(pageJson))
+        const jsonWithoutBg = stripBackgroundImage(pageJson)
         canvas.loadFromJSON(jsonWithoutBg, () => {
           isLoading = false
         // Aplicar visibilidad de editor: elementos marcados como ocultos en el editor
@@ -1648,7 +1648,7 @@ export default function EditPublication() {
   // Inserta una imagen ya subida (del banco) como elemento editable, sin re-subir
   function addImageFromUrl(url: string) {
     const c = fabricRef.current; if (!c) return
-      loadCanvasFabricImage(url, (img: any) => {
+      fabric.Image.fromURL(url, (img: any) => {
       // Escala la imagen para que no ocupe más del 60 % del ancho del canvas
       const maxW = c.getWidth() * 0.6
       if (img.width > maxW) img.scaleToWidth(maxW)
@@ -1807,7 +1807,7 @@ export default function EditPublication() {
     // y dimensionable en el lienzo), no como tarjeta.
     if (w.type === 'qr' || w.type === 'barcode' || w.type === 'social') {
       const v = WIDGET_VISUAL[w.type]
-      loadCanvasFabricImage(codeImageUrl(w.type, defaultCfg), (img: any) => {
+      fabric.Image.fromURL(codeImageUrl(w.type, defaultCfg), (img: any) => {
         // Escalado robusto: algunos SVG no reportan dimensiones (img.width = 0) y
         // scaleToWidth daría escala infinita. Usamos un fallback de 240px.
         const nat = img.width && img.width > 1 ? img.width : 240
@@ -2220,7 +2220,7 @@ export default function EditPublication() {
     const prevOriginX = o.originX ?? 'left', prevOriginY = o.originY ?? 'top'
     const prevData = { ...(o.data ?? {}), kind: 'image', src: url }
     const idx = c.getObjects().indexOf(o)
-    loadCanvasFabricImage(url, (img: any) => {
+    fabric.Image.fromURL(url, (img: any) => {
       if (!img || !img.width || !img.height) { alert('No se pudo cargar la imagen de reemplazo'); return }
       const iw = img.width, ih = img.height
       // Modo "cubrir": recorta el sobrante para que la región mostrada tenga la misma
