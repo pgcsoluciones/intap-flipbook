@@ -135,45 +135,45 @@ function collectThumbnailImageUrls(node: any, out = new Set<string>()): Set<stri
   return out
 }
 
-// Renderiza solo los objetos no-imagen del canvas_json en un StaticCanvas transparente.
-// No carga el fondo (R2 sin CORS headers → toDataURL fallaría si hay imágenes tainted).
-// El fondo se muestra como <img> CSS en la JSX; este PNG es el overlay de elementos.
-//
-// Transparencia garantizada: usamos `lowerCanvasEl.toDataURL()` directo en lugar de
-// `sc.toDataURL({ multiplier })`. El método de Fabric crea un canvas intermediario
-// interno que puede inicializarse en blanco en algunos entornos; el canvas HTML que
-// nosotros creamos con `document.createElement('canvas')` empieza siempre transparente.
 async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas_json: any; cover_json: any }) {
   if (typeof document === 'undefined') return null
   const el = document.createElement('canvas')
-  el.width = CANVAS_W
-  el.height = CANVAS_H
-  const sc = new fabric.StaticCanvas(el, { width: CANVAS_W, height: CANVAS_H })
+  const sc = new fabric.StaticCanvas(el, {
+    width: CANVAS_W,
+    height: CANVAS_H,
+    backgroundColor: '#fff',
+  })
   try {
     const rawJson = snapshot.canvas_json
     const parsedJson = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson
-    if (!parsedJson) return null
-    const clonedJson = JSON.parse(JSON.stringify(parsedJson))
-    const baseJson = stripBackgroundImage(clonedJson)
-    // Excluir imágenes raster: sin crossOrigin tainarían el canvas; con crossOrigin
-    // R2 las rechaza (sin CORS headers). Texto, formas, SVG/path, grupos: seguros.
-    const nonImageObjects = (baseJson.objects ?? []).filter((o: any) => o.type !== 'image')
-    if (nonImageObjects.length === 0) return null // nada que renderizar → fondo solo vía <img>
-    const noImagesJson = { ...baseJson, objects: nonImageObjects }
+    const clonedJson = parsedJson ? JSON.parse(JSON.stringify(parsedJson)) : { version: '5.3.0', objects: [] }
+    const safeJson = stripBackgroundImage(normalizeFabricAssetJson(clonedJson))
+
+    const urls = [...collectThumbnailImageUrls(safeJson)]
+    if (urls.length) {
+      const loaded = await Promise.all(urls.map((url) => loadFabricImageForSnapshot(url)))
+      if (loaded.length !== urls.length) return null
+    }
 
     await new Promise<void>((resolve) => {
-      sc.loadFromJSON(noImagesJson, () => resolve())
+      sc.loadFromJSON(safeJson ?? { version: '5.3.0', objects: [] }, () => resolve())
     })
-    // canvas_json hereda backgroundColor:'#ffffff' del canvas principal (bgColor state).
-    // Si no lo limpiamos, renderAll() rellena el canvas con blanco antes de los objetos
-    // → overlay opaco que tapa la foto de fondo. Forzar vacío → canvas transparente.
-    ;(sc as any).backgroundColor = ''
-    sc.renderAll()
 
-    // Acceder al canvas HTML nativo que creamos — siempre transparente por defecto.
-    const lower = (sc as any).lowerCanvasEl as HTMLCanvasElement | null
-    if (!lower) return null
-    return lower.toDataURL('image/png')
+    const bgUrl = snapshot.image_url || BLANK_PAGE_URL
+    const bg = await loadFabricImageForSnapshot(bgUrl)
+    bg.set({ selectable: false, evented: false })
+    if (bg && bg.width && bg.height) {
+      const cover = parseCoverFrame(snapshot.cover_json)
+      const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(bg.width, bg.height, cover, CANVAS_W, CANVAS_H)
+      bg.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
+    }
+    await new Promise<void>((resolve) => {
+      sc.setBackgroundImage(bg, () => {
+        sc.renderAll()
+        resolve()
+      })
+    })
+    return sc.toDataURL({ format: 'png', quality: 0.92, multiplier: THUMB_W / CANVAS_W, enableRetinaScaling: false })
   } catch (error) {
     console.error('[thumbnail] persisted snapshot failed', error)
     return null
@@ -941,7 +941,7 @@ export default function EditPublication() {
     const c = fabricRef.current
     if (!c) return
     isUndoRedoRef.current = true
-    c.loadFromJSON(stripBackgroundImage(json), () => {
+    c.loadFromJSON(stripBackgroundImage(normalizeFabricAssetJson(json)), () => {
       c.renderAll()
       isUndoRedoRef.current = false
       scheduleAutosaveRef.current()
@@ -1045,19 +1045,10 @@ export default function EditPublication() {
       if ((thumbnailTokensRef.current[job.pageId] ?? 0) !== job.token) return
       if (!pagesRef.current.some((page) => page.id === job.pageId)) return
 
-      // Para 'live': serializa el canvas activo (sin fondo) y renderiza miniatura igual que 'persisted'.
-      // No usar captureLiveThumbnailDataUrl: el canvas principal está tintado (background sin crossOrigin).
-      let snapshot
-      if (job.mode === 'live' && pageIdRef.current === job.pageId && fabricRef.current) {
-        const page = pagesRef.current.find((p) => p.id === job.pageId)
-        if (page) {
-          const liveJson = serializeCanvasJson(fabricRef.current)
-          snapshot = { image_url: page.image_url, canvas_json: liveJson, cover_json: page.cover_json }
-        }
-      } else {
-        snapshot = buildPersistedThumbnailSnapshot(job.pageId)
-      }
-      const dataUrl = snapshot ? await renderPageThumbnailSnapshot(snapshot) : null
+      const persistedSnapshot = job.mode === 'live' ? null : buildPersistedThumbnailSnapshot(job.pageId)
+      const dataUrl = job.mode === 'live'
+        ? captureLiveThumbnailDataUrl(job.pageId, pageIdRef, fabricRef)
+        : persistedSnapshot ? await renderPageThumbnailSnapshot(persistedSnapshot) : null
       if (!thumbnailMountedRef.current) return
       if ((thumbnailTokensRef.current[job.pageId] ?? 0) !== job.token) return
       if (!pagesRef.current.some((page) => page.id === job.pageId)) return
@@ -1312,42 +1303,42 @@ export default function EditPublication() {
     // el timer de 1.2s expira con el canvas a medio cargar, sobreescribiendo datos.
     let isLoading = true
 
-    // Carga el fondo DESPUÉS de loadFromJSON porque loadFromJSON llama canvas.clear()
-    // internamente, lo que borra cualquier backgroundImage ya puesta. Llamar fromURL
-    // antes del clear hace que el fondo desaparezca.
-    const loadBg = () => {
-      fabric.Image.fromURL(activePage.image_url, (img: any) => {
-        img.set({ selectable: false, evented: false })
-        if (img && img.width && img.height) {
-          bgNatRef.current = { iw: img.width, ih: img.height }
-          const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
-          img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
-        }
-        canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
-        bgImgRef.current = canvas.backgroundImage ?? img
-      })
-    }
+    // Fondo de página en modo "cubrir": la hoja llena el recuadro A4 (W×H) sin
+    // deformarse. Replica el `object-fit:cover` del viewer (flipbook.js) y respeta
+    // el encuadre manual (zoom + posición) guardado en cover_json.
+    loadCanvasFabricImage(activePage.image_url, (img: any) => {
+      img.set({ selectable: false, evented: false })
+      if (img && img.width && img.height) {
+        bgNatRef.current = { iw: img.width, ih: img.height }
+        const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
+        img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
+      }
+      canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
+      bgImgRef.current = canvas.backgroundImage ?? img
+    })
 
     if (activePage.canvas_json) {
-      const pageJson = typeof activePage.canvas_json === 'string'
-        ? JSON.parse(activePage.canvas_json)
-        : activePage.canvas_json
-      const jsonWithoutBg = stripBackgroundImage(pageJson)
-      canvas.loadFromJSON(jsonWithoutBg, () => {
-        isLoading = false
+        const pageJson = typeof activePage.canvas_json === 'string'
+          ? JSON.parse(activePage.canvas_json)
+          : activePage.canvas_json
+        const jsonWithoutBg = stripBackgroundImage(normalizeFabricAssetJson(pageJson))
+        canvas.loadFromJSON(jsonWithoutBg, () => {
+          isLoading = false
+        // Aplicar visibilidad de editor: elementos marcados como ocultos en el editor
+        // se muestran con opacidad mínima para que sean clicables pero no distraigan.
         canvas.getObjects().forEach((o: any) => {
           if (o.data?.hiddenInEditor) {
             o.set({ opacity: 0.07, selectable: false, evented: false, hasControls: false, hasBorders: false })
           }
         })
         canvas.renderAll()
+        // Estado inicial en el historial
         pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
-        loadBg()
       })
     } else {
       isLoading = false
+      // Página vacía: estado inicial
       pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
-      loadBg()
     }
 
     const updateSelectedObject = (next: any) => {
@@ -1657,7 +1648,7 @@ export default function EditPublication() {
   // Inserta una imagen ya subida (del banco) como elemento editable, sin re-subir
   function addImageFromUrl(url: string) {
     const c = fabricRef.current; if (!c) return
-      fabric.Image.fromURL(url, (img: any) => {
+      loadCanvasFabricImage(url, (img: any) => {
       // Escala la imagen para que no ocupe más del 60 % del ancho del canvas
       const maxW = c.getWidth() * 0.6
       if (img.width > maxW) img.scaleToWidth(maxW)
@@ -1816,7 +1807,7 @@ export default function EditPublication() {
     // y dimensionable en el lienzo), no como tarjeta.
     if (w.type === 'qr' || w.type === 'barcode' || w.type === 'social') {
       const v = WIDGET_VISUAL[w.type]
-      fabric.Image.fromURL(codeImageUrl(w.type, defaultCfg), (img: any) => {
+      loadCanvasFabricImage(codeImageUrl(w.type, defaultCfg), (img: any) => {
         // Escalado robusto: algunos SVG no reportan dimensiones (img.width = 0) y
         // scaleToWidth daría escala infinita. Usamos un fallback de 240px.
         const nat = img.width && img.width > 1 ? img.width : 240
@@ -2229,7 +2220,7 @@ export default function EditPublication() {
     const prevOriginX = o.originX ?? 'left', prevOriginY = o.originY ?? 'top'
     const prevData = { ...(o.data ?? {}), kind: 'image', src: url }
     const idx = c.getObjects().indexOf(o)
-    fabric.Image.fromURL(url, (img: any) => {
+    loadCanvasFabricImage(url, (img: any) => {
       if (!img || !img.width || !img.height) { alert('No se pudo cargar la imagen de reemplazo'); return }
       const iw = img.width, ih = img.height
       // Modo "cubrir": recorta el sobrante para que la región mostrada tenga la misma
@@ -2847,7 +2838,7 @@ function SheetPreviewModal({ data, onClose }: { data: { imageUrl: string; cover:
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
       </div>
       <span style={{ color: '#cbd5e1', fontSize: 11, maxWidth: PW + 80, textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
-        Vista del diseño actual. Los widgets interactivos (mapa, video, formulario…) se ven en su forma final en la "Vista previa" global del proyecto.
+        Vista del diseño actual. Los widgets interactivos (mapa, video, formulario…) se ven en su forma final en la “Vista previa” global del proyecto.
       </span>
     </div>
   )
@@ -2885,20 +2876,11 @@ function ContextPanel(p: any) {
                 onClick={() => p.setActivePage(page)}
                 style={{ ...cp.thumbItem, borderColor: p.activePage?.id === page.id ? '#4F46E5' : 'transparent' }}
               >
-                {/* La <img> de fondo define la altura del thumbItem (aspectRatio en <img> es fiable).
-                    El overlay PNG de elementos se posiciona encima como absolute. */}
                 <img
-                  src={page.image_url || BLANK_PAGE_URL}
+                  src={p.thumbnailByPageId[page.id] || page.image_url || BLANK_PAGE_URL}
                   alt={`p${i + 1}`}
                   style={cp.thumbImg}
                 />
-                {p.thumbnailByPageId[page.id] && (
-                  <img
-                    src={p.thumbnailByPageId[page.id]}
-                    alt=""
-                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'fill', display: 'block', pointerEvents: 'none' }}
-                  />
-                )}
                 <div style={cp.thumbNum}>{i + 1}</div>
                 <button
                   title="Duplicar página (copia con todo el contenido)"
@@ -3239,7 +3221,7 @@ function ContextPanel(p: any) {
           {!p.svgLibLoaded ? (
             <p style={cp.hint}>Cargando biblioteca…</p>
           ) : filtered.length === 0 ? (
-            <p style={cp.hint}>No hay íconos para este filtro. El administrador puede agregar más desde el panel "Biblioteca SVG".</p>
+            <p style={cp.hint}>No hay íconos para este filtro. El administrador puede agregar más desde el panel “Biblioteca SVG”.</p>
           ) : (
             groups.map((g) => (
               <div key={g.name}>
@@ -3707,7 +3689,7 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
             >
               ⤢ Reencuadrar imagen (zoom y posición)
             </button>
-            <p style={cp.hint}>Ajusta qué parte de la imagen se ve dentro de su recuadro, sin deformarla — igual que "Ajustar hoja". También puedes usar las esquinas para redimensionar y rotar.</p>
+            <p style={cp.hint}>Ajusta qué parte de la imagen se ve dentro de su recuadro, sin deformarla — igual que “Ajustar hoja”. También puedes usar las esquinas para redimensionar y rotar.</p>
           </PropGroup>
         )}
 
@@ -4053,7 +4035,7 @@ function MapWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void })
       <Collapsible title="Interacción" defaultOpen={false}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#374151', cursor: 'pointer' }}>
           <input type="checkbox" checked={cfg.openInApp !== false} onChange={(e) => setCfg({ openInApp: e.target.checked })} />
-          Mostrar botón "Abrir en Google Maps"
+          Mostrar botón “Abrir en Google Maps”
         </label>
         <p style={cp.hint}>Agrega un botón sobre el mapa que abre la ubicación en Google Maps (rastreable por analítica).</p>
       </Collapsible>
@@ -4484,7 +4466,7 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
         </>
       )}
 
-      <p style={cp.hint}>Pulsa "👁 Vista previa" para ver la ficha completa tal como se verá publicada. En el lienzo verás un boceto para colocarla y dimensionarla.</p>
+      <p style={cp.hint}>Pulsa “👁 Vista previa” para ver la ficha completa tal como se verá publicada. En el lienzo verás un boceto para colocarla y dimensionarla.</p>
     </>
   )
 }
@@ -4994,7 +4976,7 @@ function TriggerSelector({ data, setData }: { data: any; setData: (p: any) => vo
       <select style={s.propInput} value={trigger} onChange={(e) => setData({ trigger: e.target.value })}>
         {TRIGGERS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
       </select>
-      {trigger !== 'click' && <p style={cp.hint}>El disparador "{TRIGGERS.find((t) => t.key === trigger)?.label}" se guardará; por ahora el visor ejecuta la acción al hacer clic/tap (soporte ampliado próximamente).</p>}
+      {trigger !== 'click' && <p style={cp.hint}>El disparador “{TRIGGERS.find((t) => t.key === trigger)?.label}” se guardará; por ahora el visor ejecuta la acción al hacer clic/tap (soporte ampliado próximamente).</p>}
     </PropGroup>
   )
 }
@@ -5136,33 +5118,17 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
         <PropGroup label="Elemento a mostrar u ocultar">
           {targets.length === 0 ? (
             <p style={cp.hint}>
-              Primero selecciona el elemento objetivo y dale un nombre en su panel de propiedades. Luego vuelve aqui a configurar la accion.
+              Primero selecciona el elemento objetivo y asígnale un “Nombre del elemento”
+              en su panel de propiedades. Luego vuelve aquí a configurar la acción.
             </p>
           ) : (
             <select style={s.propInput} value={action.target ?? ''} onChange={(e) => setAction({ target: e.target.value })}>
-              <option value="">-- Selecciona un elemento --</option>
+              <option value="">— Selecciona un elemento —</option>
               {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           )}
-          <p style={{ ...cp.hint, marginTop: 6 }}>
-            El viewer oculta el elemento al cargar la pagina para que el primer clic lo muestre.
-          </p>
-        </PropGroup>
-      )}
-      {action.type === 'show_hide' && (
-        <PropGroup label="Cierre automatico (segundos)">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input
-              type="number" min={0} max={300} step={1}
-              style={{ ...s.propInput, width: 80 }}
-              placeholder="0"
-              value={action.dismissAfter ?? ''}
-              onChange={(e) => setAction({ dismissAfter: e.target.value ? +e.target.value : undefined })}
-            />
-            <span style={{ fontSize: 12, color: '#6b7280' }}>seg - 0 = solo manual</span>
-          </div>
-          <p style={{ ...cp.hint, marginTop: 4 }}>
-            El elemento se cierra solo tras N segundos. El boton X Cerrar siempre aparece flotando.
+          <p style={cp.hint}>
+            Para que el elemento empiece oculto, selecciónalo y marca “Empieza oculto” en su panel de propiedades.
           </p>
         </PropGroup>
       )}
@@ -5423,7 +5389,7 @@ function AnimationControl({ obj, setData }: { obj: any; setData: (p: any) => voi
           <input type="range" min={0.3} max={2.5} step={0.1} defaultValue={speed} onChange={(e) => setData({ anim: { ...anim, type, speed: +e.target.value } })} style={{ flex: 1 }} />
         </div>
       )}
-      {type && <p style={cp.hint}>La animación se reproduce en bucle en el flipbook publicado y en la "Vista previa" del proyecto (no en el editor, para no estorbar la edición).</p>}
+      {type && <p style={cp.hint}>La animación se reproduce en bucle en el flipbook publicado y en la “Vista previa” del proyecto (no en el editor, para no estorbar la edición).</p>}
     </PropGroup>
   )
 }
@@ -5473,7 +5439,7 @@ function EntranceControl({ obj, setData }: { obj: any; setData: (p: any) => void
             <input style={{ ...s.propInput, width: 70 }} type="number" min={0} max={20} step={0.1} defaultValue={ent.delay ?? 0} onChange={(e) => patch({ delay: +e.target.value })} />
             <span style={{ fontSize: 11, color: '#6b7280' }}>seg</span>
           </div>
-          <p style={cp.hint}>Se reproduce al mostrarse la página en el flipbook publicado y en la "Vista previa". Usa el retardo para escalonar la aparición de varios elementos.</p>
+          <p style={cp.hint}>Se reproduce al mostrarse la página en el flipbook publicado y en la “Vista previa”. Usa el retardo para escalonar la aparición de varios elementos.</p>
         </>
       )}
     </PropGroup>
