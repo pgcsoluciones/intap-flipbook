@@ -23,6 +23,7 @@ export const BLANK_PAGE_URL = 'data:image/svg+xml,' + encodeURIComponent(
 const CANVAS_W = 580
 const CANVAS_H = Math.round(CANVAS_W * 1.414)
 const THUMB_W = 220
+const AUTOSAVE_DELAY_MS = 3000
 
 // Calcula el recorte "cubrir" de una imagen dentro de un recuadro destino según el
 // encuadre { zoom>=1, fx 0..1, fy 0..1 }. zoom=1 y fx=fy=0.5 → cubrir centrado.
@@ -914,6 +915,9 @@ export default function EditPublication() {
   const rightPanelRef = useRef<HTMLDivElement>(null)
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
+  const isTextEditingRef = useRef(false)
+  const saveSeqRef = useRef<Record<string, number>>({})
+  const saveChainRef = useRef<Record<string, Promise<void>>>({})
 
   // ── Historial de deshacer/rehacer (undo/redo) ──
   // Guardamos hasta 20 snapshots (JSON del canvas) por página.
@@ -940,16 +944,44 @@ export default function EditPublication() {
 
   const scheduleAutosaveRef = useRef<() => void>(() => {})
 
+  const restoreCanvasBackground = useCallback((canvas: any, page: any) => {
+    return new Promise<void>((resolve) => {
+      const src = page?.image_url || BLANK_PAGE_URL
+      const safeSrc = toCanvasSafeAssetUrl(src)
+      const options = isHttpUrl(safeSrc) ? { crossOrigin: 'anonymous' } : undefined
+      fabric.Image.fromURL(safeSrc, (img: any) => {
+        if (img && img.width && img.height) {
+          bgNatRef.current = { iw: img.width, ih: img.height }
+          const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
+          img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
+        }
+        img?.set?.({ selectable: false, evented: false })
+        canvas.setBackgroundImage(img, () => {
+          bgImgRef.current = canvas.backgroundImage ?? img
+          canvas.renderAll()
+          resolve()
+        })
+      }, options as any)
+    })
+  }, [])
+
   const applyHistory = useCallback((json: string) => {
     const c = fabricRef.current
     if (!c) return
+    const pageId = pageIdRef.current
+    clearTimeout(autosaveTimer.current)
+    if (pageId) saveSeqRef.current[pageId] = (saveSeqRef.current[pageId] ?? 0) + 1
     isUndoRedoRef.current = true
-    c.loadFromJSON(stripBackgroundImage(json), () => {
-      c.renderAll()
+    c.loadFromJSON(stripBackgroundImage(json), async () => {
+      await restoreCanvasBackground(c, activePageRef.current ? pagesRef.current.find((p) => p.id === activePageRef.current) : activePage)
+      const active = c.getActiveObject?.() ?? null
+      selectedRef.current = active
+      setSelected(active)
+      setSelectVersion((v) => v + 1)
       isUndoRedoRef.current = false
       scheduleAutosaveRef.current()
     })
-  }, [])
+  }, [activePage, restoreCanvasBackground])
 
   useEffect(() => {
     pagesRef.current = pages
@@ -1189,27 +1221,33 @@ export default function EditPublication() {
   // Se llama tras cada cambio (debounce) y al cambiar de página.
   const persistCanvas = useCallback(async (pageId: string, canvas: any, flash = true) => {
     if (!pageId || !canvas) return
-    setSaveState('saving')
-    try {
-      // Serializa el canvas restaurando la opacidad real de los objetos ocultos en el editor.
-      // data.hiddenInEditor = true → en el editor muestran opacity 0.07 para ser clicables,
-      // pero al guardar el viewer tiene que ver la opacidad real (data.originalOpacity).
-      const rawJson = serializeCanvasJson(canvas) as any
-      if (rawJson?.objects) {
-        rawJson.objects = rawJson.objects.map((obj: any) => {
-          if (obj.data?.hiddenInEditor && obj.data?.originalOpacity != null) {
-            return { ...obj, opacity: obj.data.originalOpacity, selectable: true, evented: true, hasControls: true, hasBorders: true }
-          }
-          return obj
-        })
-      }
-      const json = JSON.stringify(rawJson)
+    const seq = (saveSeqRef.current[pageId] ?? 0) + 1
+    saveSeqRef.current[pageId] = seq
+
+    // Serializa al programar el guardado, no al ejecutarlo después de otros saves.
+    const rawJson = serializeCanvasJson(canvas) as any
+    if (rawJson?.objects) {
+      rawJson.objects = rawJson.objects.map((obj: any) => {
+        if (obj.data?.hiddenInEditor && obj.data?.originalOpacity != null) {
+          return { ...obj, opacity: obj.data.originalOpacity, selectable: true, evented: true, hasControls: true, hasBorders: true }
+        }
+        return obj
+      })
+    }
+    const json = JSON.stringify(rawJson)
+
+    const run = async () => {
+      setSaveState('saving')
       await api.pages.saveCanvas(pageId, json)
+      if (saveSeqRef.current[pageId] !== seq) return
       setPages((prev) => {
         const next = prev.map((p) => (p.id === pageId ? { ...p, canvas_json: json } : p))
         pagesRef.current = next
         return next
       })
+      if (pageIdRef.current === pageId) {
+        requestThumbnailUpdate(pageId, 'live', { immediate: false, priority: true })
+      }
 
       // Propagar objetos con syncGroupId a otras páginas.
       // syncGroupId (identificador de sincronización) marca SVGs que deben ser iguales en todas las páginas.
@@ -1252,19 +1290,22 @@ export default function EditPublication() {
       } else {
         setSaveState('idle')
       }
-    } catch {
-      setSaveState('idle')
     }
-  }, [])
+    const previous = saveChainRef.current[pageId] ?? Promise.resolve()
+    const queued = previous.catch(() => {}).then(run).catch(() => {
+      if (saveSeqRef.current[pageId] === seq) setSaveState('idle')
+    })
+    saveChainRef.current[pageId] = queued
+    return queued
+  }, [requestThumbnailUpdate])
 
-  // Programa un guardado diferido (1.2s tras el último cambio)
+  // Programa un guardado diferido tras el último cambio confirmado.
   const scheduleAutosave = useCallback(() => {
     if (!pageIdRef.current) return
     clearTimeout(autosaveTimer.current)
-    refreshCurrentThumbnail(false)
     autosaveTimer.current = setTimeout(() => {
       if (fabricRef.current && pageIdRef.current) persistCanvas(pageIdRef.current, fabricRef.current)
-    }, 1200)
+    }, AUTOSAVE_DELAY_MS)
   }, [persistCanvas])
 
   // Mantiene la ref actualizada para que applyHistory pueda llamarla
@@ -1420,6 +1461,17 @@ export default function EditPublication() {
     // Autoguardado + historial en cada cambio del lienzo
     const onChange = () => {
       if (isLoading) return  // no guardar durante la carga inicial del JSON
+      if (isTextEditingRef.current) return
+      if (!isUndoRedoRef.current) pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
+      scheduleAutosave()
+    }
+    const onTextEditingEntered = () => {
+      isTextEditingRef.current = true
+      clearTimeout(autosaveTimer.current)
+    }
+    const onTextEditingExited = () => {
+      if (isLoading) return
+      isTextEditingRef.current = false
       if (!isUndoRedoRef.current) pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
       scheduleAutosave()
       refreshCurrentThumbnail(false)
@@ -1473,7 +1525,8 @@ export default function EditPublication() {
     canvas.on('object:modified', onChange)
     canvas.on('object:added', onChange)
     canvas.on('object:removed', onChange)
-    canvas.on('text:changed', onChange)
+    canvas.on('text:editing:entered', onTextEditingEntered)
+    canvas.on('text:editing:exited', onTextEditingExited)
 
     return () => {
       window.removeEventListener('keydown', onKeyDown)
@@ -4311,6 +4364,180 @@ function ImageFitToggle({ url, fitMap, setFit, aspect }: { url: string; fitMap: 
   )
 }
 
+function CtaActionFields({ cfg, setCfg, prefix }: { cfg: any; setCfg: (p: any) => void; prefix: 'primary' | 'secondary' }) {
+  const action = cfg[`${prefix}Action`] ?? 'none'
+  const externalValue = cfg[`${prefix}Value`] ?? ''
+  const externalMessage = cfg[`${prefix}Message`] ?? ''
+
+  const [draftValue, setDraftValue] = React.useState(externalValue)
+  const [draftMessage, setDraftMessage] = React.useState(externalMessage)
+
+  const focusedRef = React.useRef(false)
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearDebounce = () => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+  }
+
+  React.useEffect(() => () => clearDebounce(), [])
+
+  React.useEffect(() => {
+    if (focusedRef.current) return
+
+    setDraftValue(externalValue)
+    setDraftMessage(externalMessage)
+    clearDebounce()
+  }, [externalMessage, externalValue, prefix])
+
+  const commitDraft = React.useCallback(
+    (value = draftValue, message = draftMessage) => {
+      clearDebounce()
+
+      const patch: any = {}
+
+      if (value !== externalValue) {
+        patch[`${prefix}Value`] = value
+      }
+
+      if (message !== externalMessage) {
+        patch[`${prefix}Message`] = message
+      }
+
+      if (Object.keys(patch).length) {
+        setCfg(patch)
+      }
+    },
+    [draftValue, draftMessage, externalValue, externalMessage, prefix, setCfg]
+  )
+
+  const scheduleCommit = (value: string, message: string) => {
+    clearDebounce()
+
+    if (!focusedRef.current) return
+
+    debounceRef.current = setTimeout(() => {
+      commitDraft(value, message)
+    }, 700)
+  }
+
+  const updateDraftValue = (value: string) => {
+    setDraftValue(value)
+    scheduleCommit(value, draftMessage)
+  }
+
+  const updateDraftMessage = (message: string) => {
+    setDraftMessage(message)
+    scheduleCommit(draftValue, message)
+  }
+
+  const commitOnEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return
+
+    commitDraft()
+    ;(e.currentTarget as HTMLInputElement).blur()
+  }
+
+  const updateAction = (nextAction: string) => {
+    clearDebounce()
+    setCfg({ [`${prefix}Action`]: nextAction })
+  }
+
+  return (
+    <>
+      <select style={s.propInput} value={action} onChange={(e) => updateAction(e.target.value)}>
+        <option value="none">Sin acción</option>
+        <option value="whatsapp">WhatsApp</option>
+        <option value="link">Abrir enlace</option>
+        <option value="call">Llamar por teléfono</option>
+        <option value="email">Enviar email</option>
+      </select>
+      {action === 'whatsapp' && (
+        <>
+          <input
+            style={{ ...s.propInput, marginTop: 6 }}
+            placeholder="Teléfono con código país (ej. 18091234567)"
+            value={draftValue}
+            onFocus={() => {
+              focusedRef.current = true
+            }}
+            onBlur={() => {
+              focusedRef.current = false
+              commitDraft()
+            }}
+            onKeyDown={commitOnEnter}
+            onChange={(e) => updateDraftValue(e.target.value)}
+          />
+          <input
+            style={{ ...s.propInput, marginTop: 6 }}
+            placeholder="Mensaje predefinido (opcional)"
+            value={draftMessage}
+            onFocus={() => {
+              focusedRef.current = true
+            }}
+            onBlur={() => {
+              focusedRef.current = false
+              commitDraft()
+            }}
+            onKeyDown={commitOnEnter}
+            onChange={(e) => updateDraftMessage(e.target.value)}
+          />
+        </>
+      )}
+      {action === 'link' && (
+        <input
+          style={{ ...s.propInput, marginTop: 6 }}
+          placeholder="https://..."
+          value={draftValue}
+          onFocus={() => {
+            focusedRef.current = true
+          }}
+          onBlur={() => {
+            focusedRef.current = false
+            commitDraft()
+          }}
+          onKeyDown={commitOnEnter}
+          onChange={(e) => updateDraftValue(e.target.value)}
+        />
+      )}
+      {action === 'call' && (
+        <input
+          style={{ ...s.propInput, marginTop: 6 }}
+          placeholder="Teléfono (ej. 8091234567)"
+          value={draftValue}
+          onFocus={() => {
+            focusedRef.current = true
+          }}
+          onBlur={() => {
+            focusedRef.current = false
+            commitDraft()
+          }}
+          onKeyDown={commitOnEnter}
+          onChange={(e) => updateDraftValue(e.target.value)}
+        />
+      )}
+      {action === 'email' && (
+        <input
+          style={{ ...s.propInput, marginTop: 6 }}
+          placeholder="correo@dominio.com"
+          value={draftValue}
+          onFocus={() => {
+            focusedRef.current = true
+          }}
+          onBlur={() => {
+            focusedRef.current = false
+            commitDraft()
+          }}
+          onKeyDown={commitOnEnter}
+          onChange={(e) => updateDraftValue(e.target.value)}
+        />
+      )}
+    </>
+  )
+}
+
 // Panel del widget Galería / Slider: lista de imágenes + opciones de reproducción.
 // Panel de la Ficha de producto: galería (máx. 5), textos, especificaciones y botones CTA.
 // Todos los campos se editan aquí y se ven en vivo con el botón "Vista previa".
@@ -4342,30 +4569,6 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
     }
     if (urls.length) setImages([...images, ...urls])
     setUploading(false)
-  }
-
-  const CtaActionFields = ({ prefix }: { prefix: 'primary' | 'secondary' }) => {
-    const action = cfg[`${prefix}Action`] ?? 'none'
-    return (
-      <>
-        <select style={s.propInput} value={action} onChange={(e) => setCfg({ [`${prefix}Action`]: e.target.value })}>
-          <option value="none">Sin acción</option>
-          <option value="whatsapp">WhatsApp</option>
-          <option value="link">Abrir enlace</option>
-          <option value="call">Llamar por teléfono</option>
-          <option value="email">Enviar email</option>
-        </select>
-        {action === 'whatsapp' && (
-          <>
-            <input style={{ ...s.propInput, marginTop: 6 }} placeholder="Teléfono con código país (ej. 18091234567)" value={cfg[`${prefix}Value`] ?? ''} onChange={(e) => setCfg({ [`${prefix}Value`]: e.target.value })} />
-            <input style={{ ...s.propInput, marginTop: 6 }} placeholder="Mensaje predefinido (opcional)" value={cfg[`${prefix}Message`] ?? ''} onChange={(e) => setCfg({ [`${prefix}Message`]: e.target.value })} />
-          </>
-        )}
-        {action === 'link' && <input style={{ ...s.propInput, marginTop: 6 }} placeholder="https://..." value={cfg[`${prefix}Value`] ?? ''} onChange={(e) => setCfg({ [`${prefix}Value`]: e.target.value })} />}
-        {action === 'call' && <input style={{ ...s.propInput, marginTop: 6 }} placeholder="Teléfono (ej. 8091234567)" value={cfg[`${prefix}Value`] ?? ''} onChange={(e) => setCfg({ [`${prefix}Value`]: e.target.value })} />}
-        {action === 'email' && <input style={{ ...s.propInput, marginTop: 6 }} placeholder="correo@dominio.com" value={cfg[`${prefix}Value`] ?? ''} onChange={(e) => setCfg({ [`${prefix}Value`]: e.target.value })} />}
-      </>
-    )
   }
 
   return (
@@ -4467,7 +4670,7 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
         <input type="color" value={cfg.primaryColor ?? '#9aab3c'} onChange={(e) => setCfg({ primaryColor: e.target.value })} style={s.colorInput} />
       </PropGroup>
       <PropGroup label="Acción al hacer clic">
-        <CtaActionFields prefix="primary" />
+        <CtaActionFields cfg={cfg} setCfg={setCfg} prefix="primary" />
       </PropGroup>
 
       <div style={s.actionDivider}>Botón secundario</div>
@@ -4482,7 +4685,7 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
             <input style={s.propInput} value={cfg.secondaryText ?? ''} onChange={(e) => setCfg({ secondaryText: e.target.value })} />
           </PropGroup>
           <PropGroup label="Acción al hacer clic">
-            <CtaActionFields prefix="secondary" />
+            <CtaActionFields cfg={cfg} setCfg={setCfg} prefix="secondary" />
           </PropGroup>
         </>
       )}
