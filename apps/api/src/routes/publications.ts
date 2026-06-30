@@ -11,6 +11,96 @@ const publications = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 publications.use('*', jwtMiddleware)
 
+const SOCIAL_TEXT_LIMITS = {
+  social_title: 120,
+  social_description: 300,
+  social_image_url: 2048,
+  social_image_source_url: 2048,
+  social_image_crop_json: 4096,
+} as const
+
+type SocialField = keyof typeof SOCIAL_TEXT_LIMITS
+
+function hasOwn(body: Record<string, unknown>, field: string): boolean {
+  return Object.prototype.hasOwnProperty.call(body, field)
+}
+
+function normalizeOptionalText(
+  body: Record<string, unknown>,
+  field: SocialField,
+): { ok: true; present: boolean; value: string | null } | { ok: false; error: string } {
+  if (!hasOwn(body, field)) return { ok: true, present: false, value: null }
+
+  const value = body[field]
+  if (value === null) return { ok: true, present: true, value: null }
+  if (typeof value !== 'string') {
+    return { ok: false, error: `${field} debe ser texto, null u omitido` }
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed) return { ok: true, present: true, value: null }
+  if (trimmed.length > SOCIAL_TEXT_LIMITS[field]) {
+    return { ok: false, error: `${field} no puede exceder ${SOCIAL_TEXT_LIMITS[field]} caracteres` }
+  }
+
+  return { ok: true, present: true, value: trimmed }
+}
+
+function normalizeOptionalHttpsUrl(
+  body: Record<string, unknown>,
+  field: 'social_image_url' | 'social_image_source_url',
+): { ok: true; present: boolean; value: string | null } | { ok: false; error: string } {
+  const normalized = normalizeOptionalText(body, field)
+  if (!normalized.ok || !normalized.present || normalized.value === null) return normalized
+
+  try {
+    const url = new URL(normalized.value)
+    if (url.protocol !== 'https:') {
+      return { ok: false, error: `${field} debe ser una URL absoluta https` }
+    }
+  } catch {
+    return { ok: false, error: `${field} debe ser una URL absoluta https` }
+  }
+
+  return normalized
+}
+
+function normalizeOptionalCropJson(
+  body: Record<string, unknown>,
+): { ok: true; present: boolean; value: string | null } | { ok: false; error: string } {
+  const normalized = normalizeOptionalText(body, 'social_image_crop_json')
+  if (!normalized.ok || !normalized.present || normalized.value === null) return normalized
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(normalized.value)
+  } catch {
+    return { ok: false, error: 'social_image_crop_json debe ser JSON válido' }
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: 'social_image_crop_json debe ser un objeto JSON' }
+  }
+
+  const crop = parsed as Record<string, unknown>
+  if (
+    typeof crop.zoom !== 'number' ||
+    !Number.isFinite(crop.zoom) ||
+    crop.zoom < 1 ||
+    crop.zoom > 5
+  ) {
+    return { ok: false, error: 'social_image_crop_json.zoom debe ser un número entre 1 y 5' }
+  }
+  if (typeof crop.offsetX !== 'number' || !Number.isFinite(crop.offsetX)) {
+    return { ok: false, error: 'social_image_crop_json.offsetX debe ser un número finito' }
+  }
+  if (typeof crop.offsetY !== 'number' || !Number.isFinite(crop.offsetY)) {
+    return { ok: false, error: 'social_image_crop_json.offsetY debe ser un número finito' }
+  }
+
+  return { ok: true, present: true, value: JSON.stringify(crop) }
+}
+
 // GET /api/publications — solo las activas (deleted_at IS NULL)
 publications.get('/', async (c) => {
   const userId = c.get('user').sub
@@ -118,7 +208,13 @@ publications.put('/:id', async (c) => {
     project_address?: string
     project_developer?: string
     project_website?: string
+    social_title?: unknown
+    social_description?: unknown
+    social_image_url?: unknown
+    social_image_source_url?: unknown
+    social_image_crop_json?: unknown
   }>()
+  const rawBody = body as Record<string, unknown>
 
   const pub = await c.env.DB.prepare('SELECT id FROM publications WHERE id = ? AND user_id = ?')
     .bind(c.req.param('id'), userId)
@@ -143,6 +239,24 @@ publications.put('/:id', async (c) => {
     }
   }
 
+  const socialTitle = normalizeOptionalText(rawBody, 'social_title')
+  if (!socialTitle.ok) return c.json({ success: false, error: socialTitle.error }, 400)
+  const socialDescription = normalizeOptionalText(rawBody, 'social_description')
+  if (!socialDescription.ok) return c.json({ success: false, error: socialDescription.error }, 400)
+  const socialImageUrl = normalizeOptionalHttpsUrl(rawBody, 'social_image_url')
+  if (!socialImageUrl.ok) return c.json({ success: false, error: socialImageUrl.error }, 400)
+  const socialImageSourceUrl = normalizeOptionalHttpsUrl(rawBody, 'social_image_source_url')
+  if (!socialImageSourceUrl.ok) return c.json({ success: false, error: socialImageSourceUrl.error }, 400)
+  const socialImageCropJson = normalizeOptionalCropJson(rawBody)
+  if (!socialImageCropJson.ok) return c.json({ success: false, error: socialImageCropJson.error }, 400)
+
+  const socialChanged =
+    socialTitle.present ||
+    socialDescription.present ||
+    socialImageUrl.present ||
+    socialImageSourceUrl.present ||
+    socialImageCropJson.present
+
   await c.env.DB.prepare(
     `UPDATE publications
      SET title = COALESCE(?, title),
@@ -156,6 +270,12 @@ publications.put('/:id', async (c) => {
          project_address = COALESCE(?, project_address),
          project_developer = COALESCE(?, project_developer),
          project_website = COALESCE(?, project_website),
+         social_title = CASE WHEN ? THEN ? ELSE social_title END,
+         social_description = CASE WHEN ? THEN ? ELSE social_description END,
+         social_image_url = CASE WHEN ? THEN ? ELSE social_image_url END,
+         social_image_source_url = CASE WHEN ? THEN ? ELSE social_image_source_url END,
+         social_image_crop_json = CASE WHEN ? THEN ? ELSE social_image_crop_json END,
+         social_updated_at = CASE WHEN ? THEN datetime('now') ELSE social_updated_at END,
          updated_at = datetime('now')
      WHERE id = ?`,
   )
@@ -171,6 +291,17 @@ publications.put('/:id', async (c) => {
       body.project_address ?? null,
       body.project_developer ?? null,
       body.project_website ?? null,
+      socialTitle.present ? 1 : 0,
+      socialTitle.value,
+      socialDescription.present ? 1 : 0,
+      socialDescription.value,
+      socialImageUrl.present ? 1 : 0,
+      socialImageUrl.value,
+      socialImageSourceUrl.present ? 1 : 0,
+      socialImageSourceUrl.value,
+      socialImageCropJson.present ? 1 : 0,
+      socialImageCropJson.value,
+      socialChanged ? 1 : 0,
       c.req.param('id'),
     )
     .run()

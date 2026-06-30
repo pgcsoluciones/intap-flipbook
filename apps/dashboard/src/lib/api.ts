@@ -258,7 +258,12 @@ export const api = {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: form,
-    }).then((r) => r.json()) as Promise<{ success: true; data: { url: string; key: string } }>
+    }).then(async (r) => {
+      const data = await r.json().catch(() => null)
+      if (!r.ok || !data?.success) throw new Error(data?.error ?? `Error ${r.status} al subir archivo`)
+      if (data?.data?.url) data.data.url = toCanvasSafeAssetUrl(data.data.url)
+      return data
+    }) as Promise<{ success: true; data: { url: string; key: string } }>
   },
 
   // Borra un archivo subido a R2 a partir de su URL pública.

@@ -301,6 +301,65 @@ app.get('/view/units', async (c) => {
   return c.json({ success: true, data: results })
 })
 
+// Social preview metadata — public, lightweight, no pages/canvas/widgets.
+app.get('/view/meta/:tenantSlug/:publicationSlug', async (c) => {
+  const tenantSlug = c.req.param('tenantSlug')
+  const publicationSlug = c.req.param('publicationSlug')
+
+  const pub = await c.env.DB.prepare(
+    `SELECT p.title, p.description, p.cover_image_url, p.public_slug, p.updated_at,
+            p.social_title, p.social_description, p.social_image_url, p.social_updated_at,
+            u.slug as tenant_slug
+     FROM publications p
+     JOIN users u ON u.id = p.user_id
+     WHERE u.slug = ?
+       AND p.public_slug = ?
+       AND p.status = 'published'
+       AND p.deleted_at IS NULL`,
+  )
+    .bind(tenantSlug, publicationSlug)
+    .first<{
+      title: string
+      description: string | null
+      cover_image_url: string | null
+      public_slug: string
+      updated_at: string | null
+      social_title: string | null
+      social_description: string | null
+      social_image_url: string | null
+      social_updated_at: string | null
+      tenant_slug: string
+    }>()
+
+  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+
+  const firstPage = await c.env.DB.prepare(
+    `SELECT pg.image_url
+     FROM pages pg
+     JOIN publications p ON p.id = pg.publication_id
+     JOIN users u ON u.id = p.user_id
+     WHERE u.slug = ? AND p.public_slug = ? AND p.status = 'published' AND p.deleted_at IS NULL
+       AND pg.image_url IS NOT NULL
+     ORDER BY pg.page_number ASC
+     LIMIT 1`,
+  )
+    .bind(tenantSlug, publicationSlug)
+    .first<{ image_url: string | null }>()
+
+  return c.json({
+    success: true,
+    data: {
+      title: pub.social_title || pub.title,
+      description: pub.social_description || pub.description || 'Mirá este catálogo interactivo en Intap Flipbook',
+      image_url: pub.social_image_url || pub.cover_image_url || firstPage?.image_url || null,
+      image_version: pub.social_updated_at || pub.updated_at,
+      tenant_slug: pub.tenant_slug,
+      public_slug: pub.public_slug,
+      canonical_url: `https://flip.intaprd.com/${pub.tenant_slug}/${pub.public_slug}`,
+    },
+  })
+})
+
 // Public viewer endpoint — no auth required
 app.get('/view/:slug', async (c) => {
   const slug = c.req.param('slug')

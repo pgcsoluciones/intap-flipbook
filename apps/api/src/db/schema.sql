@@ -56,6 +56,12 @@ CREATE TABLE IF NOT EXISTS publications (
   sound_enabled INTEGER DEFAULT 0,
   contact_form_enabled INTEGER DEFAULT 0,
   share_buttons_enabled INTEGER DEFAULT 1,
+  social_title TEXT,
+  social_description TEXT,
+  social_image_url TEXT,
+  social_image_source_url TEXT,
+  social_image_crop_json TEXT,
+  social_updated_at TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
