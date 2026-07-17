@@ -314,6 +314,9 @@ async function init() {
       .dm-premium-accordions{display:flex;flex-direction:column;gap:8px}.dm-premium-accordion{border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(255,255,255,.045);overflow:hidden}.dm-premium-accordion summary{cursor:pointer;padding:13px 14px;font-weight:800;color:#f8fafc}.dm-premium-accordion-body{padding:0 14px 14px;color:#d1d5db;font-size:13px;line-height:1.55}.dm-premium-list{display:flex;flex-direction:column;gap:8px}.dm-premium-row{display:flex;gap:10px;justify-content:space-between;border-top:1px solid rgba(255,255,255,.08);padding-top:8px}.dm-premium-row:first-child{border-top:0;padding-top:0}.dm-premium-row span{color:#94a3b8}.dm-premium-row strong{color:#f8fafc;text-align:right}
       .dm-premium-offer-cta{display:flex;margin-top:10px}.dm-premium-offer-cta .dm-premium-action{width:100%;box-shadow:0 10px 24px rgba(0,0,0,.24);font-size:clamp(16px,1.5vw,19px);font-weight:950;min-height:52px;gap:10px;color:#fff}.dm-premium-offer-cta .dm-premium-action svg{width:20px;height:20px;color:#fff;fill:#fff;flex:0 0 auto;transform:translateY(1px)}
       .dm-premium-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px;padding-top:12px;border-top:1px solid rgba(255,255,255,.1)}.dm-premium-action{border:0;border-radius:12px;padding:12px 14px;font-size:13px;font-weight:900;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px}.dm-action-whatsapp{background:#22c55e;color:#052e16}.dm-action-link{background:#7c3aed;color:#fff}.dm-action-muted{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.14)}.dm-premium-action:focus-visible,.dm-premium-share-grid button:focus-visible{outline:3px solid var(--dm-accent);outline-offset:2px}.dm-premium-disabled{opacity:.9}
+
+      .dm-action-booking{background:#2563eb;color:#fff}
+      .dm-booking-overlay{position:fixed;inset:0;z-index:2400;background:rgba(2,6,23,.72);display:flex;align-items:center;justify-content:center;padding:16px}.dm-booking-card{width:min(460px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;border:1px solid rgba(255,255,255,.16);border-radius:18px;background:linear-gradient(145deg,#111827,#080d19);color:#f8fafc;box-shadow:0 24px 70px rgba(0,0,0,.48);padding:20px 20px 24px;display:flex;flex-direction:column;gap:12px}.dm-booking-card h3{margin:0;font-size:22px}.dm-booking-context{border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.055);padding:10px;color:#cbd5e1;font-size:13px;display:flex;flex-direction:column;gap:4px}.dm-booking-field{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:850;color:#d1d5db}.dm-booking-field input,.dm-booking-field textarea{border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(15,23,42,.9);color:#fff;padding:10px;font:inherit;font-size:14px}.dm-booking-field textarea{min-height:82px;resize:vertical}.dm-booking-error{margin:0;color:#fca5a5;font-size:12px}.dm-booking-success{margin:0;color:#bbf7d0;font-size:13px;line-height:1.45}.dm-booking-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.dm-booking-actions button{border:0;border-radius:10px;padding:10px 14px;font-weight:900;cursor:pointer}.dm-booking-cancel{background:rgba(255,255,255,.1);color:#fff}.dm-booking-submit{background:var(--dm-accent);color:#08111f}.dm-booking-review{display:flex;flex-direction:column;gap:10px}.dm-booking-review-item{border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.05);padding:10px;color:#d1d5db;font-size:13px;line-height:1.45}.dm-booking-note{margin:0;color:#fde68a;font-size:12px;line-height:1.45}.dm-booking-availability-note{margin:0;color:#93c5fd;font-size:12px;line-height:1.4}.dm-booking-instructions{display:none;border:1px solid rgba(148,163,184,.34);border-radius:12px;background:rgba(148,163,184,.10);padding:10px 11px;color:#f8fafc;font-size:12px;line-height:1.5}.dm-booking-instructions strong{display:block;color:#cbd5e1;font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}.dm-booking-instructions-line{display:block;color:#cbd5e1}.dm-booking-instructions-line b{color:#f8fafc}.dm-booking-empty{margin:0;color:#cbd5e1;font-size:12px;line-height:1.4;text-align:center}.dm-booking-picker-field{position:relative;display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:850;color:#d1d5db}.dm-booking-picker-trigger{width:100%;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(15,23,42,.9);color:#fff;padding:10px 12px;font:inherit;font-size:14px;min-height:42px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;text-align:left}.dm-booking-picker-trigger[data-open="true"]{border-color:var(--dm-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--dm-accent) 24%,transparent)}.dm-booking-picker-trigger svg{color:#fff;flex:0 0 auto}.dm-booking-picker-panel{border:1px solid rgba(255,255,255,.14);border-radius:14px;background:#0b1220;box-shadow:0 18px 44px rgba(0,0,0,.42);padding:12px;display:flex;flex-direction:column;gap:10px}.dm-booking-calendar-head{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#fff;font-weight:950}.dm-booking-calendar-head button,.dm-booking-time-option{border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(255,255,255,.08);color:#fff;cursor:pointer;font-weight:900}.dm-booking-calendar-head button{width:34px;height:32px}.dm-booking-calendar-head button:disabled,.dm-booking-day:disabled{opacity:.35;cursor:not-allowed}.dm-booking-week,.dm-booking-days{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}.dm-booking-week span{font-size:10px;color:#94a3b8;text-align:center;font-weight:900}.dm-booking-day{border:1px solid transparent;border-radius:10px;background:rgba(255,255,255,.06);color:#fff;min-height:34px;font-weight:850;cursor:pointer}.dm-booking-day[data-selected="true"]{background:var(--dm-accent);color:#08111f}.dm-booking-time-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:7px}.dm-booking-time-option{padding:9px 8px}.dm-booking-time-option[data-selected="true"]{background:var(--dm-accent);color:#08111f}
       .dm-premium-share{grid-column:1/-1;border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:10px;background:rgba(255,255,255,.045)}.dm-premium-share-title{font-size:12px;font-weight:900;color:#e5e7eb;margin-bottom:8px}.dm-premium-share-grid{display:flex;flex-wrap:wrap;gap:8px}.dm-premium-share-grid button{width:42px;height:42px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:rgba(255,255,255,.08);color:#fff;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}.dm-premium-share-grid button[data-network="whatsapp"]{color:#22c55e}.dm-premium-share-grid button[data-network="facebook"]{color:#1877f2}.dm-premium-share-grid button[data-network="instagram"]{color:#e1306c}.dm-premium-share-grid button:hover{border-color:var(--dm-accent);color:var(--dm-accent)}
       .dm-premium-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2300;background:#111827;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:9px 14px;font-size:13px;box-shadow:0 16px 50px rgba(0,0,0,.38)}
       @media (max-width: 820px){.dm-premium-overlay{align-items:flex-end;padding:0}.dm-premium-card{width:100vw;height:94vh;max-height:94vh;border-radius:22px 22px 0 0;grid-template-columns:1fr;overflow:auto}.dm-premium-media{height:auto;min-height:320px;border-right:0;border-bottom:1px solid rgba(255,255,255,.1)}.dm-premium-content{overflow:visible;padding:24px 18px calc(24px + env(safe-area-inset-bottom))}.dm-premium-title{font-size:24px}.dm-premium-countdown-value{font-size:34px}.dm-premium-actions{grid-template-columns:1fr}.dm-premium-share-grid{grid-template-columns:1fr 1fr}.dm-premium-close{top:10px;right:10px}}
@@ -818,6 +821,7 @@ async function init() {
       instagram: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>',
       copy: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2.8-2.8a5 5 0 0 0-7.1-7.1l-1.6 1.6"/><path d="M14 11a5 5 0 0 0-7.1 0l-2.8 2.8a5 5 0 0 0 7.1 7.1l1.6-1.6"/></svg>',
       share: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>',
+      booking: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
     }
     const makeAction = (label, className, onClick, icon = '', key = '', disabled = false) => {
       const btn = document.createElement('button')
@@ -832,6 +836,569 @@ async function init() {
       const btn = makeAction(label, className, onClick, icon, key, disabled)
       actionBar.appendChild(btn)
       return btn
+    }
+    const showBookingRequestModal = () => {
+      document.querySelectorAll('.dm-booking-overlay').forEach((node) => node.remove())
+      const bookingAction = actions.booking && typeof actions.booking === 'object' ? actions.booking : {}
+      const appointmentTypes = Array.isArray(bookingAction.appointment_types) && bookingAction.appointment_types.length
+        ? bookingAction.appointment_types.map((item) => String(item || '').trim()).filter(Boolean)
+        : ['Visita', 'Llamada', 'Videollamada']
+      const requireDate = bookingAction.require_date !== false
+      const requireTime = bookingAction.require_time !== false
+      const today = new Date()
+      const minDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+      let reviewMode = false
+      let availability = { timezone: '', days: [], slots: [], appointment_types: appointmentTypes, appointment_type_details: [] }
+      let availabilityLoading = false
+
+      const overlay = document.createElement('div')
+      overlay.className = 'dm-booking-overlay'
+      overlay.style.setProperty('--dm-accent', accentColor)
+      const card = document.createElement('form')
+      card.className = 'dm-booking-card'
+      card.noValidate = true
+      const title = document.createElement('h3')
+      title.textContent = 'Agendar una cita'
+      const context = document.createElement('div')
+      context.className = 'dm-booking-context'
+      ;[
+        marker.name,
+        marker.reference ? `Referencia: ${marker.reference}` : '',
+        currentPrice ? `Precio: ${currentPrice}` : '',
+      ].filter(Boolean).forEach((row) => {
+        const line = document.createElement('span')
+        line.textContent = row
+        context.appendChild(line)
+      })
+
+      const status = document.createElement('p')
+      status.className = 'dm-booking-error'
+      const success = document.createElement('p')
+      success.className = 'dm-booking-success'
+      const reviewBox = document.createElement('div')
+      reviewBox.className = 'dm-booking-review'
+      reviewBox.style.display = 'none'
+      const inputs = {}
+      const editNodes = []
+      const appendEditNode = (node) => {
+        editNodes.push(node)
+        card.appendChild(node)
+      }
+
+      const appointmentWrap = document.createElement('label')
+      appointmentWrap.className = 'dm-booking-field'
+      appointmentWrap.textContent = 'Tipo de cita'
+      const appointmentSelect = document.createElement('select')
+      appointmentSelect.name = 'appointment_type'
+      appointmentSelect.required = true
+      appointmentSelect.style.cssText = 'border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(15,23,42,.9);color:#fff;padding:10px;font:inherit;font-size:14px'
+      const emptyOption = document.createElement('option')
+      emptyOption.value = ''
+      emptyOption.textContent = 'Selecciona una opción'
+      appointmentSelect.appendChild(emptyOption)
+      appointmentTypes.forEach((type) => {
+        const option = document.createElement('option')
+        option.value = type
+        option.textContent = type
+        appointmentSelect.appendChild(option)
+      })
+      appointmentWrap.appendChild(appointmentSelect)
+      inputs.appointment_type = appointmentSelect
+      const availabilityNote = document.createElement('p')
+      availabilityNote.className = 'dm-booking-availability-note'
+      availabilityNote.textContent = 'Cargando disponibilidad...'
+
+      const instructionsBox = document.createElement('div')
+      instructionsBox.className = 'dm-booking-instructions'
+
+      const selectedAppointmentDetail = () => (
+        (availability.appointment_type_details || []).find(
+          (item) => item && item.label === appointmentSelect.value,
+        ) || null
+      )
+
+      const appointmentDeliveryModeLabel = (value) => {
+        const labels = {
+          in_person: 'Presencial',
+          video_call: 'Videollamada',
+          phone_call: 'Llamada telefónica',
+          other: 'Otra modalidad',
+        }
+
+        return labels[String(value || '').trim()] || ''
+      }
+
+      const renderAppointmentInstructions = () => {
+        const detail = selectedAppointmentDetail()
+        const rows = [
+          ['Modalidad', appointmentDeliveryModeLabel(detail?.delivery_mode)],
+          ['Lugar', detail?.location_text],
+          ['Indicaciones', detail?.customer_instructions],
+        ].filter(([, value]) => Boolean(String(value || '').trim()))
+
+        instructionsBox.innerHTML = ''
+
+        if (!rows.length) {
+          instructionsBox.style.display = 'none'
+          return
+        }
+
+        const heading = document.createElement('strong')
+        heading.textContent = 'Detalles de tu cita'
+        instructionsBox.appendChild(heading)
+
+        rows.forEach(([label, value]) => {
+          const row = document.createElement('span')
+          row.className = 'dm-booking-instructions-line'
+
+          const labelNode = document.createElement('b')
+          labelNode.textContent = `${label}: `
+
+          row.appendChild(labelNode)
+          row.appendChild(document.createTextNode(String(value).trim()))
+          instructionsBox.appendChild(row)
+        })
+
+        instructionsBox.style.display = 'block'
+      }
+
+      const scheduleGrid = document.createElement('div')
+      scheduleGrid.style.display = 'grid'
+      scheduleGrid.style.gridTemplateColumns = 'repeat(auto-fit,minmax(150px,1fr))'
+      scheduleGrid.style.gap = '10px'
+      let activePicker = ''
+      let dateMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+      const calendarIcon = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'
+      const clockIcon = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'
+      const toDateValue = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+      const formatDateLabel = (value) => {
+        if (!value) return 'dd/mm/aaaa'
+        const [year, month, day] = value.split('-')
+        return `${day}/${month}/${year}`
+      }
+      const formatTimeLabel = (value) => {
+        if (!value) return '--:--'
+        const [hours, minutes] = value.split(':').map(Number)
+        if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return value
+        const suffix = hours < 12 ? 'a. m.' : 'p. m.'
+        const displayHour = hours % 12 || 12
+        return `${displayHour}:${String(minutes).padStart(2, '0')} ${suffix}`
+      }
+      const closePicker = () => {
+        activePicker = ''
+        ;[dateField, timeField].forEach((field) => field?.setOpen(false))
+      }
+      const openPicker = (name) => {
+        activePicker = activePicker === name ? '' : name
+        dateField.setOpen(activePicker === 'date')
+        timeField.setOpen(activePicker === 'time')
+      }
+      const availableDates = () => new Set((availability.days || []).map((day) => day.date))
+      const syncAppointmentOptions = (types) => {
+        const current = appointmentSelect.value
+        appointmentSelect.innerHTML = ''
+        const empty = document.createElement('option')
+        empty.value = ''
+        empty.textContent = 'Selecciona una opción'
+        appointmentSelect.appendChild(empty)
+        ;(types && types.length ? types : appointmentTypes).forEach((type) => {
+          const option = document.createElement('option')
+          option.value = type
+          option.textContent = type
+          appointmentSelect.appendChild(option)
+        })
+        appointmentSelect.value = types?.includes(current) ? current : ''
+      }
+      const setAvailabilityNote = () => {
+        if (availabilityLoading) {
+          availabilityNote.textContent = 'Cargando disponibilidad...'
+          renderAppointmentInstructions()
+          return
+        }
+
+        if (!appointmentSelect.value) {
+          availabilityNote.textContent = 'Selecciona un tipo de cita para ver disponibilidad real.'
+          renderAppointmentInstructions()
+          return
+        }
+
+        if (availability.timezone) {
+          const count = availability.days?.length || 0
+          availabilityNote.textContent = count
+            ? `Zona horaria: ${availability.timezone}. Selecciona un día con cupo disponible.`
+            : `Zona horaria: ${availability.timezone}. No hay horarios disponibles.`
+          renderAppointmentInstructions()
+          return
+        }
+
+        availabilityNote.textContent = 'No se pudo cargar disponibilidad.'
+        renderAppointmentInstructions()
+      }
+
+      const fetchAvailability = async (dateValue) => {
+        availabilityLoading = true
+        setAvailabilityNote()
+        const params = new URLSearchParams()
+        const monthStart = new Date(dateMonth.getFullYear(), dateMonth.getMonth(), 1)
+        const monthDays = new Date(dateMonth.getFullYear(), dateMonth.getMonth() + 1, 0).getDate()
+        params.set('from', toDateValue(monthStart))
+        params.set('days', String(Math.min(31, monthDays)))
+        if (dateValue) params.set('date', dateValue)
+        if (appointmentSelect.value) params.set('appointment_type', appointmentSelect.value)
+        try {
+          const response = await fetch(`${API_BASE}/view/${encodeURIComponent(slug)}/markers/${encodeURIComponent(marker.id)}/booking/availability${params.size ? `?${params}` : ''}`)
+          const data = await response.json().catch(() => ({}))
+          if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo cargar disponibilidad')
+          availability = data.data || availability
+          syncAppointmentOptions(availability.appointment_types || appointmentTypes)
+          if (dateValue && !(availability.slots || []).some((slot) => slot.time === inputs.preferred_time?.value)) {
+            inputs.preferred_time.value = ''
+            timeField?.setText()
+          }
+        } catch (error) {
+          availability = { timezone: '', days: [], slots: [], appointment_types: appointmentTypes, appointment_type_details: [] }
+          status.textContent = friendlyRequestError(error, 'No pudimos cargar la disponibilidad. Inténtalo nuevamente.')
+        } finally {
+          availabilityLoading = false
+          setAvailabilityNote()
+          dateField?.refresh()
+          timeField?.refresh()
+        }
+      }
+      const makePickerField = (name, label, kind) => {
+        const wrap = document.createElement('div')
+        wrap.className = 'dm-booking-picker-field'
+        wrap.dataset.pickerField = kind
+        const labelNode = document.createElement('span')
+        labelNode.textContent = label
+        const input = document.createElement('input')
+        input.type = 'hidden'
+        input.name = name
+        const trigger = document.createElement('button')
+        trigger.type = 'button'
+        trigger.className = 'dm-booking-picker-trigger'
+        trigger.setAttribute('aria-expanded', 'false')
+        const text = document.createElement('span')
+        const icon = document.createElement('span')
+        icon.innerHTML = kind === 'date' ? calendarIcon : clockIcon
+        trigger.appendChild(text)
+        trigger.appendChild(icon)
+        const panelSlot = document.createElement('div')
+        const setText = () => {
+          text.textContent = kind === 'date' ? formatDateLabel(input.value) : formatTimeLabel(input.value)
+        }
+        const setOpen = (isOpen) => {
+          trigger.dataset.open = isOpen ? 'true' : 'false'
+          trigger.setAttribute('aria-expanded', isOpen ? 'true' : 'false')
+          panelSlot.innerHTML = ''
+          if (isOpen) panelSlot.appendChild(kind === 'date' ? renderDatePanel() : renderTimePanel())
+        }
+        const refresh = () => {
+          setText()
+          if (trigger.dataset.open === 'true') setOpen(true)
+        }
+        const renderDatePanel = () => {
+          const panel = document.createElement('div')
+          panel.className = 'dm-booking-picker-panel'
+          const head = document.createElement('div')
+          head.className = 'dm-booking-calendar-head'
+          const prev = document.createElement('button')
+          prev.type = 'button'
+          prev.textContent = '‹'
+          const next = document.createElement('button')
+          next.type = 'button'
+          next.textContent = '›'
+          const title = document.createElement('span')
+          title.textContent = dateMonth.toLocaleDateString('es-DO', { month: 'long', year: 'numeric' })
+          prev.disabled = dateMonth.getFullYear() === today.getFullYear() && dateMonth.getMonth() === today.getMonth()
+          prev.addEventListener('click', () => {
+            if (prev.disabled) return
+            dateMonth = new Date(dateMonth.getFullYear(), dateMonth.getMonth() - 1, 1)
+            fetchAvailability(input.value)
+            setOpen(true)
+          })
+          next.addEventListener('click', () => {
+            dateMonth = new Date(dateMonth.getFullYear(), dateMonth.getMonth() + 1, 1)
+            fetchAvailability(input.value)
+            setOpen(true)
+          })
+          head.appendChild(prev)
+          head.appendChild(title)
+          head.appendChild(next)
+          const week = document.createElement('div')
+          week.className = 'dm-booking-week'
+          ;['L', 'M', 'M', 'J', 'V', 'S', 'D'].forEach((day) => {
+            const node = document.createElement('span')
+            node.textContent = day
+            week.appendChild(node)
+          })
+          const days = document.createElement('div')
+          days.className = 'dm-booking-days'
+          const firstOffset = (new Date(dateMonth.getFullYear(), dateMonth.getMonth(), 1).getDay() + 6) % 7
+          const totalDays = new Date(dateMonth.getFullYear(), dateMonth.getMonth() + 1, 0).getDate()
+          for (let i = 0; i < firstOffset; i += 1) days.appendChild(document.createElement('span'))
+          for (let day = 1; day <= totalDays; day += 1) {
+            const date = new Date(dateMonth.getFullYear(), dateMonth.getMonth(), day)
+            const value = toDateValue(date)
+            const btn = document.createElement('button')
+            btn.type = 'button'
+            btn.className = 'dm-booking-day'
+            btn.textContent = String(day)
+            btn.disabled = value < minDate || !availableDates().has(value)
+            btn.dataset.selected = input.value === value ? 'true' : 'false'
+            btn.addEventListener('click', () => {
+              if (btn.disabled) return
+              input.value = value
+              inputs.preferred_time.value = ''
+              timeField.setText()
+              setText()
+              closePicker()
+              fetchAvailability(value)
+              trigger.focus()
+            })
+            days.appendChild(btn)
+          }
+          panel.appendChild(head)
+          panel.appendChild(week)
+          panel.appendChild(days)
+          return panel
+        }
+        const renderTimePanel = () => {
+          const panel = document.createElement('div')
+          panel.className = 'dm-booking-picker-panel'
+          const grid = document.createElement('div')
+          grid.className = 'dm-booking-time-grid'
+          const slots = availability.slots || []
+          if (!inputs.preferred_date.value) {
+            const empty = document.createElement('p')
+            empty.className = 'dm-booking-empty'
+            empty.textContent = 'Selecciona una fecha disponible.'
+            panel.appendChild(empty)
+            return panel
+          }
+          if (!slots.length) {
+            const empty = document.createElement('p')
+            empty.className = 'dm-booking-empty'
+            empty.textContent = 'No hay horarios disponibles para este día.'
+            panel.appendChild(empty)
+            return panel
+          }
+          slots.forEach((slot) => {
+            const value = slot.time
+            const btn = document.createElement('button')
+            btn.type = 'button'
+            btn.className = 'dm-booking-time-option'
+            btn.textContent = slot.label ? formatTimeLabel(slot.time) : formatTimeLabel(value)
+            btn.dataset.selected = input.value === value ? 'true' : 'false'
+            btn.addEventListener('click', () => {
+              input.value = value
+              setText()
+              closePicker()
+              trigger.focus()
+            })
+            grid.appendChild(btn)
+          })
+          panel.appendChild(grid)
+          return panel
+        }
+        trigger.addEventListener('click', () => openPicker(kind))
+        setText()
+        wrap.appendChild(labelNode)
+        wrap.appendChild(trigger)
+        wrap.appendChild(input)
+        wrap.appendChild(panelSlot)
+        inputs[name] = input
+        return { node: wrap, input, setOpen, setText, refresh }
+      }
+      const addField = (name, label, type, required) => {
+        const wrap = document.createElement('label')
+        wrap.className = 'dm-booking-field'
+        wrap.textContent = label
+        const input = document.createElement('input')
+        input.name = name
+        input.type = type
+        input.required = required
+        wrap.appendChild(input)
+        inputs[name] = input
+        return wrap
+      }
+      const dateField = makePickerField('preferred_date', 'Fecha preferida', 'date')
+      const timeField = makePickerField('preferred_time', 'Hora preferida', 'time')
+      scheduleGrid.appendChild(dateField.node)
+      scheduleGrid.appendChild(timeField.node)
+      appointmentSelect.addEventListener('change', () => {
+        inputs.preferred_date.value = ''
+        inputs.preferred_time.value = ''
+        dateField.setText()
+        timeField.setText()
+        closePicker()
+        fetchAvailability('')
+      })
+
+      const customerFields = [
+        ['name', 'Nombre completo', 'text', true],
+        ['phone', 'WhatsApp', 'tel', true],
+        ['email', 'Correo', 'email', false],
+      ].map((field) => addField(...field))
+      const messageWrap = document.createElement('label')
+      messageWrap.className = 'dm-booking-field'
+      messageWrap.textContent = 'Mensaje'
+      const message = document.createElement('textarea')
+      message.name = 'message'
+      message.placeholder = 'Cuéntanos qué necesitas coordinar'
+      inputs.message = message
+      messageWrap.appendChild(message)
+      const honey = document.createElement('input')
+      honey.name = 'honeypot'
+      honey.tabIndex = -1
+      honey.autocomplete = 'off'
+      honey.style.display = 'none'
+
+      card.appendChild(title)
+      if (context.childElementCount) card.appendChild(context)
+      appendEditNode(appointmentWrap)
+      appendEditNode(availabilityNote)
+      appendEditNode(instructionsBox)
+      appendEditNode(scheduleGrid)
+      customerFields.forEach(appendEditNode)
+      appendEditNode(messageWrap)
+      card.appendChild(honey)
+      card.appendChild(reviewBox)
+      card.appendChild(status)
+      card.appendChild(success)
+
+      const actionsRow = document.createElement('div')
+      actionsRow.className = 'dm-booking-actions'
+      const cancel = document.createElement('button')
+      cancel.type = 'button'
+      cancel.className = 'dm-booking-cancel'
+      cancel.textContent = 'Cancelar'
+      const submit = document.createElement('button')
+      submit.type = 'submit'
+      submit.className = 'dm-booking-submit'
+      submit.textContent = 'Revisar cita'
+      actionsRow.appendChild(cancel)
+      actionsRow.appendChild(submit)
+      card.appendChild(actionsRow)
+
+      const cleanupBooking = () => {
+        document.removeEventListener('keydown', onBookingKey)
+        overlay.remove()
+      }
+      const onBookingKey = (event) => {
+        if (event.key === 'Escape') {
+          if (activePicker) closePicker()
+          else cleanupBooking()
+        }
+      }
+      const buildPayload = () => ({
+        appointment_type: inputs.appointment_type.value,
+        preferred_date: inputs.preferred_date.value,
+        preferred_time: inputs.preferred_time.value,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Santo_Domingo',
+        name: inputs.name.value.trim(),
+        phone: inputs.phone.value.trim(),
+        email: inputs.email.value.trim(),
+        message: inputs.message.value.trim(),
+        honeypot: honey.value,
+        source_url: location.href,
+      })
+      const validateBooking = (payload) => {
+        if (!payload.appointment_type) return 'Selecciona un tipo de cita'
+        if (requireDate && !payload.preferred_date) return 'Fecha preferida es requerida'
+        if (payload.preferred_date && payload.preferred_date < minDate) return 'La fecha preferida debe ser futura'
+        if (requireTime && !payload.preferred_time) return 'Hora preferida es requerida'
+        if (!payload.name) return 'Nombre completo es requerido'
+        if (!payload.phone) return 'WhatsApp es requerido'
+        return ''
+      }
+      const setReviewMode = (next) => {
+        reviewMode = next
+        title.textContent = reviewMode ? 'Resumen de tu cita' : 'Agendar una cita'
+        editNodes.forEach((node) => { node.style.display = reviewMode ? 'none' : '' })
+        reviewBox.style.display = reviewMode ? 'flex' : 'none'
+        cancel.textContent = reviewMode ? 'Volver a editar' : 'Cancelar'
+        submit.textContent = reviewMode ? 'Confirmar cita' : 'Revisar cita'
+        if (!reviewMode) {
+          reviewBox.innerHTML = ''
+          status.textContent = ''
+        }
+      }
+      const renderReview = (payload) => {
+        reviewBox.innerHTML = ''
+        const appointment = document.createElement('div')
+        appointment.className = 'dm-booking-review-item'
+        const typeDetail = selectedAppointmentDetail()
+        const deliveryMode = appointmentDeliveryModeLabel(typeDetail?.delivery_mode)
+        const instructionLines = [
+          deliveryMode ? `Modalidad: ${escapeHtml(deliveryMode)}` : '',
+          typeDetail?.location_text ? `Lugar: ${escapeHtml(typeDetail.location_text)}` : '',
+          typeDetail?.customer_instructions ? `Indicaciones: ${escapeHtml(typeDetail.customer_instructions)}` : '',
+        ].filter(Boolean).join('<br>')
+
+        appointment.innerHTML = `<strong>${escapeHtml(marker.name || 'Ficha dinámica')}</strong><br>Tipo de cita: ${escapeHtml(payload.appointment_type)}${payload.preferred_date ? `<br>Fecha preferida: ${escapeHtml(formatDateLabel(payload.preferred_date))}` : ''}${payload.preferred_time ? `<br>Hora preferida: ${escapeHtml(formatTimeLabel(payload.preferred_time))}` : ''}${instructionLines ? `<br>${instructionLines}` : ''}`
+        reviewBox.appendChild(appointment)
+        const customer = document.createElement('div')
+        customer.className = 'dm-booking-review-item'
+        customer.innerHTML = `<strong>${escapeHtml(payload.name)}</strong><br>${escapeHtml(payload.phone)}${payload.email ? `<br>${escapeHtml(payload.email)}` : ''}${payload.message ? `<br>${escapeHtml(payload.message)}` : ''}`
+        reviewBox.appendChild(customer)
+        const note = document.createElement('p')
+        note.className = 'dm-booking-note'
+        note.textContent = 'La cita queda pendiente de confirmación por el vendedor.'
+        reviewBox.appendChild(note)
+      }
+      cancel.addEventListener('click', () => {
+        if (reviewMode) setReviewMode(false)
+        else cleanupBooking()
+      })
+      overlay.addEventListener('click', (event) => { if (event.target === overlay) cleanupBooking() })
+      card.addEventListener('click', (event) => {
+        if (activePicker && !(event.target instanceof Element && event.target.closest('.dm-booking-picker-field'))) closePicker()
+      })
+      document.addEventListener('keydown', onBookingKey)
+      card.addEventListener('submit', async (event) => {
+        event.preventDefault()
+        status.textContent = ''
+        success.textContent = ''
+        const payload = buildPayload()
+        const formError = validateBooking(payload)
+        if (formError) {
+          status.textContent = formError
+          return
+        }
+        if (!reviewMode) {
+          renderReview(payload)
+          setReviewMode(true)
+          card.scrollTop = 0
+          return
+        }
+        submit.disabled = true
+        submit.textContent = 'Enviando...'
+        try {
+          const response = await fetch(`${API_BASE}/view/${encodeURIComponent(slug)}/markers/${encodeURIComponent(marker.id)}/booking`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+          const data = await response.json().catch(() => ({}))
+          if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo enviar la solicitud')
+          const typeDetail = selectedAppointmentDetail()
+          const sentInstruction = typeDetail?.customer_instructions
+            ? ` Indicaciones registradas: ${typeDetail.customer_instructions}`
+            : ''
+          success.textContent = `${data.data?.message || 'Tu cita fue recibida. El vendedor confirmará disponibilidad contigo.'}${sentInstruction}`
+          Object.values(inputs).forEach((input) => { input.disabled = true })
+          submit.remove()
+        } catch (error) {
+          status.textContent = friendlyRequestError(error, 'No pudimos enviar la cita. Inténtalo nuevamente.')
+          submit.disabled = false
+          submit.textContent = 'Confirmar cita'
+        }
+      })
+      overlay.appendChild(card)
+      document.body.appendChild(overlay)
+      fetchAvailability('')
+      inputs.appointment_type.focus()
     }
     actionDefinitions = []
     if (contactAction?.enabled && contactAction?.phone) {
@@ -851,6 +1418,9 @@ async function init() {
       actionDefinitions.push(['external_link', actions.external_link.label || 'Ver enlace', 'dm-action-link', () => {
         window.open(safeUrl(actions.external_link.url), '_blank', 'noopener')
       }, icons.link])
+    }
+    if (actions.booking?.enabled) {
+      actionDefinitions.push(['booking', actions.booking.label || 'Agendar', 'dm-action-booking', showBookingRequestModal, icons.booking])
     }
     offerTarget = offer.active && ['contact_whatsapp', 'external_link'].includes(offerCtaConfig?.target) ? offerCtaConfig.target : ''
     if (offerTarget && offerCtaSlot) {
