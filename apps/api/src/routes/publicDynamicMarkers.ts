@@ -29,6 +29,7 @@ type MarkerRow = {
   media_json: string | null
   actions_json: string | null
   custom_fields_json: string | null
+  booking_calendar_id: string | null
   updated_at: string
 }
 
@@ -146,6 +147,19 @@ function publicActions(value: string | null): Record<string, unknown> {
     }
   }
 
+  const booking = actions.booking as Record<string, unknown> | undefined
+  if (booking && typeof booking === 'object' && booking.enabled === true) {
+    cleaned.booking = {
+      enabled: true,
+      label: cleanText(booking.label, 80) || 'Agendar',
+      appointment_types: Array.isArray(booking.appointment_types)
+        ? booking.appointment_types.map((item) => cleanText(item, 60)).filter(Boolean).slice(0, 12)
+        : [],
+      require_date: booking.require_date !== false,
+      require_time: booking.require_time !== false,
+    }
+  }
+
   const offerCta = actions.offer_cta as Record<string, unknown> | undefined
   if (offerCta && typeof offerCta === 'object') {
     const target = cleanText(offerCta.target, 40)
@@ -160,6 +174,9 @@ function publicActions(value: string | null): Record<string, unknown> {
 }
 
 function markerPayload(marker: MarkerRow) {
+  const actions = publicActions(marker.actions_json)
+  if (!marker.booking_calendar_id) delete actions.booking
+
   return {
     id: marker.id,
     page_id: marker.page_id,
@@ -184,7 +201,8 @@ function markerPayload(marker: MarkerRow) {
     sizes: publicItems(marker.sizes_json),
     measurements: publicItems(marker.measurements_json),
     media: publicItems(marker.media_json),
-    actions: publicActions(marker.actions_json),
+    actions,
+    has_booking: Boolean(marker.booking_calendar_id && actions.booking),
     custom_fields: publicCustomFields(marker.custom_fields_json),
     updated_at: marker.updated_at,
   }

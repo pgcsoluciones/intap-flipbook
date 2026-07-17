@@ -51,6 +51,7 @@ type UpdateInput = {
   media_json?: unknown
   actions_json?: unknown
   custom_fields_json?: unknown
+  booking_calendar_id?: unknown
   target_kind?: unknown
 }
 
@@ -82,6 +83,7 @@ type DynamicMarkerRow = {
   media_json: string
   actions_json: string
   custom_fields_json: string
+  booking_calendar_id: string | null
   cloned_from_marker_id: string | null
   created_at: string
   updated_at: string
@@ -104,6 +106,8 @@ type DynamicMarkerCatalogRow = {
   price_minor: number | null
   currency: string | null
   availability: string | null
+  booking_calendar_id: string | null
+  booking_calendar_name: string | null
   updated_at: string
 }
 
@@ -135,6 +139,7 @@ const MARKER_COLUMNS = `
   media_json,
   actions_json,
   custom_fields_json,
+  booking_calendar_id,
   cloned_from_marker_id,
   created_at,
   updated_at
@@ -211,6 +216,13 @@ function cleanCatalogLimit(value: unknown): number {
   return Math.min(Math.max(parsed, 1), 50)
 }
 
+function cleanCatalogBool(value: unknown): boolean | null {
+  if (value === undefined || value === null || value === '') return null
+  if (value === 'true') return true
+  if (value === 'false') return false
+  throw new Error('has_booking debe ser true o false')
+}
+
 function cleanCatalogCursor(value: unknown) {
   const raw = typeof value === 'string' ? value.trim() : ''
   if (!raw) return { updatedAt: '', id: '' }
@@ -226,6 +238,39 @@ function cleanCatalogCursor(value: unknown) {
 
   if (!valid) throw new Error('Cursor de fichas dinamicas invalido')
   return { updatedAt, id }
+}
+
+async function validateOwnedCalendar(db: D1Database, calendarId: string, userId: string) {
+  const calendar = await db.prepare(
+    `SELECT
+       c.id,
+       CASE WHEN EXISTS (
+         SELECT 1
+         FROM appointment_calendar_weekly_windows ww
+         WHERE ww.calendar_id = c.id
+           AND ww.active = 1
+           AND ww.start_time < ww.end_time
+       ) THEN 1 ELSE 0 END AS has_active_windows,
+       CASE WHEN EXISTS (
+         SELECT 1
+         FROM appointment_calendar_types ct
+         WHERE ct.calendar_id = c.id
+           AND ct.active = 1
+           AND TRIM(COALESCE(ct.label, '')) <> ''
+       ) THEN 1 ELSE 0 END AS has_active_types
+     FROM appointment_calendars c
+     WHERE c.id = ? AND c.user_id = ?`,
+  )
+    .bind(calendarId, userId)
+    .first<{ id: string; has_active_windows: number; has_active_types: number }>()
+
+  if (!calendar) throw new Error('Agenda no encontrada para este tenant')
+  if (!calendar.has_active_windows) {
+    throw new Error('La Agenda debe tener al menos un horario activo antes de vincularla.')
+  }
+  if (!calendar.has_active_types) {
+    throw new Error('La Agenda debe tener al menos un tipo de cita activo antes de vincularla.')
+  }
 }
 
 function parseJsonInput(value: unknown, field: string, maxLength = 50000): unknown {
@@ -435,6 +480,23 @@ function cleanActions(value: unknown): string {
   } else if (actions.whatsapp !== undefined) {
     cleaned.contact_whatsapp = cleanContactWhatsAppAction(actions.whatsapp, 'actions_json.whatsapp')
   }
+  if (actions.booking !== undefined) {
+    const booking = requireObjectProperty(actions.booking, 'actions_json.booking')
+    const appointmentTypes = Array.isArray(booking.appointment_types)
+      ? booking.appointment_types
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean)
+        .slice(0, 12)
+      : []
+    const enabled = typeof booking.enabled === 'boolean' ? booking.enabled : false
+    cleaned.booking = {
+      enabled,
+      label: typeof booking.label === 'string' && booking.label.trim() ? booking.label.trim() : 'Agendar',
+      appointment_types: Array.from(new Set(appointmentTypes)),
+      require_date: typeof booking.require_date === 'boolean' ? booking.require_date : true,
+      require_time: typeof booking.require_time === 'boolean' ? booking.require_time : true,
+    }
+  }
   if (actions.external_link !== undefined) {
     const externalLink = requireObjectProperty(actions.external_link, 'actions_json.external_link')
     const enabled = typeof externalLink.enabled === 'boolean' ? externalLink.enabled : false
@@ -471,6 +533,17 @@ function cleanActions(value: unknown): string {
   }
 
   return JSON.stringify(cleaned)
+}
+
+function bookingEnabledFromActionsJson(value: unknown): boolean {
+  const actions = parseJsonObjectInput(value, 'actions_json')
+  const booking = actions.booking
+  return Boolean(
+    booking
+      && typeof booking === 'object'
+      && !Array.isArray(booking)
+      && (booking as Record<string, unknown>).enabled === true,
+  )
 }
 
 function cleanCustomFields(value: unknown): string {
@@ -511,6 +584,26 @@ function cloneCustomFieldsWithNewIds(value: unknown): string {
   })))
 }
 
+function destinationBookingAction(target: DynamicMarkerRow): Record<string, unknown> | undefined {
+  const cleaned = JSON.parse(cleanActions(target.actions_json)) as Record<string, unknown>
+  const booking = cleaned.booking && typeof cleaned.booking === 'object' && !Array.isArray(cleaned.booking)
+    ? cleaned.booking as Record<string, unknown>
+    : undefined
+
+  if (!target.booking_calendar_id) {
+    return {
+      ...(booking ?? {}),
+      enabled: false,
+      label: typeof booking?.label === 'string' && booking.label.trim() ? booking.label : 'Agendar',
+      appointment_types: Array.isArray(booking?.appointment_types) ? booking.appointment_types : [],
+      require_date: typeof booking?.require_date === 'boolean' ? booking.require_date : true,
+      require_time: typeof booking?.require_time === 'boolean' ? booking.require_time : true,
+    }
+  }
+
+  return booking
+}
+
 function cleanReuseOfferCta(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined) return undefined
   const offerCta = requireObjectProperty(value, 'actions_json.offer_cta')
@@ -549,7 +642,7 @@ function normalizeOfferCtaForFinalActions(actions: Record<string, unknown>) {
   const target = typeof current.target === 'string' ? current.target : ''
 
   if (!target) return
-  if (!['contact_whatsapp', 'external_link', 'share'].includes(target) || !actionIsEnabled(actions, target)) {
+  if (target === 'booking' || !['contact_whatsapp', 'external_link', 'share'].includes(target) || !actionIsEnabled(actions, target)) {
     actions.offer_cta = {
       ...current,
       target: '',
@@ -573,7 +666,8 @@ function buildReuseActions(source: DynamicMarkerRow, target: DynamicMarkerRow): 
   const offerCta = cleanReuseOfferCta(rawSourceActions.offer_cta)
   if (offerCta) combined.offer_cta = offerCta
 
-
+  const booking = destinationBookingAction(target)
+  if (booking) combined.booking = booking
 
   normalizeOfferCtaForFinalActions(combined)
   return JSON.stringify(combined)
@@ -650,12 +744,14 @@ dynamicMarkers.get('/catalog', async (c) => {
   const userId = c.get('user').sub
   const limit = cleanCatalogLimit(c.req.query('limit'))
 
+  let hasBooking: boolean | null = null
   let query: string | null = null
   let publicationId: string | null = null
   let status: DynamicMarkerStatus | null = null
   let cursor: { updatedAt: string; id: string }
 
   try {
+    hasBooking = cleanCatalogBool(c.req.query('has_booking'))
     query = cleanText(c.req.query('q'), 'q', 120)
     publicationId = cleanUuidText(c.req.query('publication_id'), 'publication_id')
     const rawStatus = c.req.query('status')
@@ -689,6 +785,8 @@ dynamicMarkers.get('/catalog', async (c) => {
     binds.push(publicationId)
   }
 
+  if (hasBooking === true) filters.push('dm.booking_calendar_id IS NOT NULL')
+  if (hasBooking === false) filters.push('dm.booking_calendar_id IS NULL')
 
   if (cursor.updatedAt) {
     filters.push('(dm.updated_at < ? OR (dm.updated_at = ? AND dm.id < ?))')
@@ -719,6 +817,8 @@ dynamicMarkers.get('/catalog', async (c) => {
        dm.price_minor,
        dm.currency,
        dm.availability,
+       dm.booking_calendar_id,
+       ac.name AS booking_calendar_name,
        dm.updated_at
      FROM dynamic_markers dm
      JOIN publications p
@@ -726,6 +826,9 @@ dynamicMarkers.get('/catalog', async (c) => {
      LEFT JOIN pages pg
        ON pg.id = dm.page_id
       AND pg.publication_id = dm.publication_id
+     LEFT JOIN appointment_calendars ac
+       ON ac.id = dm.booking_calendar_id
+      AND ac.user_id = dm.user_id
      WHERE ${filters.join(' AND ')}
      ORDER BY dm.updated_at DESC, dm.id DESC
      LIMIT ?`,
@@ -752,6 +855,12 @@ dynamicMarkers.get('/catalog', async (c) => {
     currency: row.currency,
     availability: row.availability,
     cover_url: row.publication_cover_url || row.first_page_image_url || null,
+    booking_calendar: row.booking_calendar_id
+      ? {
+        id: row.booking_calendar_id,
+        name: row.booking_calendar_name,
+      }
+      : null,
     updated_at: row.updated_at,
   }))
 
@@ -967,6 +1076,7 @@ dynamicMarkers.put('/:id', async (c) => {
   let nextName = existing.name
   let nextStatus = existing.status
   let nextActionsJson = existing.actions_json
+  let nextBookingCalendarId = existing.booking_calendar_id
 
   try {
     if (hasOwn(body, 'name')) {
@@ -996,6 +1106,24 @@ dynamicMarkers.put('/:id', async (c) => {
       addUpdate('actions_json', nextActionsJson)
     }
     if (hasOwn(body, 'custom_fields_json')) addUpdate('custom_fields_json', cleanCustomFields(body.custom_fields_json))
+    if (hasOwn(body, 'booking_calendar_id')) {
+      nextBookingCalendarId = cleanUuidText(body.booking_calendar_id, 'booking_calendar_id')
+    }
+
+    const bookingEnabled = bookingEnabledFromActionsJson(nextActionsJson)
+    if (nextBookingCalendarId && !bookingEnabled) {
+      if (hasOwn(body, 'actions_json') && !hasOwn(body, 'booking_calendar_id') && existing.booking_calendar_id) {
+        throw new Error('Para desactivar Agendar, primero desvincula la Agenda enviando booking_calendar_id: null')
+      }
+      throw new Error('Activa Agendar antes de vincular una Agenda')
+    }
+
+    if (hasOwn(body, 'booking_calendar_id')) {
+      if (nextBookingCalendarId && nextBookingCalendarId !== existing.booking_calendar_id) {
+        await validateOwnedCalendar(c.env.DB, nextBookingCalendarId, userId)
+      }
+      addUpdate('booking_calendar_id', nextBookingCalendarId)
+    }
     if (hasOwn(body, 'status')) {
       nextStatus = cleanStatus(body.status)
       addUpdate('status', nextStatus)

@@ -10,6 +10,7 @@ import unitRoutes from './routes/units'
 import svgRoutes from './routes/svg'
 import dynamicMarkerRoutes from './routes/dynamicMarkers'
 import publicDynamicMarkerRoutes, { publicMarkersForPublication } from './routes/publicDynamicMarkers'
+import appointmentRoutes from './routes/appointmentCalendars'
 import { jwtMiddleware } from './middleware/jwt'
 import { getUserPlan, getPlanUsage } from './lib/plans'
 import type { AuthVariables } from './middleware/jwt'
@@ -45,7 +46,7 @@ function isPagesDevOrigin(origin: string): boolean {
 }
 
 function isViewerWritePath(path: string): boolean {
-  return /^\/view\/[^/]+\/(track|event|response)$/.test(path)
+  return /^\/view\/[^/]+\/(track|event|response)$/.test(path) || /^\/view\/[^/]+\/markers\/[^/]+\/booking$/.test(path)
 }
 
 app.use('*', async (c, next) => {
@@ -101,6 +102,7 @@ app.route('/api/publications', publicationRoutes)
 // Otherwise the public read-only upload asset route can be intercepted.
 app.route('/api/upload', uploadRoutes)
 app.route('/api/dynamic-markers', dynamicMarkerRoutes)
+app.route('/', appointmentRoutes)
 app.route('/api', pageRoutes)
 app.route('/admin', adminRoutes)
 app.route('/admin/svg', svgRoutes)
