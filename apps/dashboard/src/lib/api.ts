@@ -288,6 +288,68 @@ export type ReuseDynamicMarkerInput = {
   reference?: string | null
 }
 
+export type LeadIntakeStatus = 'new' | 'contacted' | 'quoted' | 'won' | 'lost'
+export type LeadIntakeRequestType = 'quote' | 'booking'
+
+export type LeadIntake = {
+  id: string
+  tenant_id: string
+  publication_id: string
+  marker_id: string
+  request_type: LeadIntakeRequestType
+  status: LeadIntakeStatus
+  customer_name: string
+  customer_phone: string
+  customer_email: string | null
+  customer_message: string | null
+  marker_snapshot_json: string
+  selection_json: string | null
+  source_url: string | null
+  internal_note: string | null
+  crm_contact_id: string | null
+  crm_lead_id: string | null
+  booking_id: string | null
+  booking_calendar_id?: string | null
+  booking_local_date?: string | null
+  booking_local_time?: string | null
+  booking_appointment_type?: string | null
+  booking_status?: string | null
+  booking_delivery_mode?: 'in_person' | 'video_call' | 'phone_call' | 'other' | null
+  booking_location?: string | null
+  booking_customer_instructions?: string | null
+  read_at?: string | null
+  created_at: string
+  updated_at: string
+  handled_at: string | null
+  marker_name?: string | null
+  marker_reference?: string | null
+  publication_title?: string | null
+}
+
+export type LeadIntakeCustomerMessageEvent =
+  | 'quote_sent'
+  | 'booking_confirmed'
+  | 'booking_rejected'
+  | 'booking_cancelled'
+  | 'booking_rescheduled'
+
+export type LeadIntakeCustomerMessageStatus = 'pending' | 'opened' | 'sent'
+
+export type LeadIntakeCustomerMessage = {
+  id: string
+  tenant_id: string
+  lead_intake_id: string
+  event_type: LeadIntakeCustomerMessageEvent
+  channel: 'whatsapp'
+  message_text: string
+  note_text: string | null
+  status: LeadIntakeCustomerMessageStatus
+  opened_at: string | null
+  sent_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export const api = {
   auth: {
     register: (email: string, password: string, name?: string, slug?: string) =>
@@ -537,6 +599,76 @@ export const api = {
       request<{ success: true; data: AppointmentBooking }>(`/api/appointments/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
     reschedule: (id: string, body: { local_date: string; local_time: string; appointment_type?: string }) =>
       request<{ success: true; data: AppointmentBooking }>(`/api/appointments/${encodeURIComponent(id)}/reschedule`, { method: 'PATCH', body: JSON.stringify(body) }),
+  },
+  leadIntakes: {
+    list: (params: {
+      publication_id?: string
+      status?: LeadIntakeStatus | ''
+      request_type?: LeadIntakeRequestType | ''
+      q?: string
+      limit?: number
+      cursor?: string | null
+    } = {}) => {
+      const qs = new URLSearchParams()
+      if (params.publication_id) qs.set('publication_id', params.publication_id)
+      if (params.status) qs.set('status', params.status)
+      if (params.request_type) qs.set('request_type', params.request_type)
+      if (params.q) qs.set('q', params.q)
+      if (params.limit) qs.set('limit', String(params.limit))
+      if (params.cursor) qs.set('cursor', params.cursor)
+
+      return request<{
+        success: true
+        data: LeadIntake[]
+        page: {
+          limit: number
+          has_more: boolean
+          next_cursor: string | null
+        }
+      }>(`/api/lead-intakes${qs.size ? `?${qs}` : ''}`)
+    },
+    summary: () =>
+      request<{
+        success: true
+        data: {
+          total: number
+          quotes: number
+          bookings: number
+        }
+      }>('/api/lead-intakes/summary'),
+    markRead: (id: string) =>
+      request<{ success: true; data: { id: string; read_at: string | null } }>(
+        `/api/lead-intakes/${encodeURIComponent(id)}/read`,
+        { method: 'PATCH' },
+      ),
+    customerMessages: {
+      list: (id: string) =>
+        request<{ success: true; data: LeadIntakeCustomerMessage[] }>(
+          `/api/lead-intakes/${encodeURIComponent(id)}/customer-messages`,
+        ),
+      createDraft: (id: string, event_type: LeadIntakeCustomerMessageEvent) =>
+        request<{ success: true; data: LeadIntakeCustomerMessage }>(
+          `/api/lead-intakes/${encodeURIComponent(id)}/customer-messages`,
+          { method: 'POST', body: JSON.stringify({ event_type }) },
+        ),
+      update: (
+        id: string,
+        messageId: string,
+        body: {
+          message_text?: string
+          note_text?: string
+          status?: LeadIntakeCustomerMessageStatus
+        },
+      ) =>
+        request<{ success: true; data: LeadIntakeCustomerMessage }>(
+          `/api/lead-intakes/${encodeURIComponent(id)}/customer-messages/${encodeURIComponent(messageId)}`,
+          { method: 'PATCH', body: JSON.stringify(body) },
+        ),
+    },
+    get: (id: string) =>
+      request<{ success: true; data: LeadIntake }>(`/api/lead-intakes/${encodeURIComponent(id)}`),
+    update: (id: string, body: { status?: LeadIntakeStatus; internal_note?: string }) =>
+      request<{ success: true; data: LeadIntake }>(`/api/lead-intakes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
   },
   adminSvg: {
     list: (params?: { family?: string; status?: string; q?: string }) => {

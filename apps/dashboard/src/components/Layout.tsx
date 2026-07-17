@@ -8,8 +8,9 @@ function NavIcon({ name }: { name: string }) {
   if (name === 'home') return <svg {...props}><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>
   if (name === 'book') return <svg {...props}><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
   if (name === 'database') return <svg {...props}><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
-  if (name === 'calendar') return <svg {...props}><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4"/><path d="M8 3v4"/><path d="M3 10h18"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/></svg>
   if (name === 'mail') return <svg {...props}><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 7 10-7"/></svg>
+  if (name === 'clipboard') return <svg {...props}><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a3 3 0 016 0v1"/><path d="M8.5 10h7"/><path d="M8.5 14h7"/><path d="M8.5 18h4"/></svg>
+  if (name === 'calendar') return <svg {...props}><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4"/><path d="M8 3v4"/><path d="M3 10h18"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/></svg>
   if (name === 'grid') return <svg {...props}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
   if (name === 'image') return <svg {...props}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
   if (name === 'play') return <svg {...props}><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4V8z" fill="currentColor" stroke="none"/></svg>
@@ -52,8 +53,9 @@ const NAV_ITEMS = [
   { to: '/dashboard',    icon: 'home',      label: 'Inicio' },
   { to: '/publications', icon: 'book',      label: 'Mis Flipbooks' },
   { to: '/dynamic-data', icon: 'database',  label: 'Data Dinámica' },
-  { to: '/agenda',       icon: 'calendar',  label: 'Agenda' },
   { to: '/responses',    icon: 'mail',      label: 'Respuestas' },
+  { to: '/requests',     icon: 'clipboard', label: 'Solicitudes' },
+  { to: '/agenda',       icon: 'calendar', label: 'Agenda' },
   { to: '/templates',    icon: 'grid',      label: 'Plantillas' },
   { to: '/resources',    icon: 'image',     label: 'Recursos' },
   { to: '/tutorials',    icon: 'play',      label: 'Tutoriales' },
@@ -117,14 +119,18 @@ function NotifDropdown({
   onMarkRead,
   onClose,
   placement = 'up',
+  requestCount = 0,
+  onOpenRequests,
 }: {
   notifications: any[]
   onMarkRead: (id: number | string) => void
   onClose: () => void
   placement?: 'up' | 'down'
+  requestCount?: number
+  onOpenRequests?: () => void
 }) {
   const [modalNotif, setModalNotif] = useState<any>(null)
-  const visible = notifications.slice(0, 5)
+  const visible = notifications.slice(0, requestCount > 0 ? 4 : 5)
 
   function handleItemClick(n: any) {
     if (!n.read) onMarkRead(n.id)
@@ -149,6 +155,31 @@ function NotifDropdown({
           Notificaciones
           <button onClick={onClose} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 16, lineHeight: 1 }}>×</button>
         </div>
+        {requestCount > 0 && (
+          <button
+            type="button"
+            onClick={onOpenRequests}
+            style={{
+              width: '100%',
+              border: 'none',
+              borderBottom: '1px solid #ddd6fe',
+              background: '#f5f3ff',
+              color: '#312e81',
+              padding: '10px 14px',
+              textAlign: 'left',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            <strong style={{ display: 'block', fontSize: 13 }}>
+              {requestCount} solicitud{requestCount === 1 ? '' : 'es'} nueva{requestCount === 1 ? '' : 's'}
+            </strong>
+            <span style={{ display: 'block', marginTop: 3, fontSize: 12 }}>
+              Abrir Solicitudes para gestionarlas.
+            </span>
+          </button>
+        )}
+
         {visible.length === 0 ? (
           <div style={{ padding: '1.5rem', textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Sin notificaciones</div>
         ) : (
@@ -183,6 +214,7 @@ export default function Layout({ children }: Props) {
   const [user, setUser] = useState<any>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [notifications, setNotifications] = useState<any[]>([])
+  const [newRequestCount, setNewRequestCount] = useState(0)
   const [notifOpen, setNotifOpen] = useState(false)
   const [isImpersonating] = useState(!!localStorage.getItem('admin_token'))
 
@@ -208,9 +240,20 @@ export default function Layout({ children }: Props) {
         navigate('/login')
       })
 
-    api.notifications.list()
-      .then((res) => setNotifications(res.data ?? []))
-      .catch(() => {})
+    const refreshOperationalSignals = () => {
+      api.notifications.list()
+        .then((res) => setNotifications(res.data ?? []))
+        .catch(() => {})
+
+      api.leadIntakes.summary()
+        .then((res) => setNewRequestCount(Number(res.data?.total) || 0))
+        .catch(() => setNewRequestCount(0))
+    }
+
+    refreshOperationalSignals()
+    const timer = window.setInterval(refreshOperationalSignals, 60000)
+
+    return () => window.clearInterval(timer)
   }, [navigate])
 
   async function handleMarkRead(id: number | string) {
@@ -227,6 +270,7 @@ export default function Layout({ children }: Props) {
   }
 
   const unreadCount = notifications.filter((n) => !n.read).length
+  const visibleNotificationCount = unreadCount + newRequestCount
 
   // En móvil el sidebar es un cajón deslizable; en escritorio queda fijo.
   const sidebarStyle: React.CSSProperties = isMobile
@@ -247,12 +291,17 @@ export default function Layout({ children }: Props) {
           <button style={s.hamburger} onClick={() => setDrawerOpen(true)} aria-label="Abrir menú">☰</button>
           <span style={s.mobileLogo}>📖 Intap Flipbook</span>
           <div style={{ marginLeft: 'auto', position: 'relative' }}>
-            <BellButton count={unreadCount} onClick={() => setNotifOpen((o) => !o)} />
+            <BellButton count={visibleNotificationCount} onClick={() => setNotifOpen((o) => !o)} />
             {notifOpen && (
               <NotifDropdown
                 notifications={notifications}
                 onMarkRead={handleMarkRead}
                 onClose={() => setNotifOpen(false)}
+                requestCount={newRequestCount}
+                onOpenRequests={() => {
+                  setNotifOpen(false)
+                  navigate('/requests')
+                }}
               />
             )}
           </div>
@@ -263,12 +312,17 @@ export default function Layout({ children }: Props) {
       {!isMobile && (
         <div style={{ position: 'fixed', top: isImpersonating ? 36 : 0, right: 0, height: 52, display: 'flex', alignItems: 'center', paddingRight: 20, zIndex: 80 }}>
           <div style={{ position: 'relative' }}>
-            <BellButton count={unreadCount} onClick={() => setNotifOpen((o) => !o)} color="#4f46e5" />
+            <BellButton count={visibleNotificationCount} onClick={() => setNotifOpen((o) => !o)} color="#4f46e5" />
             {notifOpen && (
               <NotifDropdown
                 notifications={notifications}
                 onMarkRead={handleMarkRead}
                 onClose={() => setNotifOpen(false)}
+                requestCount={newRequestCount}
+                onOpenRequests={() => {
+                  setNotifOpen(false)
+                  navigate('/requests')
+                }}
                 placement="down"
               />
             )}
@@ -300,6 +354,11 @@ export default function Layout({ children }: Props) {
             >
               <span style={s.navIcon}><NavIcon name={item.icon} /></span>
               <span>{item.label}</span>
+              {item.to === '/requests' && newRequestCount > 0 && (
+                <span style={s.navBadge}>
+                  {newRequestCount > 99 ? '99+' : newRequestCount}
+                </span>
+              )}
             </NavLink>
           ))}
           {user?.is_admin ? (

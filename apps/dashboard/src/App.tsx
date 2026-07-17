@@ -14,6 +14,7 @@ import PlanPage from './pages/PlanPage'
 import ProfilePage from './pages/ProfilePage'
 import TenantTemplates  from './pages/TenantTemplates'
 import TenantResponses  from './pages/TenantResponses'
+import TenantRequests   from './pages/TenantRequests'
 import TenantAgenda     from './pages/TenantAgenda'
 import TenantResources  from './pages/TenantResources'
 import TenantTutorials  from './pages/TenantTutorials'
@@ -66,6 +67,7 @@ export default function App() {
 
         {/* Páginas tenant */}
         <Route path="/responses"  element={<Layout><TenantResponses /></Layout>} />
+        <Route path="/requests"   element={<Layout><TenantRequests /></Layout>} />
         <Route path="/agenda"     element={<Layout><TenantAgenda /></Layout>} />
         <Route path="/templates"  element={<Layout><TenantTemplates /></Layout>} />
         <Route path="/resources"  element={<Layout><TenantResources /></Layout>} />
