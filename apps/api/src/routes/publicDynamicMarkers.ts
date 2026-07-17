@@ -272,11 +272,11 @@ publicDynamicMarkers.get('/catalog', async (c) => {
 
   const [{ results: filterRows }, { results }] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT category, availability, price_minor
+      `SELECT category, availability, price_minor, currency
        FROM dynamic_markers dm
        WHERE dm.publication_id = ?
          AND dm.status = 'active'`,
-    ).bind(pub.id).all<{ category: string | null; availability: string | null; price_minor: number | null }>(),
+    ).bind(pub.id).all<{ category: string | null; availability: string | null; price_minor: number | null; currency: string | null }>(),
     c.env.DB.prepare(
       `SELECT dm.*, pg.page_number, p.title AS publication_title, p.cover_image_url AS publication_cover_url,
               (
@@ -300,6 +300,9 @@ publicDynamicMarkers.get('/catalog', async (c) => {
   const allRows = filterRows ?? []
   const prices = allRows.map((row) => row.price_minor).filter((value): value is number => typeof value === 'number')
   const rows = results ?? []
+  const priceRangeCurrency = allRows.find((row) => row.currency)?.currency
+    || rows.find((row) => row.currency)?.currency
+    || 'DOP'
   const pageRows = rows.slice(0, limit)
   const last = pageRows[pageRows.length - 1]
 
@@ -334,7 +337,7 @@ publicDynamicMarkers.get('/catalog', async (c) => {
         price_range: {
           min_minor: prices.length ? Math.min(...prices) : null,
           max_minor: prices.length ? Math.max(...prices) : null,
-          currency: pageRows.find((row) => row.currency)?.currency || 'USD',
+          currency: priceRangeCurrency,
         },
       },
     },
