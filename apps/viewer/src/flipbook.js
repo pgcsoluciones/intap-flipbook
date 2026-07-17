@@ -937,6 +937,7 @@ async function init() {
       .dm-catalog-panel{width:min(430px,calc(100vw - 36px));max-height:min(720px,calc(100dvh - 96px));border:1px solid rgba(15,23,42,.12);border-radius:18px;background:#fff;box-shadow:0 24px 70px rgba(15,23,42,.35);display:flex;flex-direction:column;overflow:hidden}
       .dm-catalog-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:16px 16px 12px;border-bottom:1px solid #e5e7eb}.dm-catalog-title{margin:0;font-size:18px;color:#111827}.dm-catalog-copy{margin:3px 0 0;color:#6b7280;font-size:12px;line-height:1.35}.dm-catalog-close{border:1px solid #d1d5db;border-radius:999px;background:#fff;color:#374151;width:32px;height:32px;font-size:20px;line-height:1;cursor:pointer}
       .dm-catalog-form{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 16px;border-bottom:1px solid #f3f4f6}.dm-catalog-form label{display:flex;flex-direction:column;gap:4px;color:#4b5563;font-size:11px;font-weight:850}.dm-catalog-form input,.dm-catalog-form select{min-width:0;border:1px solid #d1d5db;border-radius:10px;background:#fff;color:#111827;padding:9px 10px;font:500 13px Inter,system-ui,sans-serif;box-sizing:border-box}.dm-catalog-form .dm-catalog-wide{grid-column:1/-1}.dm-catalog-search-row{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}.dm-catalog-query{min-width:0}.dm-catalog-actions{display:flex;gap:8px;align-items:flex-end}.dm-catalog-help{grid-column:1/-1;margin:0;color:#4b5563;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-size:12px;line-height:1.35}.dm-catalog-search,.dm-catalog-clear,.dm-catalog-more{border:0;border-radius:10px;padding:10px 12px;font:900 13px Inter,system-ui,sans-serif;cursor:pointer}.dm-catalog-search{background:#4f46e5;color:#fff}.dm-catalog-clear,.dm-catalog-more{background:#f3f4f6;color:#374151}
+      .dm-catalog-summary{margin:0;padding:10px 16px;border-bottom:1px solid #f3f4f6;color:#4b5563;font:800 12px Inter,system-ui,sans-serif}
       .dm-catalog-body{min-height:150px;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:9px}.dm-catalog-state{border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;color:#6b7280;padding:16px;text-align:center;font-size:13px;line-height:1.45}.dm-catalog-error{border-color:#fecaca;background:#fef2f2;color:#991b1b}
       .dm-catalog-item{border:1px solid #e5e7eb;border-radius:12px;background:#fff;padding:9px;display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;text-align:left;color:#111827;cursor:pointer;font-family:Inter,system-ui,sans-serif}.dm-catalog-item:disabled{opacity:.66;cursor:wait}.dm-catalog-cover{width:64px;height:64px;border-radius:10px;background:linear-gradient(135deg,#f9fafb,#e5e7eb);overflow:hidden;display:flex;align-items:center;justify-content:center;color:#6b7280;font-size:10px;font-weight:900}.dm-catalog-cover img{width:100%;height:100%;object-fit:cover;display:block}.dm-catalog-info{min-width:0;display:flex;flex-direction:column;gap:4px}.dm-catalog-row{display:flex;gap:6px;align-items:center;min-width:0}.dm-catalog-name{font-size:13px;font-weight:950;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dm-catalog-badge{border-radius:999px;background:#fff7ed;color:#9a3412;padding:2px 7px;font-size:10px;font-weight:950;white-space:nowrap}.dm-catalog-meta{color:#6b7280;font-size:11.5px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dm-catalog-price{color:#111827;font-size:12px;font-weight:900}
       .dm-catalog-footer{padding:0 16px 14px;display:flex;justify-content:center}.dm-catalog-more:disabled{opacity:.6;cursor:wait}
@@ -985,6 +986,7 @@ async function init() {
     let overlay = null
     let body = null
     let footer = null
+    let summary = null
     let priceRangeHelp = null
     const inputs = {}
 
@@ -1229,9 +1231,25 @@ async function init() {
       footer.appendChild(more)
     }
 
+    function renderSummary() {
+      if (!summary) return
+      const query = state.filters.q.trim()
+      const count = state.items.length
+      if (state.loading && !count) {
+        summary.textContent = 'Buscando fichas...'
+        return
+      }
+      if (query) {
+        summary.textContent = count === 1 ? `1 resultado para "${query}"` : `${count} resultados para "${query}"`
+        return
+      }
+      summary.textContent = count === 1 ? '1 ficha disponible' : `${count} fichas disponibles`
+    }
+
     function renderPanel() {
       if (!overlay) return
       syncInputsFromState()
+      renderSummary()
       renderItems()
       renderFooter()
     }
@@ -1302,6 +1320,12 @@ async function init() {
       searchRow.className = 'dm-catalog-search-row'
       const queryField = makeField('Buscar', 'q')
       queryField.classList.add('dm-catalog-query')
+      inputs.q?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return
+        event.preventDefault()
+        setFiltersFromInputs()
+        fetchCatalog()
+      })
       searchRow.appendChild(queryField)
       const actions = document.createElement('div')
       actions.className = 'dm-catalog-actions'
@@ -1336,11 +1360,14 @@ async function init() {
 
       body = document.createElement('div')
       body.className = 'dm-catalog-body'
+      summary = document.createElement('p')
+      summary.className = 'dm-catalog-summary'
       footer = document.createElement('div')
       footer.className = 'dm-catalog-footer'
 
       panel.appendChild(head)
       panel.appendChild(form)
+      panel.appendChild(summary)
       panel.appendChild(body)
       panel.appendChild(footer)
       overlay.appendChild(panel)
@@ -1359,6 +1386,7 @@ async function init() {
       overlay = null
       body = null
       footer = null
+      summary = null
       priceRangeHelp = null
     }
 
@@ -1372,6 +1400,7 @@ async function init() {
       if (state.items.length) {
         trigger.style.display = ''
         sep.style.display = ''
+        openPanel()
       }
     })
   }
