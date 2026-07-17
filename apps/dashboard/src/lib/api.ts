@@ -66,6 +66,13 @@ export type DynamicMarkerActions = {
     label?: string
     message_template: string
   }
+  booking?: {
+    enabled: boolean
+    label?: string
+    appointment_types?: string[]
+    require_date?: boolean
+    require_time?: boolean
+  }
   external_link?: {
     enabled: boolean
     label: string
@@ -116,6 +123,7 @@ export type DynamicMarker = {
   media_json: string
   actions_json: string
   custom_fields_json: string
+  booking_calendar_id: string | null
   cloned_from_marker_id: string | null
   created_at: string
   updated_at: string
@@ -137,6 +145,10 @@ export type DynamicMarkerCatalogItem = {
   currency: string | null
   availability: string | null
   cover_url: string | null
+  booking_calendar: {
+    id: string
+    name: string | null
+  } | null
   updated_at: string
 }
 
@@ -169,7 +181,105 @@ export type UpdateDynamicMarkerInput = {
   media_json?: unknown[] | string | null
   actions_json?: DynamicMarkerActions | string | null
   custom_fields_json?: unknown[] | string | null
+  booking_calendar_id?: string | null
   target_kind?: string | null
+}
+
+export type AppointmentCalendarWindow = {
+  id?: string
+  weekday: number
+  start_time: string
+  end_time: string
+  active?: boolean | number
+  sort_order?: number
+}
+
+export type AppointmentCalendarException = {
+  id?: string
+  date: string
+  kind: 'blocked_full' | 'blocked_partial' | 'extra'
+  start_time?: string | null
+  end_time?: string | null
+  max_per_slot_override?: number | null
+  note?: string | null
+}
+
+export type AppointmentCalendarType = {
+  id?: string
+  label: string
+  delivery_mode?: 'in_person' | 'video_call' | 'phone_call' | 'other'
+  location_text?: string | null
+  meeting_url?: string | null
+  customer_instructions?: string | null
+  duration_minutes?: number | null
+  buffer_minutes?: number | null
+  max_per_slot?: number | null
+  active?: boolean | number
+  sort_order?: number
+}
+
+export type AppointmentCalendar = {
+  id: string
+  user_id: string
+  name: string
+  timezone: string
+  slot_interval_minutes: number
+  default_duration_minutes: number
+  default_buffer_minutes: number
+  max_per_slot: number
+  max_per_day: number
+  min_notice_minutes: number
+  booking_horizon_days: number
+  hold_expires_after_minutes: number
+  marker_count?: number
+  has_active_windows?: boolean | number
+  has_active_types?: boolean | number
+  created_at: string
+  updated_at: string
+}
+
+export type AppointmentBooking = {
+  id: string
+  user_id: string
+  publication_id: string
+  marker_id: string
+  calendar_id: string
+  appointment_type: string
+  starts_at_utc: string
+  ends_at_utc: string
+  local_date: string
+  local_time: string
+  timezone: string
+  status: 'pending' | 'confirmed' | 'cancelled' | 'rejected' | 'expired'
+  hold_expires_at: string | null
+  delivery_mode_snapshot?: 'in_person' | 'video_call' | 'phone_call' | 'other' | null
+  location_snapshot?: string | null
+  customer_instructions_snapshot?: string | null
+  calendar_name?: string | null
+  marker_name?: string | null
+  marker_reference?: string | null
+  customer_name?: string | null
+  customer_phone?: string | null
+  customer_email?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type AppointmentCalendarInput = {
+  marker_id?: string
+  name: string
+  timezone: string
+  slot_interval_minutes: number
+  default_duration_minutes: number
+  default_buffer_minutes: number
+  max_per_slot: number
+  max_per_day: number
+  min_notice_minutes: number
+  booking_horizon_days: number
+  hold_expires_after_minutes: number
+  weekly_windows: AppointmentCalendarWindow[]
+  exceptions: AppointmentCalendarException[]
+  appointment_types: AppointmentCalendarType[]
 }
 
 export type ReuseDynamicMarkerInput = {
@@ -318,6 +428,7 @@ export const api = {
       q?: string
       status?: DynamicMarkerStatus | ''
       publication_id?: string
+      has_booking?: boolean | null
     } = {}) => {
       const qs = new URLSearchParams()
       if (params.limit != null) qs.set('limit', String(params.limit))
@@ -325,6 +436,7 @@ export const api = {
       if (params.q) qs.set('q', params.q)
       if (params.status) qs.set('status', params.status)
       if (params.publication_id) qs.set('publication_id', params.publication_id)
+      if (params.has_booking != null) qs.set('has_booking', params.has_booking ? 'true' : 'false')
       return request<{
         success: true
         data: DynamicMarkerCatalogItem[]
@@ -349,6 +461,82 @@ export const api = {
       request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
     reuse: (sourceId: string, body: ReuseDynamicMarkerInput) =>
       request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(sourceId)}/reuse`, { method: 'POST', body: JSON.stringify(body) }),
+  },
+  appointmentCalendars: {
+    list: (params: {
+      publication_id?: string
+      q?: string
+      scope?: 'publication' | 'tenant'
+      limit?: number
+      cursor?: string
+    } = {}) => {
+      const qs = new URLSearchParams()
+      if (params.publication_id) qs.set('publication_id', params.publication_id)
+      if (params.q) qs.set('q', params.q)
+      if (params.scope) qs.set('scope', params.scope)
+      if (params.limit != null) qs.set('limit', String(params.limit))
+      if (params.cursor) qs.set('cursor', params.cursor)
+      return request<{
+        success: true
+        data: AppointmentCalendar[]
+        page?: {
+          limit: number
+          has_more: boolean
+          next_cursor: string | null
+        }
+      }>(`/api/appointment-calendars${qs.size ? `?${qs}` : ''}`)
+    },
+    create: (body: AppointmentCalendarInput) =>
+      request<{ success: true; data: AppointmentCalendar }>('/api/appointment-calendars', { method: 'POST', body: JSON.stringify(body) }),
+    get: (id: string) =>
+      request<{ success: true; data: { calendar: AppointmentCalendar; windows: AppointmentCalendarWindow[]; exceptions: AppointmentCalendarException[]; types: AppointmentCalendarType[] } }>(`/api/appointment-calendars/${encodeURIComponent(id)}`),
+    update: (id: string, body: AppointmentCalendarInput) =>
+      request<{ success: true; data: { calendar: AppointmentCalendar; windows: AppointmentCalendarWindow[]; exceptions: AppointmentCalendarException[]; types: AppointmentCalendarType[] } }>(`/api/appointment-calendars/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) }),
+    availability: (id: string, params: { date?: string; appointment_type?: string } = {}) => {
+      const qs = new URLSearchParams()
+      if (params.date) qs.set('date', params.date)
+      if (params.appointment_type) qs.set('appointment_type', params.appointment_type)
+      return request<{ success: true; data: { timezone: string; date: string; slots: { time: string; label: string }[] } }>(`/api/appointment-calendars/${encodeURIComponent(id)}/availability${qs.size ? `?${qs}` : ''}`)
+    },
+  },
+  appointments: {
+    list: (params: {
+      publication_id?: string
+      calendar_id?: string
+      marker_id?: string
+      status?: AppointmentBooking['status'] | ''
+      appointment_type?: string
+      from?: string
+      to?: string
+      limit?: number
+      cursor?: string
+    } = {}) => {
+      const qs = new URLSearchParams()
+      if (params.publication_id) qs.set('publication_id', params.publication_id)
+      if (params.calendar_id) qs.set('calendar_id', params.calendar_id)
+      if (params.marker_id) qs.set('marker_id', params.marker_id)
+      if (params.status) qs.set('status', params.status)
+      if (params.appointment_type) qs.set('appointment_type', params.appointment_type)
+      if (params.from) qs.set('from', params.from)
+      if (params.to) qs.set('to', params.to)
+      if (params.limit != null) qs.set('limit', String(params.limit))
+      if (params.cursor) qs.set('cursor', params.cursor)
+      return request<{
+        success: true
+        data: AppointmentBooking[]
+        page: {
+          from: string
+          to: string
+          limit: number
+          has_more: boolean
+          next_cursor: string | null
+        }
+      }>(`/api/appointments${qs.size ? `?${qs}` : ''}`)
+    },
+    setStatus: (id: string, status: AppointmentBooking['status']) =>
+      request<{ success: true; data: AppointmentBooking }>(`/api/appointments/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    reschedule: (id: string, body: { local_date: string; local_time: string; appointment_type?: string }) =>
+      request<{ success: true; data: AppointmentBooking }>(`/api/appointments/${encodeURIComponent(id)}/reschedule`, { method: 'PATCH', body: JSON.stringify(body) }),
   },
   adminSvg: {
     list: (params?: { family?: string; status?: string; q?: string }) => {

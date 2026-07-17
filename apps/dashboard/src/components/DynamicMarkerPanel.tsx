@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
-import type { DynamicMarker, DynamicMarkerStatus } from '../lib/api'
+import type { AppointmentCalendar, DynamicMarker, DynamicMarkerStatus } from '../lib/api'
 import FileField from './FileField'
 
 type Props = {
@@ -81,6 +81,13 @@ type DynamicMarkerActions = {
     label?: string
     message_template: string
   }
+  booking?: {
+    enabled: boolean
+    label?: string
+    appointment_types?: string[]
+    require_date?: boolean
+    require_time?: boolean
+  }
   external_link?: {
     enabled: boolean
     label: string
@@ -124,6 +131,7 @@ type FormState = {
   media: MediaOption[]
   actions: DynamicMarkerActions
   customFields: CustomField[]
+  bookingCalendarId: string
 }
 
 const emptyForm: FormState = {
@@ -147,6 +155,7 @@ const emptyForm: FormState = {
   media: [],
   actions: emptyActions(),
   customFields: [],
+  bookingCalendarId: '',
 }
 
 const currencyOptions = ['', 'DOP', 'USD', 'EUR', 'CAD', 'MXN', 'COP']
@@ -200,6 +209,7 @@ const mediaUploadConfig: Record<MediaType, { label: string; accept: string; hint
 function emptyActions(): DynamicMarkerActions {
   return {
     contact_whatsapp: { enabled: false, phone: '', label: 'Contactar vendedor', message_template: '' },
+    booking: { enabled: false, label: 'Agendar', appointment_types: [], require_date: true, require_time: true },
     external_link: { enabled: false, label: 'Ver más', url: '' },
     share: { enabled: false, label: 'Compartir', whatsapp: true, facebook: true, x: false, copy_link: true, native: true, instagram_url: '' },
     offer_cta: { target: '', preset: 'La quiero ahora', custom_label: '' },
@@ -415,6 +425,9 @@ function parseActions(value: string): DynamicMarkerActions {
     : parsed.whatsapp && typeof parsed.whatsapp === 'object' && !Array.isArray(parsed.whatsapp)
       ? parsed.whatsapp as Record<string, unknown>
     : {}
+  const booking = parsed.booking && typeof parsed.booking === 'object' && !Array.isArray(parsed.booking)
+    ? parsed.booking as Record<string, unknown>
+    : {}
   const externalLink = parsed.external_link && typeof parsed.external_link === 'object' && !Array.isArray(parsed.external_link)
     ? parsed.external_link as Record<string, unknown>
     : {}
@@ -432,7 +445,15 @@ function parseActions(value: string): DynamicMarkerActions {
       label: typeof contactWhatsApp.label === 'string' ? contactWhatsApp.label : defaults.contact_whatsapp!.label,
       message_template: typeof contactWhatsApp.message_template === 'string' ? contactWhatsApp.message_template : defaults.contact_whatsapp!.message_template,
     },
-
+    booking: {
+      enabled: typeof booking.enabled === 'boolean' ? booking.enabled : defaults.booking!.enabled,
+      label: typeof booking.label === 'string' ? booking.label : defaults.booking!.label,
+      appointment_types: Array.isArray(booking.appointment_types)
+        ? booking.appointment_types.map((item) => typeof item === 'string' ? item.trim() : '').filter(Boolean)
+        : [],
+      require_date: typeof booking.require_date === 'boolean' ? booking.require_date : defaults.booking!.require_date,
+      require_time: typeof booking.require_time === 'boolean' ? booking.require_time : defaults.booking!.require_time,
+    },
     external_link: {
       enabled: typeof externalLink.enabled === 'boolean' ? externalLink.enabled : defaults.external_link!.enabled,
       label: typeof externalLink.label === 'string' ? externalLink.label : defaults.external_link!.label,
@@ -484,6 +505,7 @@ function formFromMarker(marker: DynamicMarker): FormState {
     media: parseMedia(marker.media_json),
     actions: parseActions(marker.actions_json),
     customFields: parseCustomFields(marker.custom_fields_json),
+    bookingCalendarId: marker.booking_calendar_id ?? '',
   }
 }
 
@@ -495,10 +517,42 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState('')
+  const [linkedCalendar, setLinkedCalendar] = useState<AppointmentCalendar | null>(null)
+  const [sharedCalendarQuery, setSharedCalendarQuery] = useState('')
+  const [activeCalendarQuery, setActiveCalendarQuery] = useState('')
+  const [sharedCalendars, setSharedCalendars] = useState<AppointmentCalendar[]>([])
+  const [calendarSearching, setCalendarSearching] = useState(false)
+  const [calendarLoadingMore, setCalendarLoadingMore] = useState(false)
+  const [calendarLoaded, setCalendarLoaded] = useState(false)
+  const [calendarPage, setCalendarPage] = useState<{ has_more: boolean; next_cursor: string | null }>({
+    has_more: false,
+    next_cursor: null,
+  })
+  const [calendarMessage, setCalendarMessage] = useState('')
+
+  const canUseApi = !!publicationId && !!pageId
+  const canActivate = !!form.name.trim()
+  const persistedBookingEnabled = Boolean(marker && parseActions(marker.actions_json).booking?.enabled)
+  const canManageBookingCalendar = Boolean(marker && persistedBookingEnabled)
+  const calendarOptions = useMemo(() => {
+    const unique = new Map<string, AppointmentCalendar>()
+    for (const calendar of [linkedCalendar, ...sharedCalendars]) {
+      if (calendar) unique.set(calendar.id, calendar)
+    }
+    return Array.from(unique.values())
+  }, [linkedCalendar, sharedCalendars])
+
+  const calendarIsReady = (calendar: AppointmentCalendar | null | undefined) => (
+    Boolean(calendar?.has_active_windows) && Boolean(calendar?.has_active_types)
+  )
+
+  const selectedCalendar = calendarOptions.find((calendar) => calendar.id === form.bookingCalendarId) ?? null
+  const hasIncompleteLinkedCalendar = Boolean(
+    form.bookingCalendarId && selectedCalendar && !calendarIsReady(selectedCalendar),
+  )
+
   const variantsCount = form.colors.length + form.materials.length + form.sizes.length + form.measurements.length
   const offerEnabled = !!(form.promotionEndsAt || form.postPromotionPrice || form.promotionText || form.badgeText)
-  const canUseApi = Boolean(publicationId && pageId)
-  const canActivate = Boolean(form.name.trim())
 
   const humanKind = useMemo(() => {
     const kind = targetKind || selectedObject?.type || 'elemento'
@@ -534,6 +588,36 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
 
     return () => { cancelled = true }
   }, [canUseApi, pageId, publicationId, selectedObject, targetObjectId])
+
+  useEffect(() => {
+    let cancelled = false
+    const calendarId = form.bookingCalendarId
+
+    if (!calendarId) {
+      setLinkedCalendar(null)
+      return () => { cancelled = true }
+    }
+
+    setLinkedCalendar((current) => current?.id === calendarId ? current : null)
+
+    api.appointmentCalendars.get(calendarId)
+      .then((res) => {
+        if (cancelled) return
+
+        setLinkedCalendar({
+          ...res.data.calendar,
+          has_active_windows: res.data.windows.some((window) => Boolean(window.active)),
+          has_active_types: res.data.types.some(
+            (type) => Boolean(type.active) && Boolean(type.label?.trim()),
+          ),
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setLinkedCalendar(null)
+      })
+
+    return () => { cancelled = true }
+  }, [form.bookingCalendarId])
 
   const patchForm = (patch: Partial<FormState>) => {
     setSaved('')
@@ -579,6 +663,7 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
         visibility: item.visibility,
       })),
     actions_json: form.actions,
+    booking_calendar_id: form.bookingCalendarId || null,
     custom_fields_json: form.customFields
       .filter((field) => field.label.trim() || field.value.trim())
       .map((field, index) => ({
@@ -638,6 +723,133 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
         [key]: { ...current.actions[key], ...patch } as NonNullable<DynamicMarkerActions[K]>,
       },
     }))
+  }
+
+  const loadInitialCalendars = async () => {
+    if (!canManageBookingCalendar) return
+
+    setCalendarSearching(true)
+    setCalendarMessage('')
+
+    try {
+      const res = await api.appointmentCalendars.list({
+        scope: 'tenant',
+        limit: 12,
+      })
+
+      setSharedCalendars(res.data ?? [])
+      setCalendarPage({
+        has_more: Boolean(res.page?.has_more),
+        next_cursor: res.page?.next_cursor ?? null,
+      })
+      setActiveCalendarQuery('')
+      setCalendarLoaded(true)
+    } catch (err: any) {
+      setSharedCalendars([])
+      setCalendarPage({ has_more: false, next_cursor: null })
+      setCalendarLoaded(true)
+      setCalendarMessage(err?.message ?? 'No se pudieron cargar las Agendas disponibles.')
+    } finally {
+      setCalendarSearching(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!canManageBookingCalendar) {
+      setSharedCalendars([])
+      setCalendarPage({ has_more: false, next_cursor: null })
+      setCalendarLoaded(false)
+      setActiveCalendarQuery('')
+      return
+    }
+
+    void loadInitialCalendars()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageBookingCalendar])
+
+  const searchSharedCalendars = async (requestedQuery = sharedCalendarQuery) => {
+    const query = requestedQuery.trim()
+
+    setCalendarSearching(true)
+    setCalendarMessage('')
+
+    try {
+      const res = await api.appointmentCalendars.list({
+        q: query || undefined,
+        scope: 'tenant',
+        limit: 12,
+      })
+
+      setSharedCalendars(res.data ?? [])
+      setCalendarPage({
+        has_more: Boolean(res.page?.has_more),
+        next_cursor: res.page?.next_cursor ?? null,
+      })
+      setActiveCalendarQuery(query)
+      setCalendarLoaded(true)
+
+      if (!res.data?.length) {
+        setCalendarMessage(query ? 'No se encontraron Agendas.' : 'Aún no hay Agendas disponibles.')
+      }
+    } catch (err: any) {
+      setSharedCalendars([])
+      setCalendarPage({ has_more: false, next_cursor: null })
+      setCalendarLoaded(true)
+      setCalendarMessage(err?.message ?? 'No se pudo cargar la Agenda.')
+    } finally {
+      setCalendarSearching(false)
+    }
+  }
+
+  const loadMoreSharedCalendars = async () => {
+    const cursor = calendarPage.next_cursor
+    if (!cursor) return
+
+    setCalendarLoadingMore(true)
+    setCalendarMessage('')
+
+    try {
+      const res = await api.appointmentCalendars.list({
+        q: activeCalendarQuery || undefined,
+        scope: 'tenant',
+        limit: 12,
+        cursor,
+      })
+
+      setSharedCalendars((current) => {
+        const known = new Set(current.map((calendar) => calendar.id))
+        return [...current, ...(res.data ?? []).filter((calendar) => !known.has(calendar.id))]
+      })
+
+      setCalendarPage({
+        has_more: Boolean(res.page?.has_more),
+        next_cursor: res.page?.next_cursor ?? null,
+      })
+    } catch (err: any) {
+      setCalendarMessage(err?.message ?? 'No se pudieron cargar más Agendas.')
+    } finally {
+      setCalendarLoadingMore(false)
+    }
+  }
+
+   const selectCalendar = (calendarId: string) => {
+    if (!calendarId) {
+      patchForm({ bookingCalendarId: '' })
+      void saveBookingConfiguration('')
+      return
+    }
+
+    const calendar = calendarOptions.find((item) => item.id === calendarId)
+
+    if (!calendar || !calendarIsReady(calendar)) {
+      setCalendarMessage(
+        'Completa al menos un horario activo y un tipo de cita activo en Agenda antes de vincularla.',
+      )
+      return
+    }
+
+    patchForm({ bookingCalendarId: calendar.id })
+    void saveBookingConfiguration(calendar.id)
   }
 
   const addCustomField = () => {
@@ -708,6 +920,53 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
       setSaved('Cambios guardados')
     } catch (err: any) {
       setError(err?.message ?? 'No se pudo guardar la ficha')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const saveBookingConfiguration = async (
+    nextBookingCalendarId = form.bookingCalendarId,
+    nextBookingAction = form.actions.booking,
+  ) => {
+    if (!marker) return false
+
+    setError('')
+    setSaved('')
+    setSaving(true)
+    setCalendarMessage('Guardando configuración de Agenda...')
+
+    try {
+      const persistedActions = parseActions(marker.actions_json)
+      const agendaActions = {
+        ...persistedActions,
+        booking: nextBookingAction,
+      }
+
+      const res = await api.dynamicMarkers.update(marker.id, {
+        actions_json: agendaActions,
+        booking_calendar_id: nextBookingCalendarId || null,
+      })
+
+      const savedActions = parseActions(res.data.actions_json)
+
+      setMarker(res.data)
+      setForm((current) => ({
+        ...current,
+        actions: {
+          ...current.actions,
+          booking: savedActions.booking,
+        },
+        bookingCalendarId: res.data.booking_calendar_id ?? '',
+      }))
+      setCalendarMessage('Configuración de Agenda guardada.')
+      setSaved('Configuración de Agenda guardada.')
+      return true
+    } catch (err: any) {
+      const message = err?.message ?? 'No se pudo guardar la configuración de Agenda.'
+      setError(message)
+      setCalendarMessage(message)
+      return false
     } finally {
       setSaving(false)
     }
@@ -1008,6 +1267,232 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
         <textarea style={{ ...styles.input, minHeight: 64, resize: 'vertical' }} value={form.actions.contact_whatsapp?.message_template ?? ''} onChange={(e) => updateAction('contact_whatsapp', { message_template: e.target.value })} placeholder="Mensaje personalizado opcional" />
       </div>
 
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Agendar</div>
+        <label style={styles.checkLabel}>
+          <input
+            type="checkbox"
+            checked={!!form.actions.booking?.enabled}
+            onChange={(e) => {
+              const enabled = e.target.checked
+              const nextBookingAction = {
+                ...form.actions.booking,
+                enabled,
+                label: form.actions.booking?.label || 'Agendar',
+                appointment_types: [],
+                require_date: form.actions.booking?.require_date ?? true,
+                require_time: form.actions.booking?.require_time ?? true,
+              }
+
+              updateAction('booking', nextBookingAction)
+
+              if (!enabled) {
+                patchForm({ bookingCalendarId: '' })
+                void saveBookingConfiguration('', nextBookingAction)
+                return
+              }
+
+              void saveBookingConfiguration(form.bookingCalendarId, nextBookingAction)
+            }}
+          />
+          Activar
+        </label>
+        <input
+          style={styles.input}
+          value={form.actions.booking?.label ?? ''}
+          onChange={(e) => updateAction('booking', { label: e.target.value })}
+          placeholder="Texto de botón"
+        />
+        <div style={styles.advancedRow}>
+          <label style={styles.checkLabel}>
+            <input
+              type="checkbox"
+              checked={form.actions.booking?.require_date !== false}
+              onChange={(e) => updateAction('booking', { require_date: e.target.checked })}
+            />
+            Fecha requerida
+          </label>
+          <label style={styles.checkLabel}>
+            <input
+              type="checkbox"
+              checked={form.actions.booking?.require_time !== false}
+              onChange={(e) => updateAction('booking', { require_time: e.target.checked })}
+            />
+            Hora requerida
+          </label>
+        </div>
+
+        <div style={styles.calendarBox}>
+          <div style={styles.sectionTitle}>Agenda vinculada</div>
+          {!canManageBookingCalendar ? (
+            <p style={styles.copy}>
+              Guarda primero la ficha con Agendar activado para vincular una Agenda existente.
+            </p>
+          ) : (
+            <>
+              <Field label="Agenda para esta ficha">
+                <select
+                  style={styles.input}
+                  value={form.bookingCalendarId}
+                  onChange={(e) => selectCalendar(e.target.value)}
+                >
+                  <option value="">Sin Agenda vinculada</option>
+                  {calendarOptions.map((calendar) => {
+                    const ready = calendarIsReady(calendar)
+                    const selected = form.bookingCalendarId === calendar.id
+
+                    return (
+                      <option
+                        key={calendar.id}
+                        value={calendar.id}
+                        disabled={!ready && !selected}
+                      >
+                        {calendar.name}
+                        {calendar.marker_count ? ` · ${calendar.marker_count} ficha(s)` : ''}
+                        {!ready ? ' · requiere horario y tipo activo' : ''}
+                      </option>
+                    )
+                  })}
+                </select>
+                <span style={styles.helpText}>
+                  Las reglas operativas se administran desde el módulo Agenda. Aquí solo se vincula, cambia o desvincula.
+                </span>
+              </Field>
+
+              <Field label="Buscar o filtrar Agenda">
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    style={styles.input}
+                    value={sharedCalendarQuery}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      setSharedCalendarQuery(value)
+
+                      if (!value.trim() && activeCalendarQuery) {
+                        void searchSharedCalendars('')
+                      }
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void searchSharedCalendars() }}
+                    placeholder="Nombre, ficha, referencia o publicación"
+                  />
+                  <button
+                    type="button"
+                    style={{ ...styles.secondaryBtn, width: 'auto', whiteSpace: 'nowrap' }}
+                    disabled={calendarSearching}
+                    onClick={() => void searchSharedCalendars()}
+                  >
+                    {calendarSearching ? 'Cargando...' : 'Buscar'}
+                  </button>
+                </div>
+                <span style={styles.helpText}>
+                  Al abrir se muestran hasta 12 Agendas recientes. La búsqueda es opcional.
+                </span>
+              </Field>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                  <strong style={{ fontSize: 12, color: '#374151' }}>
+                    {activeCalendarQuery ? 'Resultados de Agenda' : 'Agendas disponibles recientes'}
+                  </strong>
+
+                  <button
+                    type="button"
+                    style={{ ...styles.smallButton, padding: '5px 8px' }}
+                    disabled={calendarSearching}
+                    onClick={() => void searchSharedCalendars(activeCalendarQuery)}
+                  >
+                    Actualizar
+                  </button>
+                </div>
+
+                {!calendarLoaded || calendarSearching ? (
+                  <span style={styles.helpText}>Cargando Agendas disponibles...</span>
+                ) : !calendarOptions.length ? (
+                  <span style={styles.helpText}>No hay Agendas disponibles todavía.</span>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {calendarOptions.map((calendar) => {
+                      const selected = form.bookingCalendarId === calendar.id
+                      const readiness = calendarIsReady(calendar)
+                        ? 'Lista para reservar'
+                        : calendar.has_active_windows
+                          ? 'Falta tipo de cita activo'
+                          : 'Falta horario activo'
+                      const ready = calendarIsReady(calendar)
+
+                      return (
+                        <button
+                          key={calendar.id}
+                          type="button"
+                          disabled={!ready}
+                          onClick={() => selectCalendar(calendar.id)}
+                          style={{
+                            border: `1px solid ${selected ? '#4F46E5' : '#dbeafe'}`,
+                            background: selected ? '#eef2ff' : '#fff',
+                            borderRadius: 7,
+                            padding: '8px 9px',
+                            color: '#374151',
+                            cursor: ready ? 'pointer' : 'not-allowed',
+                            opacity: ready ? 1 : 0.62,
+                            textAlign: 'left',
+                            fontFamily: 'inherit',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 3,
+                          }}
+                        >
+                          <strong style={{ fontSize: 12 }}>{calendar.name}</strong>
+                          <span style={{ fontSize: 11, color: '#6b7280' }}>
+                            {readiness} · {calendar.marker_count ? `${calendar.marker_count} ficha(s)` : 'Sin fichas vinculadas'}
+                          </span>
+                          {!ready && (
+                            <span style={{ fontSize: 11, color: '#92400e' }}>
+                              Completa horarios y al menos un tipo de cita activo en Agenda antes de vincularla.
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  style={{ ...styles.primaryBtn, width: '100%', marginTop: 2 }}
+                  disabled={saving || calendarSearching}
+                  onClick={() => void saveBookingConfiguration()}
+                >
+                  {saving ? 'Guardando...' : 'Guardar configuración de Agenda'}
+                </button>
+
+                {hasIncompleteLinkedCalendar && (
+                  <p style={styles.copy}>
+                    La Agenda actualmente vinculada está incompleta. No se desvinculó automáticamente,
+                    pero el Viewer no debe mostrar disponibilidad ni aceptar reservas hasta completarla.
+                  </p>
+                )}
+
+                {calendarPage.has_more && calendarPage.next_cursor && (
+                  <button
+                    type="button"
+                    style={{ ...styles.smallButton, width: '100%' }}
+                    disabled={calendarLoadingMore}
+                    onClick={() => void loadMoreSharedCalendars()}
+                  >
+                    {calendarLoadingMore ? 'Cargando...' : 'Cargar más Agendas'}
+                  </button>
+                )}
+              </div>
+
+             </>
+          )}
+          {calendarMessage && (
+            <p style={calendarMessage.includes('creada') || calendarMessage.includes('encontradas') || calendarMessage.includes('confirmar') || calendarMessage.includes('guardada') ? styles.success : styles.copy}>
+              {calendarMessage}
+            </p>
+          )}
+        </div>
+      </div>
 
       <div style={styles.section}>
         <div style={styles.sectionTitle}>Enlace externo</div>
