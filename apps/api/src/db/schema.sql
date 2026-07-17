@@ -262,6 +262,40 @@ CREATE TABLE IF NOT EXISTS watermark_config (
   opacity INTEGER DEFAULT 80
 );
 
+CREATE TABLE IF NOT EXISTS dynamic_markers (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  publication_id TEXT NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
+  page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  target_object_id TEXT NOT NULL,
+  target_kind TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'inactive')),
+  name TEXT,
+  reference TEXT,
+  category TEXT,
+  description TEXT,
+  price_minor INTEGER,
+  previous_price_minor INTEGER,
+  currency TEXT,
+  availability TEXT,
+  promotion_text TEXT,
+  accent_color TEXT NOT NULL DEFAULT '#F59E0B',
+  badge_text TEXT,
+  promotion_ends_at TEXT,
+  post_promotion_price_minor INTEGER,
+  colors_json TEXT NOT NULL DEFAULT '[]',
+  materials_json TEXT NOT NULL DEFAULT '[]',
+  sizes_json TEXT NOT NULL DEFAULT '[]',
+  measurements_json TEXT NOT NULL DEFAULT '[]',
+  media_json TEXT NOT NULL DEFAULT '[]',
+  actions_json TEXT NOT NULL DEFAULT '{}',
+  custom_fields_json TEXT NOT NULL DEFAULT '[]',
+  cloned_from_marker_id TEXT REFERENCES dynamic_markers(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(publication_id, page_id, target_object_id)
+);
+
 -- Índices
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_publications_user_id ON publications(user_id);
@@ -275,6 +309,12 @@ CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_pub_views_pub ON publication_views(publication_id);
 CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id);
+CREATE INDEX IF NOT EXISTS idx_dynamic_markers_publication ON dynamic_markers(publication_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dynamic_markers_page ON dynamic_markers(page_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dynamic_markers_status ON dynamic_markers(publication_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dynamic_markers_user_updated ON dynamic_markers(user_id, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_dynamic_markers_user_status_updated ON dynamic_markers(user_id, status, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_dynamic_markers_user_publication_updated ON dynamic_markers(user_id, publication_id, updated_at DESC, id DESC);
 
 -- Seeds: Planes
 INSERT OR IGNORE INTO plans VALUES ('free',  'Free',  1,    10,   50,   0, 0, 0);

@@ -8,6 +8,8 @@ import adminRoutes from './routes/admin'
 import proposalRoutes from './routes/proposals'
 import unitRoutes from './routes/units'
 import svgRoutes from './routes/svg'
+import dynamicMarkerRoutes from './routes/dynamicMarkers'
+import publicDynamicMarkerRoutes, { publicMarkersForPublication } from './routes/publicDynamicMarkers'
 import { jwtMiddleware } from './middleware/jwt'
 import { getUserPlan, getPlanUsage } from './lib/plans'
 import type { AuthVariables } from './middleware/jwt'
@@ -98,6 +100,7 @@ app.route('/api/publications', publicationRoutes)
 // PROTECTED: Upload routes must be mounted before the general /api routes.
 // Otherwise the public read-only upload asset route can be intercepted.
 app.route('/api/upload', uploadRoutes)
+app.route('/api/dynamic-markers', dynamicMarkerRoutes)
 app.route('/api', pageRoutes)
 app.route('/admin', adminRoutes)
 app.route('/admin/svg', svgRoutes)
@@ -361,6 +364,8 @@ app.get('/view/meta/:tenantSlug/:publicationSlug', async (c) => {
 })
 
 // Public viewer endpoint — no auth required
+app.route('/view/:slug/dynamic-markers', publicDynamicMarkerRoutes)
+
 app.get('/view/:slug', async (c) => {
   const slug = c.req.param('slug')
   const pub = await c.env.DB.prepare(
@@ -392,11 +397,12 @@ app.get('/view/:slug', async (c) => {
 
   if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
 
-  const [{ results: pages }, wmConfig] = await Promise.all([
+  const [{ results: pages }, dynamicMarkers, wmConfig] = await Promise.all([
     c.env.DB.prepare(
       `SELECT id, page_number, image_url, title, description, price, canvas_json, cover_json
        FROM pages WHERE publication_id = ? ORDER BY page_number ASC`,
     ).bind(pub.id).all(),
+    publicMarkersForPublication(c.env.DB, pub.id),
     c.env.DB.prepare('SELECT text, link_url, position, opacity FROM watermark_config WHERE id = 1').first<{
       text: string; link_url: string; position: string; opacity: number
     }>(),
@@ -432,6 +438,7 @@ app.get('/view/:slug', async (c) => {
       watermark_enabled: watermarkEnabled,
       watermark: wmConfig ?? { text: 'Intap Flipbook', link_url: 'https://intapflipbook.com', position: 'bottom-right', opacity: 80 },
       pages,
+      dynamic_markers: dynamicMarkers,
     },
   })
 })
