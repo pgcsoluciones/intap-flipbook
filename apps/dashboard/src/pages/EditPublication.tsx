@@ -128,6 +128,135 @@ function loadCanvasFabricImage(url: string, onLoad: (img: any) => void, onError?
   }, options as any)
 }
 
+const FABRIC_CLONE_CUSTOM_PROPS = ['data']
+const DUPLICATE_OFFSET = 20
+const DYNAMIC_ASSOCIATION_KEYS = new Set([
+  'dynamicMarkerId',
+  'dynamic_marker_id',
+  'dynamicMarker',
+  'dynamic_marker',
+  'markerId',
+  'marker_id',
+  'marker',
+  'targetObjectId',
+  'target_object_id',
+  'syncGroupId',
+  'sync_group_id',
+  'hiddenInEditor',
+  'originalOpacity',
+])
+
+function clonePlainValue(value: any): any {
+  if (value == null || typeof value !== 'object') return value
+  try {
+    return JSON.parse(JSON.stringify(value))
+  } catch {
+    if (Array.isArray(value)) return value.map((item) => clonePlainValue(item))
+    return { ...value }
+  }
+}
+
+function makeElementId(existing = new Set<string>()) {
+  let id = ''
+  do {
+    id = `el_${Math.random().toString(36).slice(2, 9)}`
+  } while (existing.has(id))
+  existing.add(id)
+  return id
+}
+
+function collectFabricElementIds(objects: any[], out = new Set<string>()) {
+  for (const obj of objects) {
+    const elementId = obj?.data?.elementId
+    if (typeof elementId === 'string' && elementId) out.add(elementId)
+    const children = typeof obj?.getObjects === 'function' ? obj.getObjects() : obj?._objects
+    if (Array.isArray(children)) collectFabricElementIds(children, out)
+  }
+  return out
+}
+
+function stripDynamicAssociations(value: any): any {
+  if (Array.isArray(value)) return value.map((item) => stripDynamicAssociations(item))
+  if (!value || typeof value !== 'object') return value
+  const next: any = {}
+  for (const [key, child] of Object.entries(value)) {
+    if (DYNAMIC_ASSOCIATION_KEYS.has(key)) continue
+    next[key] = stripDynamicAssociations(child)
+  }
+  return next
+}
+
+function resetDuplicateData(obj: any, existingElementIds: Set<string>) {
+  const sourceData = clonePlainValue(obj?.data ?? {})
+  const cleanData = stripDynamicAssociations(sourceData)
+  cleanData.elementId = makeElementId(existingElementIds)
+  obj.data = cleanData
+}
+
+function resetDuplicateTree(obj: any, existingElementIds: Set<string>) {
+  resetDuplicateData(obj, existingElementIds)
+  const children = typeof obj?.getObjects === 'function' ? obj.getObjects() : obj?._objects
+  if (Array.isArray(children)) {
+    children.forEach((child: any) => resetDuplicateTree(child, existingElementIds))
+  }
+}
+
+function restoreDuplicateInteractivity(clone: any, source: any) {
+  clone.set?.({
+    visible: source?.visible !== false,
+    selectable: source?.selectable !== false,
+    evented: source?.evented !== false,
+    hasControls: source?.hasControls !== false,
+    hasBorders: source?.hasBorders !== false,
+  })
+  const cloneChildren = typeof clone?.getObjects === 'function' ? clone.getObjects() : clone?._objects
+  const sourceChildren = typeof source?.getObjects === 'function' ? source.getObjects() : source?._objects
+  if (Array.isArray(cloneChildren) && Array.isArray(sourceChildren)) {
+    cloneChildren.forEach((child: any, index: number) => restoreDuplicateInteractivity(child, sourceChildren[index]))
+  }
+}
+
+function exitTextEditingBeforeDuplicate(obj: any) {
+  if (obj?.isEditing && typeof obj.exitEditing === 'function') {
+    obj.exitEditing()
+  }
+  const children = typeof obj?.getObjects === 'function' ? obj.getObjects() : obj?._objects
+  if (Array.isArray(children)) {
+    children.forEach((child: any) => exitTextEditingBeforeDuplicate(child))
+  }
+}
+
+function cloneFabricObject(obj: any) {
+  return new Promise<any>((resolve, reject) => {
+    try {
+      const maybePromise = obj.clone((clone: any) => resolve(clone), FABRIC_CLONE_CUSTOM_PROPS)
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise.then(resolve).catch(reject)
+      }
+    } catch (error) {
+      reject(error)
+    }
+  })
+}
+
+function keepObjectWithinCanvas(obj: any, canvas: any) {
+  obj.setCoords?.()
+  const rect = obj.getBoundingRect?.(true, true)
+  if (!rect) return
+  let dx = 0
+  let dy = 0
+  const canvasW = canvas.getWidth?.() ?? CANVAS_W
+  const canvasH = canvas.getHeight?.() ?? CANVAS_H
+  if (rect.left + rect.width > canvasW) dx = canvasW - (rect.left + rect.width)
+  if (rect.top + rect.height > canvasH) dy = canvasH - (rect.top + rect.height)
+  if (rect.left + dx < 0) dx = -rect.left
+  if (rect.top + dy < 0) dy = -rect.top
+  if (dx || dy) {
+    obj.set({ left: (obj.left ?? 0) + dx, top: (obj.top ?? 0) + dy })
+    obj.setCoords?.()
+  }
+}
+
 // PROTECTED: Recurses through Fabric object/group/clipPath trees to find raster images.
 function collectThumbnailImageUrls(node: any, out = new Set<string>()): Set<string> {
   if (!node || typeof node !== 'object') return out
@@ -1466,6 +1595,10 @@ export default function EditPublication() {
           applyHistory(historyRef.current[historyIndexRef.current])
         }
       }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        void duplicateSelected()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
 
@@ -2078,15 +2211,48 @@ export default function EditPublication() {
     const o = c?.getActiveObject()
     if (o) { c!.remove(o); setSelected(null); scheduleAutosave() }
   }
-  function duplicateSelected() {
+  async function duplicateSelected() {
     const c = fabricRef.current
     const o = c?.getActiveObject()
-    if (!o) return
-    o.clone((clone: any) => {
-      clone.set({ left: (o.left ?? 0) + 20, top: (o.top ?? 0) + 20 })
-      c!.add(clone); c!.setActiveObject(clone); c!.requestRenderAll()
+    if (!c || !o) return
+    try {
+      exitTextEditingBeforeDuplicate(o)
+      isTextEditingRef.current = false
+      const clone = await cloneFabricObject(o)
+      if (!clone) return
+
+      replaceTargetRef.current = null
+      const existingElementIds = collectFabricElementIds(c.getObjects())
+      resetDuplicateTree(clone, existingElementIds)
+      restoreDuplicateInteractivity(clone, o)
+      clone.set({ left: (o.left ?? 0) + DUPLICATE_OFFSET, top: (o.top ?? 0) + DUPLICATE_OFFSET })
+
+      c.discardActiveObject()
+      if (o.type === 'activeSelection') {
+        clone._restoreObjectsState?.()
+        const clonedObjects = typeof clone.getObjects === 'function' ? clone.getObjects() : []
+        clonedObjects.forEach((child: any) => {
+          child.setCoords?.()
+          c.add(child)
+        })
+        const selection = new fabric.ActiveSelection(clonedObjects, { canvas: c })
+        keepObjectWithinCanvas(selection, c)
+        selection.setCoords()
+        c.setActiveObject(selection)
+        setSelected(selection)
+      } else {
+        keepObjectWithinCanvas(clone, c)
+        c.add(clone)
+        clone.setCoords?.()
+        c.setActiveObject(clone)
+        setSelected(clone)
+      }
+      c.requestRenderAll()
+      setSelectVersion((v) => v + 1)
       scheduleAutosave()
-    }, ['data'])
+    } catch (error) {
+      console.error('[editor] duplicate selected failed', error)
+    }
   }
   function bringToFront() { const o = fabricRef.current?.getActiveObject(); if (o) { o.bringToFront(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
   function sendToBack() { const o = fabricRef.current?.getActiveObject(); if (o) { o.sendToBack(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
