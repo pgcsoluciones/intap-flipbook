@@ -27,9 +27,11 @@ interface Props {
   hint?: string
   /** Si el recurso es imagen muestra miniatura de vista previa. */
   preview?: boolean
+  /** Etiqueta visible del botón/zona de selección. */
+  browseLabel?: string
 }
 
-export default function FileField({ value, onChange, accept = 'image/jpeg,image/png,image/webp,image/svg+xml', hint, preview = true }: Props) {
+export default function FileField({ value, onChange, accept = 'image/jpeg,image/png,image/webp,image/svg+xml', hint, preview = true, browseLabel = 'Examinar' }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -63,6 +65,8 @@ export default function FileField({ value, onChange, accept = 'image/jpeg,image/
   }
 
   const isImage = preview && value && /\.(jpe?g|png|webp|svg|gif)$/i.test(value)
+  const isVideo = preview && value && /\.(mp4|webm|mov)$/i.test(value)
+  const isAudio = preview && value && /\.(mp3|wav|m4a|ogg)$/i.test(value)
 
   return (
     <div>
@@ -80,13 +84,17 @@ export default function FileField({ value, onChange, accept = 'image/jpeg,image/
         <input ref={inputRef} type="file" accept={accept} style={{ display: 'none' }} onChange={onPick} />
         {isImage ? (
           <img src={value} alt="preview" style={st.thumb} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+        ) : isVideo ? (
+          <video src={value} controls style={st.mediaPreview} />
+        ) : isAudio ? (
+          <audio src={value} controls style={st.audioPreview} />
         ) : (
           <div style={st.icon}>⬆</div>
         )}
         <div style={st.zoneText}>
           {uploading
             ? 'Subiendo…'
-            : <><strong style={{ color: '#4f46e5' }}>Examinar</strong> o arrastra y suelta aquí</>}
+            : <><strong style={{ color: '#4f46e5' }}>{browseLabel}</strong> o arrastra y suelta aquí</>}
         </div>
         {hint && <div style={st.hint}>{hint}</div>}
       </div>
@@ -112,6 +120,8 @@ const st: Record<string, React.CSSProperties> = {
   zoneOver: { background: '#eef2ff', borderColor: '#4f46e5' },
   icon: { fontSize: 22, color: '#818cf8', lineHeight: 1 },
   thumb: { maxWidth: 90, maxHeight: 60, objectFit: 'contain', borderRadius: 6 },
+  mediaPreview: { width: '100%', maxHeight: 92, borderRadius: 6, background: '#111827' },
+  audioPreview: { width: '100%', maxWidth: 260 },
   zoneText: { fontSize: 12, color: '#6b7280' },
   hint: { fontSize: 11, color: '#9ca3af' },
   urlInput: {

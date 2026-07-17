@@ -7,6 +7,7 @@ function NavIcon({ name }: { name: string }) {
   const props = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
   if (name === 'home') return <svg {...props}><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>
   if (name === 'book') return <svg {...props}><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+  if (name === 'database') return <svg {...props}><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
   if (name === 'mail') return <svg {...props}><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 7 10-7"/></svg>
   if (name === 'grid') return <svg {...props}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
   if (name === 'image') return <svg {...props}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
@@ -49,6 +50,7 @@ function BellButton({ count, onClick, color = '#fff' }: { count: number; onClick
 const NAV_ITEMS = [
   { to: '/dashboard',    icon: 'home',      label: 'Inicio' },
   { to: '/publications', icon: 'book',      label: 'Mis Flipbooks' },
+  { to: '/dynamic-data', icon: 'database',  label: 'Data Dinámica' },
   { to: '/responses',    icon: 'mail',      label: 'Respuestas' },
   { to: '/templates',    icon: 'grid',      label: 'Plantillas' },
   { to: '/resources',    icon: 'image',     label: 'Recursos' },
@@ -192,14 +194,22 @@ export default function Layout({ children }: Props) {
   }
 
   useEffect(() => {
-    if (!localStorage.getItem('token')) { navigate('/login'); return }
+    if (!localStorage.getItem('token')) {
+      navigate('/login')
+      return
+    }
+
     api.auth.me()
       .then((res) => setUser(res.data))
-      .catch(() => { localStorage.removeItem('token'); navigate('/login') })
+      .catch(() => {
+        localStorage.removeItem('token')
+        navigate('/login')
+      })
+
     api.notifications.list()
       .then((res) => setNotifications(res.data ?? []))
       .catch(() => {})
-  }, [])
+  }, [navigate])
 
   async function handleMarkRead(id: number | string) {
     await api.notifications.markRead(id).catch(() => {})
@@ -379,6 +389,7 @@ const s: Record<string, React.CSSProperties> = {
     textDecoration: 'none',
   },
   navIcon: { width: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  navBadge: { marginLeft: 'auto', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 900, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' },
   sidebarFooter: {
     display: 'flex',
     alignItems: 'center',

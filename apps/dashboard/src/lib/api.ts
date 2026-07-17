@@ -35,7 +35,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     data = raw ? JSON.parse(raw) : null
   } catch {
-    // La respuesta no es JSON (p. ej. "404 Not Found" de una ruta no desplegada)
     if (!res.ok) {
       throw new Error(
         res.status === 404
@@ -47,6 +46,136 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
   return data
+}
+
+export type DynamicMarkerStatus = 'draft' | 'active' | 'inactive'
+export type DynamicMarkerVisibility = 'public' | 'internal'
+export type DynamicMarkerCustomFieldType = 'text' | 'number' | 'boolean' | 'date' | 'url' | 'email' | 'phone'
+export type DynamicMarkerMediaType = 'image' | 'video' | 'audio'
+
+export type DynamicMarkerActions = {
+  contact_whatsapp?: {
+    enabled: boolean
+    phone: string
+    label?: string
+    message_template: string
+  }
+  whatsapp?: {
+    enabled: boolean
+    phone: string
+    label?: string
+    message_template: string
+  }
+  external_link?: {
+    enabled: boolean
+    label: string
+    url: string
+  }
+  share?: {
+    enabled?: boolean
+    label?: string
+    whatsapp: boolean
+    facebook: boolean
+    x: boolean
+    copy_link: boolean
+    native: boolean
+    instagram_url?: string
+  }
+  offer_cta?: {
+    target: '' | 'contact_whatsapp' | 'external_link' | 'share'
+    preset?: string
+    custom_label?: string
+  }
+}
+
+export type DynamicMarker = {
+  id: string
+  user_id: string
+  publication_id: string
+  page_id: string
+  target_object_id: string
+  target_kind: string | null
+  status: DynamicMarkerStatus
+  name: string | null
+  reference: string | null
+  category: string | null
+  description: string | null
+  price_minor: number | null
+  previous_price_minor: number | null
+  currency: string | null
+  availability: string | null
+  promotion_text: string | null
+  accent_color: string | null
+  badge_text: string | null
+  promotion_ends_at: string | null
+  post_promotion_price_minor: number | null
+  colors_json: string
+  materials_json: string
+  sizes_json: string
+  measurements_json: string
+  media_json: string
+  actions_json: string
+  custom_fields_json: string
+  cloned_from_marker_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type DynamicMarkerCatalogItem = {
+  id: string
+  publication_id: string
+  publication_title: string | null
+  page_id: string
+  page_number: number | null
+  target_object_id: string
+  target_kind: string | null
+  status: DynamicMarkerStatus
+  name: string | null
+  reference: string | null
+  category: string | null
+  price_minor: number | null
+  currency: string | null
+  availability: string | null
+  cover_url: string | null
+  updated_at: string
+}
+
+export type CreateDynamicMarkerInput = {
+  publication_id: string
+  page_id: string
+  target_object_id: string
+  target_kind?: string | null
+}
+
+export type UpdateDynamicMarkerInput = {
+  status?: DynamicMarkerStatus
+  name?: string | null
+  reference?: string | null
+  category?: string | null
+  description?: string | null
+  price_minor?: number | null
+  previous_price_minor?: number | null
+  currency?: string | null
+  availability?: string | null
+  promotion_text?: string | null
+  accent_color?: string | null
+  badge_text?: string | null
+  promotion_ends_at?: string | null
+  post_promotion_price_minor?: number | null
+  colors_json?: unknown[] | string | null
+  materials_json?: unknown[] | string | null
+  sizes_json?: unknown[] | string | null
+  measurements_json?: unknown[] | string | null
+  media_json?: unknown[] | string | null
+  actions_json?: DynamicMarkerActions | string | null
+  custom_fields_json?: unknown[] | string | null
+  target_kind?: string | null
+}
+
+export type ReuseDynamicMarkerInput = {
+  target_marker_id: string
+  name: string
+  reference?: string | null
 }
 
 export const api = {
@@ -182,7 +311,45 @@ export const api = {
       request<{ success: true }>(`/admin/template-proposals/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ admin_notes: adminNotes }) }),
   },
 
-  // Biblioteca SVG — administración (solo super admin)
+  dynamicMarkers: {
+    catalog: (params: {
+      limit?: number
+      cursor?: string | null
+      q?: string
+      status?: DynamicMarkerStatus | ''
+      publication_id?: string
+    } = {}) => {
+      const qs = new URLSearchParams()
+      if (params.limit != null) qs.set('limit', String(params.limit))
+      if (params.cursor) qs.set('cursor', params.cursor)
+      if (params.q) qs.set('q', params.q)
+      if (params.status) qs.set('status', params.status)
+      if (params.publication_id) qs.set('publication_id', params.publication_id)
+      return request<{
+        success: true
+        data: DynamicMarkerCatalogItem[]
+        page: {
+          limit: number
+          has_more: boolean
+          next_cursor: string | null
+        }
+      }>(`/api/dynamic-markers/catalog${qs.size ? `?${qs}` : ''}`)
+    },
+    list: (publicationId: string, pageId?: string) => {
+      const qs = `publication_id=${encodeURIComponent(publicationId)}${pageId ? `&page_id=${encodeURIComponent(pageId)}` : ''}`
+      return request<{ success: true; data: DynamicMarker[] }>(`/api/dynamic-markers?${qs}`)
+    },
+    get: (id: string) =>
+      request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(id)}`),
+    create: (input: CreateDynamicMarkerInput) =>
+      request<{ success: true; data: DynamicMarker }>('/api/dynamic-markers', { method: 'POST', body: JSON.stringify(input) }),
+    update: (id: string, input: UpdateDynamicMarkerInput) =>
+      request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
+    setStatus: (id: string, status: DynamicMarkerStatus) =>
+      request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    reuse: (sourceId: string, body: ReuseDynamicMarkerInput) =>
+      request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(sourceId)}/reuse`, { method: 'POST', body: JSON.stringify(body) }),
+  },
   adminSvg: {
     list: (params?: { family?: string; status?: string; q?: string }) => {
       const qs = new URLSearchParams(

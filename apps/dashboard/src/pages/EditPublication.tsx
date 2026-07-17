@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 // @ts-ignore
 import { fabric } from 'fabric'
 import { api, toCanvasSafeAssetUrl } from '../lib/api'
 import FileField from '../components/FileField'
 import WidgetPreview from '../components/WidgetPreview'
+import DynamicMarkerPanel from '../components/DynamicMarkerPanel'
 
 // Tipos MIME para los distintos campos de subida del editor
 const ACCEPT_AUDIO = 'audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/mp4,audio/aac'
@@ -970,6 +971,7 @@ function collectBankFromPages(ps: any[]): string[] {
 
 export default function EditPublication() {
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
   const [pub, setPub]       = useState<any>(null)
   const [pages, setPages]   = useState<any[]>([])
   const [activePage, setActivePage] = useState<any>(null)
@@ -999,9 +1001,11 @@ export default function EditPublication() {
 
   // Estado de autoguardado: 'idle' | 'saving' | 'saved'
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const [deepLinkNotice, setDeepLinkNotice] = useState('')
 
   const [activeTool, setActiveTool] = useState<ToolKey>('pages')
   const [panelOpen, setPanelOpen]   = useState(true)
+  const [pagePanelTab, setPagePanelTab] = useState<'config' | 'actions' | 'dynamic'>('config')
   const [ctxMenu, setCtxMenu]       = useState<{ x: number; y: number } | null>(null)
   const [alignRef, setAlignRef]     = useState<'canvas' | 'selection'>('canvas')
   const [replaceModal, setReplaceModal] = useState(false)
@@ -1049,6 +1053,23 @@ export default function EditPublication() {
   // Vista previa de la hoja activa (snapshot del canvas actual, no editable)
   const [sheetPreview, setSheetPreview] = useState<{ imageUrl: string; cover: any; json: any } | null>(null)
   const rightPanelRef = useRef<HTMLDivElement>(null)
+  const deepLinkRef = useRef<{
+    pageId: string
+    markerId: string
+    objectId: string
+    attempted: boolean
+  } | null>(null)
+  if (!deepLinkRef.current) {
+    const pageId = searchParams.get('page')?.trim() ?? ''
+    const markerId = searchParams.get('marker')?.trim() ?? ''
+    const objectId = searchParams.get('object')?.trim() ?? ''
+    deepLinkRef.current = {
+      pageId,
+      markerId,
+      objectId,
+      attempted: !pageId || !objectId,
+    }
+  }
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
   const isTextEditingRef = useRef(false)
@@ -1302,7 +1323,13 @@ export default function EditPublication() {
       const ps = res.data.pages ?? []
       pagesRef.current = ps
       setPages(ps)
-      if (ps.length > 0) setActivePage(ps[0])
+      const requestedPageId = deepLinkRef.current?.pageId ?? ''
+      const requestedPage = requestedPageId ? ps.find((page: any) => page.id === requestedPageId) : null
+      if (requestedPageId && !requestedPage) {
+        setDeepLinkNotice('La página asociada a esta ficha ya no existe.')
+        if (deepLinkRef.current) deepLinkRef.current.attempted = true
+      }
+      if (ps.length > 0) setActivePage(requestedPage ?? ps[0])
       // Banco de imágenes: imágenes del proyecto + las guardadas localmente (subidas pero quizá no colocadas)
       let stored: string[] = []
       try { stored = JSON.parse(localStorage.getItem(`imgbank_${id}`) ?? '[]') } catch {}
@@ -1311,7 +1338,7 @@ export default function EditPublication() {
       bootstrapTimer = setTimeout(() => {
         if (cancelled || !thumbnailMountedRef.current) return
         const currentPages = pagesRef.current
-        const firstPageId = ps[0]?.id
+        const firstPageId = (requestedPage ?? ps[0])?.id
         for (const page of currentPages) {
           if (!page?.id) continue
           if (!pagesRef.current.some((current) => current.id === page.id)) continue
@@ -1512,6 +1539,39 @@ export default function EditPublication() {
       })
     }
 
+    const updateSelectedObject = (next: any) => {
+      if (selectedRef.current === next) return
+      selectedRef.current = next
+      setSelected(next)
+      setSelectVersion((v) => v + 1)
+    }
+
+    const tryDeepLinkSelection = () => {
+      const target = deepLinkRef.current
+      if (!target || target.attempted || !target.pageId || !target.objectId || activePage.id !== target.pageId) return
+      target.attempted = true
+
+      const matches = canvas.getObjects()
+        .filter((o: any) => o?.selectable !== false && o?.evented !== false && o?.data?.elementId === target.objectId)
+
+      if (matches.length === 1) {
+        const obj = matches[0]
+        canvas.setActiveObject(obj)
+        obj.setCoords()
+        canvas.requestRenderAll()
+        updateSelectedObject(obj)
+        setDeepLinkNotice('Ficha localizada en el Editor.')
+        return
+      }
+
+      if (matches.length > 1) {
+        setDeepLinkNotice('Hay más de un objeto con este identificador. Revisa la ficha en el Editor.')
+        return
+      }
+
+      setDeepLinkNotice('No se encontró el objeto visual asociado a esta ficha.')
+    }
+
     if (activePage.canvas_json) {
       const pageJson = typeof activePage.canvas_json === 'string'
         ? JSON.parse(activePage.canvas_json)
@@ -1527,19 +1587,15 @@ export default function EditPublication() {
         canvas.renderAll()
         pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
         loadBg()
+        tryDeepLinkSelection()
       })
     } else {
       isLoading = false
       pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
       loadBg()
+      tryDeepLinkSelection()
     }
 
-    const updateSelectedObject = (next: any) => {
-      if (selectedRef.current === next) return
-      selectedRef.current = next
-      setSelected(next)
-      setSelectVersion((v) => v + 1)
-    }
     const onSel = (kind: string) => (e: any) => {
       updateSelectedObject(canvas.getActiveObject() ?? e.selected?.[0] ?? null)
     }
@@ -2647,6 +2703,10 @@ export default function EditPublication() {
         </div>
       </div>
 
+      {deepLinkNotice && (
+        <div style={s.deepLinkNotice}>{deepLinkNotice}</div>
+      )}
+
       <div style={s.body}>
         {/* ── Icon rail ── */}
         <nav style={s.rail}>
@@ -2864,13 +2924,41 @@ export default function EditPublication() {
               obj={selected}
               canvas={fabricRef.current}
               pages={pages}
+              publicationId={id}
+              pageId={activePage?.id}
               onChange={() => { scheduleAutosave() }}
               onSyncToggle={handleSvgSyncToggle}
               onReframeImage={startImageReframe}
               onToggleHide={toggleHideInEditor}
             />
           ) : (
-            <PageConfig bgColor={bgColor} applyBgColor={applyBgColor} onShowAllHidden={showAllHiddenInEditor} />
+            <div style={s.propsScroll}>
+              <div style={s.rightHeader}>Página</div>
+              <div style={s.insTabs}>
+                <button style={{ ...s.insTabBtn, ...(pagePanelTab === 'config' ? s.insTabActive : {}) }} onClick={() => setPagePanelTab('config')}>Propiedades</button>
+                <button style={{ ...s.insTabBtn, ...(pagePanelTab === 'actions' ? s.insTabActive : {}) }} onClick={() => setPagePanelTab('actions')}>Acciones</button>
+                <button style={{ ...s.insTabBtn, ...(pagePanelTab === 'dynamic' ? s.insTabActive : {}) }} onClick={() => setPagePanelTab('dynamic')}>Data Dinámica</button>
+              </div>
+              {pagePanelTab === 'config' && (
+                <PageConfig bgColor={bgColor} applyBgColor={applyBgColor} onShowAllHidden={showAllHiddenInEditor} />
+              )}
+              {pagePanelTab === 'actions' && (
+                <div style={s.props}>
+                  <p style={cp.hint}>Selecciona un elemento del lienzo para configurar acciones.</p>
+                </div>
+              )}
+              {pagePanelTab === 'dynamic' && (
+                <div style={s.props}>
+                  <DynamicMarkerPanel
+                    publicationId={id}
+                    pageId={activePage?.id}
+                    selectedObject={null}
+                    targetKind={null}
+                    ensureElementId={() => null}
+                  />
+                </div>
+              )}
+            </div>
           )}
         </aside>
       </div>
@@ -3624,20 +3712,27 @@ function CfgGroup({ label, children }: { label: string; children: React.ReactNod
 
 // ─── Panel de propiedades del elemento seleccionado ───────────────────────────
 // Cambia según el tipo: texto, forma, botón, imagen o zona de enlace.
-function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage, onToggleHide }: { obj: any; canvas: any; pages: any[]; onChange: () => void; onSyncToggle?: (enabled: boolean) => void; onReframeImage?: (o: any) => void; onToggleHide?: () => void }) {
+function PropsPanel({ obj, canvas, pages, publicationId, pageId, onChange, onSyncToggle, onReframeImage, onToggleHide }: { obj: any; canvas: any; pages: any[]; publicationId?: string; pageId?: string; onChange: () => void; onSyncToggle?: (enabled: boolean) => void; onReframeImage?: (o: any) => void; onToggleHide?: () => void }) {
   const kind: string = (obj as any).data?.kind
     ?? (obj instanceof fabric.Textbox || obj instanceof fabric.Text ? 'text' : 'shape')
 
   const [, setTick] = React.useState(0)
   const set = (props: any) => { obj.set(props); canvas?.requestRenderAll(); onChange(); setTick((t) => t + 1) }
   const setData = (patch: any) => { (obj as any).data = { ...((obj as any).data ?? {}), ...patch }; onChange(); setTick((t) => t + 1) }
+  const ensureElementId = () => {
+    const existing = (obj as any).data?.elementId
+    if (existing) return existing
+    const elementId = `el_${Math.random().toString(36).slice(2, 9)}`
+    setData({ elementId })
+    return elementId
+  }
   const [closeWarning, setCloseWarning] = React.useState('')
 
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'
   const titleMap: Record<string, string> = { text: 'Texto', shape: 'Forma', button: 'Botón', linkzone: 'Zona de enlace', image: 'Imagen', icon: 'Icono', widget: 'Widget', hotspot: 'Punto activo', svglib: 'Gráfico SVG' }
 
-  // Inspector con dos pestañas: Configuraciones (estilo/posición) y Acciones (interacción).
-  const [insTab, setInsTab] = React.useState<'config' | 'actions'>('config')
+  // Inspector con pestañas: Propiedades (estilo/posición), Acciones e información dinámica.
+  const [insTab, setInsTab] = React.useState<'config' | 'actions' | 'dynamic'>('config')
   const isWidget = kind === 'widget'
 
   // Elementos de esta página que tienen nombre asignado (excepto el actual): posibles
@@ -3694,8 +3789,9 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
 
       {/* Pestañas del inspector */}
       <div style={s.insTabs}>
-        <button style={{ ...s.insTabBtn, ...(insTab === 'config' ? s.insTabActive : {}) }} onClick={() => setInsTab('config')}>Configuraciones</button>
+        <button style={{ ...s.insTabBtn, ...(insTab === 'config' ? s.insTabActive : {}) }} onClick={() => setInsTab('config')}>Propiedades</button>
         <button style={{ ...s.insTabBtn, ...(insTab === 'actions' ? s.insTabActive : {}) }} onClick={() => setInsTab('actions')}>Acciones</button>
+        <button style={{ ...s.insTabBtn, ...(insTab === 'dynamic' ? s.insTabActive : {}) }} onClick={() => setInsTab('dynamic')}>Data Dinámica</button>
       </div>
 
       {insTab === 'config' && (
@@ -3993,9 +4089,20 @@ function PropsPanel({ obj, canvas, pages, onChange, onSyncToggle, onReframeImage
         <ActionEditor data={(obj as any).data ?? {}} pages={pages} setData={setData} targets={namedTargets} />
         {isWidget && (
           <p style={{ ...cp.hint, marginTop: 8 }}>
-            <b>Nota:</b> para que este widget pueda ser objetivo de "Mostrar / ocultar", asígnale un nombre en la pestaña <b>Configuraciones</b>.
+            <b>Nota:</b> para que este widget pueda ser objetivo de "Mostrar / ocultar", asígnale un nombre en la pestaña <b>Propiedades</b>.
           </p>
         )}
+      </div>
+      )}
+      {insTab === 'dynamic' && (
+      <div style={s.props}>
+        <DynamicMarkerPanel
+          publicationId={publicationId}
+          pageId={pageId}
+          selectedObject={obj}
+          targetKind={kind}
+          ensureElementId={ensureElementId}
+        />
       </div>
       )}
     </div>
@@ -6047,6 +6154,7 @@ const s: Record<string, React.CSSProperties> = {
   saveInd:   { fontSize: 11, color: 'rgba(255,255,255,0.6)', fontWeight: 500, whiteSpace: 'nowrap', minWidth: 96, textAlign: 'right' as const },
   btnOutlineWhite: { background: 'transparent', border: '1px solid rgba(255,255,255,0.4)', color: '#fff', borderRadius: 6, padding: '6px 14px', fontSize: 13, cursor: 'pointer', fontWeight: 500 },
   btnPublish: { border: 'none', color: '#fff', borderRadius: 6, padding: '6px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 600 },
+  deepLinkNotice: { flexShrink: 0, borderBottom: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', padding: '8px 16px', fontSize: 12, fontWeight: 700 },
 
   body: { display: 'flex', flex: 1, overflow: 'hidden' },
 

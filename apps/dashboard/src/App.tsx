@@ -8,6 +8,7 @@ import NewPublication from './pages/NewPublication'
 import EditPublication from './pages/EditPublication'
 import Preview from './pages/Preview'
 import Publications from './pages/Publications'
+import TenantDynamicMarkers from './pages/TenantDynamicMarkers'
 import Settings from './pages/Settings'
 import PlanPage from './pages/PlanPage'
 import ProfilePage from './pages/ProfilePage'
@@ -52,6 +53,7 @@ export default function App() {
         {/* Publicaciones */}
         <Route path="/dashboard"                 element={<Layout><Dashboard /></Layout>} />
         <Route path="/publications"              element={<Layout><Publications /></Layout>} />
+        <Route path="/dynamic-data"              element={<Layout><TenantDynamicMarkers /></Layout>} />
         <Route path="/publications/new"          element={<NewPublication />} />
         <Route path="/publications/:id/editor"   element={<EditPublication />} />
         <Route path="/publications/:id/preview"  element={<Layout><Preview /></Layout>} />
