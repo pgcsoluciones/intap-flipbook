@@ -5,11 +5,55 @@ if (window.fabric?.Text?.prototype) {
   window.fabric.Text.prototype.textBaseline = 'alphabetic'
 }
 
-const API_BASE = window.__FLIPBOOK_CONFIG__?.apiBase ?? 'https://intap-flipbook-api.fliaprince.workers.dev'
+const PUBLIC_API_BASE = 'https://intap-flipbook-api.fliaprince.workers.dev'
 
-const slug = location.pathname.split('/').filter(Boolean).pop()
+function cleanApiBase(value) {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    if (!['http:', 'https:'].includes(url.protocol)) return null
+    return url.toString().replace(/\/+$/, '')
+  } catch (e) {
+    return null
+  }
+}
+
+function showViewerError(message) {
+  const ls = document.getElementById('loading-screen')
+  if (ls) ls.remove()
+  document.body.dataset.viewerError = '1'
+  document.body.innerHTML = `<p style="color:#fff;text-align:center;margin:2rem auto;max-width:560px;line-height:1.5;font-family:Inter,sans-serif">${message}</p>`
+}
+
+function rawErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error || '')
+}
+
+function isTechnicalErrorMessage(message) {
+  return /(price_min|price_max|cursor|marker|dynamic marker|payload|fetch|endpoint|invalid|undefined|null|json|status|api|\b40[04]\b|error técnico)/i.test(message)
+}
+
+function friendlyRequestError(error, fallback = 'No pudimos completar la acción. Inténtalo nuevamente.') {
+  const message = rawErrorMessage(error)
+  if (message && !isTechnicalErrorMessage(message)) return message
+  return fallback
+}
+
+function notifyViewerReady() {
+  try {
+    window.parent?.postMessage('intap-viewer-ready', '*')
+  } catch (e) {}
+}
+
+const params = new URLSearchParams(location.search)
+const isPreview = params.get('preview') === '1'
+const queryPublication = params.get('publication')?.trim()
+const API_BASE = isPreview
+  ? (cleanApiBase(params.get('api_base')) ?? cleanApiBase(window.__FLIPBOOK_CONFIG__?.apiBase) ?? PUBLIC_API_BASE)
+  : (cleanApiBase(window.__FLIPBOOK_CONFIG__?.apiBase) ?? PUBLIC_API_BASE)
+const slug = queryPublication || location.pathname.split('/').filter(Boolean).pop()
 if (!slug) {
-  document.body.innerHTML = '<p style="color:#fff;text-align:center;margin-top:2rem">No publication specified.</p>'
+  showViewerError('No se especificó una publicación para mostrar.')
   throw new Error('No slug')
 }
 
@@ -82,16 +126,1266 @@ function saveResponse(kind, payload, widgetKey) {
 }
 
 async function init() {
-  const res = await fetch(`${API_BASE}/view/${slug}`)
+  let res
+  try {
+    res = await fetch(`${API_BASE}/view/${slug}`)
+  } catch (e) {
+    showViewerError('No pudimos conectar con el visor. Revisa tu conexión e inténtalo nuevamente.')
+    throw e
+  }
   if (!res.ok) {
-    const ls = document.getElementById('loading-screen')
-    if (ls) ls.remove()
-    document.body.innerHTML = `<p style="color:#fff;text-align:center;margin-top:2rem">Publication not found.</p>`
+    showViewerError(res.status === 404
+      ? 'Esta publicación no está disponible.'
+      : 'No pudimos cargar la publicación. Inténtalo nuevamente.')
     return
   }
 
   const { data } = await res.json()
   document.title = data.title
+  const dynamicMarkerMap = new Map()
+  ;(Array.isArray(data.dynamic_markers) ? data.dynamic_markers : []).forEach((marker) => {
+    if (!marker?.page_id || !marker?.target_object_id) return
+    const key = `${marker.page_id}::${marker.target_object_id}`
+    if (!dynamicMarkerMap.has(key)) dynamicMarkerMap.set(key, marker)
+  })
+
+  function getDynamicMarker(pageId, elementId) {
+    if (!pageId || !elementId) return null
+    return dynamicMarkerMap.get(`${pageId}::${elementId}`) || null
+  }
+
+  function formatMarkerMoney(value, currency) {
+    if (value == null || value === '') return ''
+    const amount = Number(value)
+    if (!Number.isFinite(amount)) return ''
+    const code = typeof currency === 'string' && /^[A-Z]{3}$/.test(currency) ? currency : null
+    if (code) {
+      try {
+        return new Intl.NumberFormat('es-DO', { style: 'currency', currency: code }).format(amount / 100)
+      } catch (e) {}
+    }
+    return (amount / 100).toFixed(2)
+  }
+
+  function formatOfferPromotionText(marker) {
+    const raw = typeof marker.promotion_text === 'string' ? marker.promotion_text.trim() : ''
+    const postPrice = formatMarkerMoney(marker.post_promotion_price_minor, marker.currency)
+    if (!raw) return postPrice ? `Luego costará ${postPrice}` : ''
+    const hasCurrency = /(?:[A-Z]{2,3}\$|RD\$|\$|€|£|¥|\b(?:DOP|USD|EUR|CAD|MXN|COP)\b)/.test(raw)
+    if (!postPrice || hasCurrency) return raw
+    if (/\d+(?:[.,]\d+)?\s*$/.test(raw)) {
+      return raw.replace(/\d+(?:[.,]\d+)?\s*$/, postPrice)
+    }
+    return `${raw}: ${postPrice}`
+  }
+
+  function savingsPercent(previousMinor, currentMinor) {
+    const previous = Number(previousMinor)
+    const current = Number(currentMinor)
+    if (!Number.isFinite(previous) || !Number.isFinite(current) || previous <= 0 || current <= 0 || current >= previous) return 0
+    return Math.round(((previous - current) / previous) * 100)
+  }
+
+  function appendMarkerRow(parent, label, value) {
+    if (value == null || value === '') return
+    const row = document.createElement('div')
+    row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.45;'
+    const key = document.createElement('span')
+    key.textContent = label
+    key.style.cssText = 'min-width:92px;color:#6b7280;font-weight:700;'
+    const val = document.createElement('span')
+    val.textContent = String(value)
+    val.style.cssText = 'flex:1;color:#111827;'
+    row.appendChild(key)
+    row.appendChild(val)
+    parent.appendChild(row)
+  }
+
+  function markerCustomFieldValue(value) {
+    if (value == null || value === '') return ''
+    if (typeof value === 'boolean') return value ? 'Sí' : 'No'
+    if (typeof value === 'string' || typeof value === 'number') return String(value)
+    if (Array.isArray(value)) {
+      const parts = value
+        .filter((item) => item != null && item !== '' && (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean'))
+        .map((item) => (typeof item === 'boolean' ? (item ? 'Sí' : 'No') : String(item)))
+      return parts.join(', ')
+    }
+    return ''
+  }
+
+  function isNonEmpty(value) {
+    if (value == null || value === '') return false
+    if (Array.isArray(value)) return value.length > 0
+    if (typeof value === 'object') return Object.keys(value).length > 0
+    return true
+  }
+
+  function safeUrl(value) {
+    if (!value || typeof value !== 'string') return ''
+    try {
+      const url = new URL(value)
+      return ['http:', 'https:'].includes(url.protocol) ? url.toString() : ''
+    } catch (e) {
+      return ''
+    }
+  }
+
+  function normalizeMarkerAccent(value) {
+    return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value.trim()) ? value.trim().toUpperCase() : '#F59E0B'
+  }
+
+  function normalizeMarkerColors(value) {
+    return (Array.isArray(value) ? value : []).map((item) => {
+      if (typeof item === 'string') {
+        const hex = item.trim()
+        return /^#[0-9a-fA-F]{6}$/.test(hex) ? { name: hex, hex: hex.toUpperCase() } : null
+      }
+      if (!item || typeof item !== 'object') return null
+      const rawHex = typeof item.hex === 'string' ? item.hex : typeof item.value === 'string' ? item.value : ''
+      const hex = rawHex.trim()
+      if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return null
+      return {
+        name: String(item.name || item.label || hex).trim(),
+        hex: hex.toUpperCase(),
+      }
+    }).filter(Boolean)
+  }
+
+  function markerOfferState(marker) {
+    const end = marker.promotion_ends_at ? new Date(marker.promotion_ends_at) : null
+    const endTime = end && !Number.isNaN(end.getTime()) ? end.getTime() : 0
+    const hasOffer = Boolean(endTime && marker.post_promotion_price_minor != null)
+    const active = hasOffer && Date.now() < endTime
+    return {
+      active,
+      endTime,
+      displayPriceMinor: active ? marker.price_minor : marker.post_promotion_price_minor ?? marker.price_minor,
+      showPromotionText: active && isNonEmpty(formatOfferPromotionText(marker)),
+    }
+  }
+
+  async function copyTextToClipboard(text) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+    } catch (e) {}
+    const input = document.createElement('textarea')
+    input.value = text
+    input.setAttribute('readonly', '')
+    input.style.cssText = 'position:fixed;left:-9999px;top:-9999px'
+    document.body.appendChild(input)
+    input.select()
+    let ok = false
+    try { ok = document.execCommand('copy') } catch (e) {}
+    input.remove()
+    return ok
+  }
+
+  function ensureDynamicMarkerStyles() {
+    if (document.getElementById('dynamic-marker-premium-styles')) return
+    const style = document.createElement('style')
+    style.id = 'dynamic-marker-premium-styles'
+    style.textContent = `
+      .dm-premium-overlay{position:fixed;inset:0;z-index:2200;background:rgba(4,7,17,.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:Inter,system-ui,sans-serif;color:#f8fafc;--dm-accent:#F59E0B}
+      .dm-premium-card{width:min(1120px,calc(100vw - 32px));height:min(820px,calc(100vh - 32px));max-height:calc(100vh - 32px);overflow:hidden;border:1px solid rgba(255,255,255,.14);border-radius:22px;background:linear-gradient(145deg,#111827,#0b1020 58%,#141827);box-shadow:0 30px 90px rgba(0,0,0,.55);position:relative;display:grid;grid-template-columns:minmax(0,1.06fr) minmax(360px,.94fr)}
+      .dm-premium-close{position:absolute;top:14px;right:14px;z-index:4;width:36px;height:36px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(15,23,42,.84);color:#fff;font-size:20px;line-height:1;cursor:pointer}
+      .dm-premium-media{min-height:0;height:100%;background:#050816;border-right:1px solid rgba(255,255,255,.1);display:flex;flex-direction:column}
+      .dm-premium-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;position:relative;padding:18px}
+      .dm-premium-stage img,.dm-premium-stage video{max-width:100%;max-height:100%;object-fit:contain;border-radius:16px;box-shadow:0 18px 44px rgba(0,0,0,.36)}
+      .dm-premium-media-badge{position:absolute;top:18px;left:18px;z-index:3;border:1px solid color-mix(in srgb,var(--dm-accent) 50%,transparent);background:color-mix(in srgb,var(--dm-accent) 20%,#050816);color:#fff;border-radius:999px;padding:7px 11px;font-size:12px;font-weight:900;text-transform:uppercase;box-shadow:0 10px 28px rgba(0,0,0,.32)}
+      .dm-premium-audio{width:min(420px,90%);padding:24px;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:rgba(255,255,255,.06)}
+      .dm-premium-nav{position:absolute;top:50%;transform:translateY(-50%);width:38px;height:38px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(15,23,42,.75);color:#fff;font-size:22px;cursor:pointer}
+      .dm-premium-prev{left:16px}.dm-premium-next{right:16px}
+      .dm-premium-thumbs{display:flex;gap:10px;overflow-x:auto;padding:0 18px 18px}
+      .dm-premium-thumb{width:72px;height:56px;flex:0 0 auto;border:1px solid rgba(255,255,255,.16);border-radius:12px;background:#111827;color:#cbd5e1;cursor:pointer;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:11px;position:relative}
+      .dm-premium-thumb[data-active="true"]{border-color:var(--dm-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--dm-accent) 28%,transparent)}
+      .dm-premium-thumb img{width:100%;height:100%;object-fit:cover}.dm-premium-thumb-media-icon{position:absolute;inset:auto 6px 6px auto;width:22px;height:22px;border-radius:999px;background:rgba(15,23,42,.82);color:#fff;display:flex;align-items:center;justify-content:center}.dm-premium-thumb-media-icon svg{width:13px;height:13px}.dm-premium-thumb-card{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:linear-gradient(145deg,rgba(255,255,255,.08),rgba(15,23,42,.9));color:#f8fafc}.dm-premium-thumb-card svg{width:18px;height:18px}.dm-premium-thumb-card span{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
+      .dm-premium-content{min-height:0;overflow:auto;padding:30px 30px 28px;display:flex;flex-direction:column;gap:16px}
+      .dm-premium-badges{display:flex;gap:8px;flex-wrap:wrap}.dm-premium-badge{border:1px solid color-mix(in srgb,var(--dm-accent) 45%,transparent);background:color-mix(in srgb,var(--dm-accent) 16%,transparent);color:var(--dm-accent);border-radius:999px;padding:5px 10px;font-size:11px;font-weight:800;text-transform:uppercase}
+      .dm-premium-title{font-size:30px;line-height:1.08;margin:0;color:#fff}.dm-premium-desc{margin:0;color:#cbd5e1;font-size:14px;line-height:1.58}
+      .dm-premium-price{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap}.dm-premium-current{font-size:28px;font-weight:900;color:var(--dm-accent)}.dm-premium-regular{display:flex;flex-direction:column;gap:3px;margin-top:2px}.dm-premium-regular-line{color:#cbd5e1;font-size:13px;font-weight:800}.dm-premium-regular-line strong{color:#e5e7eb;font-weight:900}.dm-premium-previous{color:#94a3b8;text-decoration:line-through}.dm-premium-savings{color:var(--dm-accent);font-size:12px;font-weight:950}.dm-premium-promo{display:block;margin:10px 0 0;padding:9px 11px;border:1px solid color-mix(in srgb,var(--dm-accent) 42%,rgba(255,255,255,.12));border-radius:12px;background:linear-gradient(180deg,color-mix(in srgb,var(--dm-accent) 18%,rgba(15,23,42,.88)),rgba(15,23,42,.72));color:#fff7ed;font-size:clamp(14px,1.25vw,16px);font-weight:950;line-height:1.35;text-align:center;box-shadow:0 10px 24px rgba(0,0,0,.18) inset}
+      .dm-premium-price-countdown{border:1px solid rgba(248,113,113,.72);border-radius:15px;background:radial-gradient(circle at top,rgba(248,113,113,.14),transparent 46%),linear-gradient(180deg,#160506,#070b15 72%);color:#f8fafc;padding:10px 12px;text-align:center;box-shadow:0 12px 30px rgba(127,29,29,.28),0 0 0 1px rgba(255,255,255,.05) inset}.dm-premium-countdown-kicker{display:block;color:#fff;font-size:10px;font-weight:950;text-transform:uppercase;letter-spacing:.16em;margin-bottom:6px;text-shadow:0 0 4px rgba(255,255,255,.25)}.dm-premium-countdown-value{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:end;gap:6px;color:#ff2626;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:clamp(28px,3.1vw,40px);font-weight:950;line-height:1;text-shadow:0 0 5px rgba(239,68,68,.55)}.dm-premium-countdown-value b{color:#ff3636;font-size:.82em;line-height:1}.dm-premium-countdown-labels{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:6px;margin-top:5px;color:#e5e7eb;font-size:9px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}.dm-premium-countdown-labels b{color:#64748b}
+      .dm-premium-meta{display:flex;flex-wrap:wrap;gap:0 8px;color:#94a3b8;font-size:13px;line-height:1.5}.dm-premium-meta strong{color:var(--dm-accent);font-weight:900}.dm-premium-meta-item{white-space:normal}.dm-premium-meta-sep{color:#475569}
+      .dm-premium-color-module{display:flex;flex-direction:column;gap:9px;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(255,255,255,.045);padding:12px}.dm-premium-module-title{font-size:12px;font-weight:900;color:#e5e7eb;text-transform:uppercase}
+      .dm-premium-swatches{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.dm-premium-swatch-wrap{display:inline-flex;align-items:center;gap:6px;color:#cbd5e1;font-size:12px}.dm-premium-swatch{width:24px;height:24px;border-radius:999px;border:2px solid rgba(255,255,255,.75);box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+      .dm-premium-accordions{display:flex;flex-direction:column;gap:8px}.dm-premium-accordion{border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(255,255,255,.045);overflow:hidden}.dm-premium-accordion summary{cursor:pointer;padding:13px 14px;font-weight:800;color:#f8fafc}.dm-premium-accordion-body{padding:0 14px 14px;color:#d1d5db;font-size:13px;line-height:1.55}.dm-premium-list{display:flex;flex-direction:column;gap:8px}.dm-premium-row{display:flex;gap:10px;justify-content:space-between;border-top:1px solid rgba(255,255,255,.08);padding-top:8px}.dm-premium-row:first-child{border-top:0;padding-top:0}.dm-premium-row span{color:#94a3b8}.dm-premium-row strong{color:#f8fafc;text-align:right}
+      .dm-premium-offer-cta{display:flex;margin-top:10px}.dm-premium-offer-cta .dm-premium-action{width:100%;box-shadow:0 10px 24px rgba(0,0,0,.24);font-size:clamp(16px,1.5vw,19px);font-weight:950;min-height:52px;gap:10px;color:#fff}.dm-premium-offer-cta .dm-premium-action svg{width:20px;height:20px;color:#fff;fill:#fff;flex:0 0 auto;transform:translateY(1px)}
+      .dm-premium-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px;padding-top:12px;border-top:1px solid rgba(255,255,255,.1)}.dm-premium-action{border:0;border-radius:12px;padding:12px 14px;font-size:13px;font-weight:900;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px}.dm-action-whatsapp{background:#22c55e;color:#052e16}.dm-action-link{background:#7c3aed;color:#fff}.dm-action-muted{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.14)}.dm-premium-action:focus-visible,.dm-premium-share-grid button:focus-visible{outline:3px solid var(--dm-accent);outline-offset:2px}.dm-premium-disabled{opacity:.9}
+      .dm-premium-share{grid-column:1/-1;border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:10px;background:rgba(255,255,255,.045)}.dm-premium-share-title{font-size:12px;font-weight:900;color:#e5e7eb;margin-bottom:8px}.dm-premium-share-grid{display:flex;flex-wrap:wrap;gap:8px}.dm-premium-share-grid button{width:42px;height:42px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:rgba(255,255,255,.08);color:#fff;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}.dm-premium-share-grid button[data-network="whatsapp"]{color:#22c55e}.dm-premium-share-grid button[data-network="facebook"]{color:#1877f2}.dm-premium-share-grid button[data-network="instagram"]{color:#e1306c}.dm-premium-share-grid button:hover{border-color:var(--dm-accent);color:var(--dm-accent)}
+      .dm-premium-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2300;background:#111827;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:9px 14px;font-size:13px;box-shadow:0 16px 50px rgba(0,0,0,.38)}
+      @media (max-width: 820px){.dm-premium-overlay{align-items:flex-end;padding:0}.dm-premium-card{width:100vw;height:94vh;max-height:94vh;border-radius:22px 22px 0 0;grid-template-columns:1fr;overflow:auto}.dm-premium-media{height:auto;min-height:320px;border-right:0;border-bottom:1px solid rgba(255,255,255,.1)}.dm-premium-content{overflow:visible;padding:24px 18px calc(24px + env(safe-area-inset-bottom))}.dm-premium-title{font-size:24px}.dm-premium-countdown-value{font-size:34px}.dm-premium-actions{grid-template-columns:1fr}.dm-premium-share-grid{grid-template-columns:1fr 1fr}.dm-premium-close{top:10px;right:10px}}
+    `
+    document.head.appendChild(style)
+  }
+
+  function showMarkerToast(message) {
+    const old = document.querySelector('.dm-premium-toast')
+    if (old) old.remove()
+    const toast = document.createElement('div')
+    toast.className = 'dm-premium-toast'
+    toast.textContent = message
+    document.body.appendChild(toast)
+    setTimeout(() => toast.remove(), 1800)
+  }
+
+  function appendRow(parent, label, value) {
+    if (!isNonEmpty(value)) return
+    const row = document.createElement('div')
+    row.className = 'dm-premium-row'
+    const key = document.createElement('span')
+    key.textContent = label
+    const val = document.createElement('strong')
+    val.textContent = String(value)
+    row.appendChild(key)
+    row.appendChild(val)
+    parent.appendChild(row)
+  }
+
+  function hasMeaningfulContent(node) {
+    if (!node) return false
+    if (node.textContent?.trim()) return true
+    return [...node.children].some((child) => hasMeaningfulContent(child))
+  }
+
+  function addAccordion(parent, title, fill) {
+    const details = document.createElement('details')
+    details.className = 'dm-premium-accordion'
+    const summary = document.createElement('summary')
+    summary.textContent = title
+    const body = document.createElement('div')
+    body.className = 'dm-premium-accordion-body'
+    fill(body)
+    if (!hasMeaningfulContent(body)) return
+    details.appendChild(summary)
+    details.appendChild(body)
+    parent.appendChild(details)
+  }
+
+  function showDynamicMarkerModal(marker) {
+    ensureDynamicMarkerStyles()
+    document.querySelectorAll('.dm-premium-overlay').forEach((node) => node.remove())
+    const accentColor = normalizeMarkerAccent(marker.accent_color)
+
+    const media = (Array.isArray(marker.media) ? marker.media : [])
+      .map((item) => ({
+        type: item?.type,
+        url: safeUrl(item?.url),
+        thumbnail_url: safeUrl(item?.thumbnail_url),
+        title: item?.title || item?.alt || '',
+        alt: item?.alt || item?.title || marker.name || '',
+      }))
+      .filter((item) => ['image', 'video', 'audio'].includes(item.type) && item.url)
+    let selectedMedia = 0
+    let galleryTimer = null
+    let resumeGalleryTimer = null
+    let mediaCleanups = []
+    let countdownTimer = null
+    let priceCountdownNode = null
+    let actionBar = null
+    let actionDefinitions = []
+    let offerTarget = ''
+    const colors = normalizeMarkerColors(marker.colors)
+    const hasTimedOffer = Boolean(marker.promotion_ends_at && marker.post_promotion_price_minor != null)
+    let offer = markerOfferState(marker)
+    let currentPrice = formatMarkerMoney(offer.displayPriceMinor, marker.currency)
+    let currentPriceNode = null
+    let regularPriceNode = null
+    let savingsNode = null
+    let promoNode = null
+    let offerCtaSlot = null
+
+    const back = document.createElement('div')
+    back.className = 'dm-premium-overlay'
+    back.style.setProperty('--dm-accent', accentColor)
+    const box = document.createElement('div')
+    box.className = 'dm-premium-card'
+    const close = document.createElement('button')
+    close.type = 'button'
+    close.textContent = '×'
+    close.setAttribute('aria-label', 'Cerrar ficha')
+    close.className = 'dm-premium-close'
+
+    let mediaStage
+    let thumbRow
+    function cleanupRenderedMedia() {
+      mediaCleanups.forEach((cleanup) => cleanup())
+      mediaCleanups = []
+    }
+    function stopGalleryTimer() {
+      if (galleryTimer) {
+        clearInterval(galleryTimer)
+        galleryTimer = null
+      }
+    }
+    function clearResumeGalleryTimer() {
+      if (resumeGalleryTimer) {
+        clearTimeout(resumeGalleryTimer)
+        resumeGalleryTimer = null
+      }
+    }
+    function stopAllGalleryTimers() {
+      stopGalleryTimer()
+      clearResumeGalleryTimer()
+    }
+    function startGalleryTimer() {
+      stopAllGalleryTimers()
+      if (media.length < 2) return
+      galleryTimer = setInterval(() => {
+        selectedMedia = (selectedMedia + 1) % media.length
+        renderMedia()
+      }, 5000)
+    }
+    function nextMediaIndexAfter(index) {
+      if (!media.length) return -1
+      return (index + 1) % media.length
+    }
+    function resumeGalleryLater() {
+      stopAllGalleryTimers()
+      if (media.length < 2) return
+      resumeGalleryTimer = setTimeout(() => {
+        selectedMedia = nextMediaIndexAfter(selectedMedia)
+        renderMedia()
+        startGalleryTimer()
+      }, 5000)
+    }
+    function chooseMedia(index, source = 'manual') {
+      selectedMedia = index
+      renderMedia()
+      if (source === 'auto') startGalleryTimer()
+      else if (media[selectedMedia]?.type === 'image') startGalleryTimer()
+      else stopAllGalleryTimers()
+    }
+    function updateCountdown() {
+      if (!priceCountdownNode || !offer.active) return
+      const remaining = Math.max(0, offer.endTime - Date.now())
+      if (!remaining) {
+        if (priceCountdownNode) priceCountdownNode.remove()
+        priceCountdownNode = null
+        if (offerCtaSlot) {
+          offerCtaSlot.remove()
+          offerCtaSlot = null
+        }
+        if (countdownTimer) {
+          clearInterval(countdownTimer)
+          countdownTimer = null
+        }
+        offer = markerOfferState(marker)
+        currentPrice = formatMarkerMoney(offer.displayPriceMinor, marker.currency)
+        if (currentPriceNode) currentPriceNode.textContent = currentPrice
+        const percent = savingsPercent(marker.previous_price_minor, offer.displayPriceMinor)
+        if (regularPriceNode) regularPriceNode.hidden = percent <= 0
+        if (savingsNode) savingsNode.textContent = percent > 0 ? `Ahorras ${percent}%` : ''
+        if (promoNode) {
+          promoNode.remove()
+          promoNode = null
+        }
+        if (offerTarget && actionBar && !actionBar.querySelector(`[data-action-key="${offerTarget}"]`)) {
+          const selected = actionDefinitions.find(([key]) => key === offerTarget)
+          if (selected) actionBar.prepend(makeAction(selected[1], selected[2], selected[3], selected[4], selected[0]))
+        }
+        renderMedia()
+        return
+      }
+      const totalSeconds = Math.floor(remaining / 1000)
+      const days = Math.floor(totalSeconds / 86400)
+      const hours = Math.floor((totalSeconds % 86400) / 3600)
+      const minutes = Math.floor((totalSeconds % 3600) / 60)
+      const value = priceCountdownNode.querySelector('.dm-premium-countdown-value')
+      if (value) {
+        value.innerHTML = `<span>${String(days).padStart(2, '0')}</span><b>:</b><span>${String(hours).padStart(2, '0')}</span><b>:</b><span>${String(minutes).padStart(2, '0')}</span>`
+      }
+    }
+    function renderMedia() {
+      if (!mediaStage) return
+      cleanupRenderedMedia()
+      mediaStage.innerHTML = ''
+      const item = media[selectedMedia]
+      if (!item) return
+      const showOverlayInfo = item.type === 'image' || item.type === 'video'
+      if (item.type === 'image') {
+        const img = document.createElement('img')
+        img.src = item.url
+        img.alt = item.alt
+        mediaStage.appendChild(img)
+      } else if (item.type === 'video') {
+        const video = document.createElement('video')
+        video.src = item.url
+        video.controls = true
+        video.preload = 'metadata'
+        video.poster = item.thumbnail_url || ''
+        const onPlay = () => stopAllGalleryTimers()
+        const onPause = () => resumeGalleryLater()
+        const onEnded = () => resumeGalleryLater()
+        video.addEventListener('play', onPlay)
+        video.addEventListener('pause', onPause)
+        video.addEventListener('ended', onEnded)
+        mediaCleanups.push(() => {
+          video.removeEventListener('play', onPlay)
+          video.removeEventListener('pause', onPause)
+          video.removeEventListener('ended', onEnded)
+        })
+        mediaStage.appendChild(video)
+      } else if (item.type === 'audio') {
+        const audioBox = document.createElement('div')
+        audioBox.className = 'dm-premium-audio'
+        if (item.title) {
+          const title = document.createElement('strong')
+          title.textContent = item.title
+          title.style.cssText = 'display:block;margin-bottom:12px;color:#fff;'
+          audioBox.appendChild(title)
+        }
+        const audio = document.createElement('audio')
+        audio.src = item.url
+        audio.controls = true
+        audio.style.width = '100%'
+        const onPlay = () => stopAllGalleryTimers()
+        const onPause = () => resumeGalleryLater()
+        const onEnded = () => resumeGalleryLater()
+        audio.addEventListener('play', onPlay)
+        audio.addEventListener('pause', onPause)
+        audio.addEventListener('ended', onEnded)
+        mediaCleanups.push(() => {
+          audio.removeEventListener('play', onPlay)
+          audio.removeEventListener('pause', onPause)
+          audio.removeEventListener('ended', onEnded)
+        })
+        audioBox.appendChild(audio)
+        mediaStage.appendChild(audioBox)
+      }
+      const badgeLabel = showOverlayInfo ? (offer.active ? (marker.badge_text || 'Oferta') : (hasTimedOffer ? '' : marker.badge_text || '')) : ''
+      if (badgeLabel) {
+        const badge = document.createElement('div')
+        badge.className = 'dm-premium-media-badge'
+        badge.textContent = badgeLabel
+        mediaStage.appendChild(badge)
+      }
+      if (media.length > 1) {
+        const prev = document.createElement('button')
+        prev.type = 'button'
+        prev.className = 'dm-premium-nav dm-premium-prev'
+        prev.textContent = '‹'
+        prev.addEventListener('click', (e) => {
+          e.stopPropagation()
+          chooseMedia((selectedMedia + media.length - 1) % media.length)
+        })
+        const next = document.createElement('button')
+        next.type = 'button'
+        next.className = 'dm-premium-nav dm-premium-next'
+        next.textContent = '›'
+        next.addEventListener('click', (e) => {
+          e.stopPropagation()
+          chooseMedia((selectedMedia + 1) % media.length)
+        })
+        mediaStage.appendChild(prev)
+        mediaStage.appendChild(next)
+      }
+      if (thumbRow) {
+        ;[...thumbRow.children].forEach((child, index) => {
+          child.dataset.active = index === selectedMedia ? 'true' : 'false'
+        })
+      }
+    }
+
+    if (media.length) {
+      const mediaPanel = document.createElement('div')
+      mediaPanel.className = 'dm-premium-media'
+      mediaStage = document.createElement('div')
+      mediaStage.className = 'dm-premium-stage'
+      mediaPanel.appendChild(mediaStage)
+      if (media.length > 1) {
+        thumbRow = document.createElement('div')
+        thumbRow.className = 'dm-premium-thumbs'
+        media.forEach((item, index) => {
+          const thumb = document.createElement('button')
+          thumb.type = 'button'
+          thumb.className = 'dm-premium-thumb'
+          thumb.dataset.active = index === selectedMedia ? 'true' : 'false'
+          if (item.type === 'image') {
+            const img = document.createElement('img')
+            img.src = item.thumbnail_url || item.url
+            img.alt = item.alt
+            thumb.appendChild(img)
+          } else {
+            if (item.type === 'video' && item.thumbnail_url) {
+              const img = document.createElement('img')
+              img.src = item.thumbnail_url
+              img.alt = item.title || 'Video'
+              thumb.appendChild(img)
+              const play = document.createElement('span')
+              play.className = 'dm-premium-thumb-media-icon'
+              play.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
+              thumb.appendChild(play)
+            } else {
+              const card = document.createElement('span')
+              card.className = 'dm-premium-thumb-card'
+              card.innerHTML = item.type === 'video'
+                ? '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><span>Video</span>'
+                : '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg><span>Audio</span>'
+              thumb.appendChild(card)
+            }
+          }
+          thumb.addEventListener('click', () => {
+            chooseMedia(index)
+          })
+          thumbRow.appendChild(thumb)
+        })
+        mediaPanel.appendChild(thumbRow)
+      }
+      box.appendChild(mediaPanel)
+    }
+
+    const body = document.createElement('div')
+    body.className = 'dm-premium-content'
+
+    const title = document.createElement('h2')
+    title.className = 'dm-premium-title'
+    title.textContent = marker.name || 'Ficha dinámica'
+    body.appendChild(title)
+
+    if (marker.description) {
+      const desc = document.createElement('p')
+      desc.className = 'dm-premium-desc'
+      desc.textContent = marker.description
+      body.appendChild(desc)
+    }
+
+    const savings = savingsPercent(marker.previous_price_minor, offer.displayPriceMinor)
+    const previousPrice = savings > 0 ? formatMarkerMoney(marker.previous_price_minor, marker.currency) : ''
+    if (currentPrice || previousPrice) {
+      const priceBox = document.createElement('div')
+      priceBox.className = 'dm-premium-price'
+      if (currentPrice) {
+        const current = document.createElement('strong')
+        current.className = 'dm-premium-current'
+        current.textContent = currentPrice
+        currentPriceNode = current
+        priceBox.appendChild(current)
+      }
+      if (previousPrice) {
+        const regular = document.createElement('div')
+        regular.className = 'dm-premium-regular'
+        regularPriceNode = regular
+        const line = document.createElement('span')
+        line.className = 'dm-premium-regular-line'
+        line.appendChild(document.createTextNode('Precio regular: '))
+        const previous = document.createElement('strong')
+        previous.className = 'dm-premium-previous'
+        previous.textContent = previousPrice
+        line.appendChild(previous)
+        const saved = document.createElement('span')
+        saved.className = 'dm-premium-savings'
+        saved.textContent = `Ahorras ${savings}%`
+        savingsNode = saved
+        regular.appendChild(line)
+        regular.appendChild(saved)
+        priceBox.appendChild(regular)
+      }
+      body.appendChild(priceBox)
+    }
+    if (offer.active) {
+      priceCountdownNode = document.createElement('div')
+      priceCountdownNode.className = 'dm-premium-price-countdown'
+      const countdownKicker = document.createElement('span')
+      countdownKicker.className = 'dm-premium-countdown-kicker'
+      countdownKicker.textContent = 'Oferta termina en'
+      const countdownValue = document.createElement('span')
+      countdownValue.className = 'dm-premium-countdown-value'
+      const countdownLabels = document.createElement('span')
+      countdownLabels.className = 'dm-premium-countdown-labels'
+      countdownLabels.innerHTML = '<span>Días</span><b>·</b><span>Horas</span><b>·</b><span>Minutos</span>'
+      priceCountdownNode.appendChild(countdownKicker)
+      priceCountdownNode.appendChild(countdownValue)
+      priceCountdownNode.appendChild(countdownLabels)
+      if (offer.showPromotionText) {
+        const promo = document.createElement('span')
+        promo.className = 'dm-premium-promo'
+        promo.textContent = formatOfferPromotionText(marker)
+        promoNode = promo
+        priceCountdownNode.appendChild(promo)
+      }
+      offerCtaSlot = document.createElement('div')
+      offerCtaSlot.className = 'dm-premium-offer-cta'
+      priceCountdownNode.appendChild(offerCtaSlot)
+      body.appendChild(priceCountdownNode)
+    }
+
+    const metaParts = [
+      ['Referencia', marker.reference],
+      ['Categoría', marker.category],
+      ['Disponibilidad', marker.availability],
+    ].filter(([, value]) => isNonEmpty(value))
+    if (metaParts.length) {
+      const meta = document.createElement('div')
+      meta.className = 'dm-premium-meta'
+      metaParts.forEach(([label, value], index) => {
+        if (index) {
+          const sep = document.createElement('span')
+          sep.className = 'dm-premium-meta-sep'
+          sep.textContent = '·'
+          meta.appendChild(sep)
+        }
+        const item = document.createElement('span')
+        item.className = 'dm-premium-meta-item'
+        const key = document.createElement('strong')
+        key.textContent = `${label}: `
+        const val = document.createElement('span')
+        val.textContent = String(value)
+        item.appendChild(key)
+        item.appendChild(val)
+        meta.appendChild(item)
+      })
+      body.appendChild(meta)
+    }
+
+    if (colors.length) {
+      const colorModule = document.createElement('div')
+      colorModule.className = 'dm-premium-color-module'
+      const key = document.createElement('div')
+      key.className = 'dm-premium-module-title'
+      key.textContent = 'Colores disponibles'
+      const swatches = document.createElement('div')
+      swatches.className = 'dm-premium-swatches'
+      colors.forEach((color) => {
+        const wrap = document.createElement('span')
+        wrap.className = 'dm-premium-swatch-wrap'
+        const swatch = document.createElement('span')
+        swatch.className = 'dm-premium-swatch'
+        swatch.style.background = color.hex
+        swatch.title = color.name || color.hex
+        wrap.appendChild(swatch)
+        if (color.name && color.name !== color.hex) {
+          const name = document.createElement('span')
+          name.textContent = color.name
+          wrap.appendChild(name)
+        }
+        swatches.appendChild(wrap)
+      })
+      colorModule.appendChild(key)
+      colorModule.appendChild(swatches)
+      if (swatches.childElementCount) body.appendChild(colorModule)
+    }
+
+    const accordions = document.createElement('div')
+    accordions.className = 'dm-premium-accordions'
+    addAccordion(accordions, 'Variantes y especificaciones', (section) => {
+      const list = document.createElement('div')
+      list.className = 'dm-premium-list'
+      ;(Array.isArray(marker.sizes) ? marker.sizes : []).forEach((item) => appendRow(list, item?.label || 'Variante', item?.value || (item?.available === false ? 'No disponible' : 'Disponible')))
+      section.appendChild(list)
+    })
+    addAccordion(accordions, 'Materiales', (section) => {
+      const list = document.createElement('div')
+      list.className = 'dm-premium-list'
+      ;(Array.isArray(marker.materials) ? marker.materials : []).forEach((item) => appendRow(list, item?.name || 'Material', item?.available === false ? 'No disponible' : 'Disponible'))
+      section.appendChild(list)
+    })
+    addAccordion(accordions, 'Medidas', (section) => {
+      const list = document.createElement('div')
+      list.className = 'dm-premium-list'
+      ;(Array.isArray(marker.measurements) ? marker.measurements : []).forEach((item) => appendRow(list, item?.label || 'Medida', [item?.value, item?.unit].filter(Boolean).join(' ')))
+      section.appendChild(list)
+    })
+    ;(Array.isArray(marker.custom_fields) ? marker.custom_fields : []).forEach((field) => {
+      if (!field || typeof field !== 'object') return
+      const value = markerCustomFieldValue(field.value)
+      if (!isNonEmpty(value)) return
+      addAccordion(accordions, field.label || field.name || field.key || 'Detalle', (section) => {
+        const text = document.createElement('div')
+        text.textContent = value
+        section.appendChild(text)
+      })
+    })
+    if (accordions.childElementCount) body.appendChild(accordions)
+
+    const actions = marker.actions && typeof marker.actions === 'object' ? marker.actions : {}
+    const contactAction = actions.contact_whatsapp || actions.whatsapp || {}
+    const shareAction = actions.share || {}
+    const offerCtaConfig = actions.offer_cta && typeof actions.offer_cta === 'object' ? actions.offer_cta : {}
+    const offerCtaCopy = typeof offerCtaConfig.custom_label === 'string' && offerCtaConfig.custom_label.trim()
+      ? offerCtaConfig.custom_label.trim()
+      : typeof offerCtaConfig.preset === 'string' && offerCtaConfig.preset.trim()
+        ? offerCtaConfig.preset.trim()
+        : ''
+    actionBar = document.createElement('div')
+    actionBar.className = 'dm-premium-actions'
+    const icons = {
+      whatsapp: '<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.5 3.5A11.7 11.7 0 0 0 12.2 0C5.7 0 .5 5.2.5 11.6c0 2 .5 4 1.5 5.7L0 24l6.9-1.8a11.7 11.7 0 0 0 5.3 1.3h.1c6.4 0 11.6-5.2 11.7-11.6 0-3.1-1.2-6-3.5-8.4ZM12.3 21.6h-.1c-1.7 0-3.4-.5-4.9-1.3l-.4-.2-4.1 1.1 1.1-4-.3-.4a9.8 9.8 0 0 1-1.5-5.1c0-5.4 4.4-9.7 9.8-9.7 2.6 0 5.1 1 6.9 2.9a9.6 9.6 0 0 1 2.8 6.9c-.1 5.4-4.4 9.8-9.3 9.8Zm5.3-7.3c-.3-.1-1.7-.8-1.9-.9-.3-.1-.5-.1-.7.1-.2.3-.8.9-.9 1.1-.2.2-.3.2-.6.1-.3-.1-1.2-.4-2.3-1.4-.8-.8-1.4-1.7-1.6-2-.2-.3 0-.4.1-.6l.5-.5c.2-.2.2-.3.3-.5.1-.2 0-.4 0-.5 0-.1-.7-1.6-.9-2.2-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.4s1 2.8 1.2 3c.1.2 2 3.1 4.9 4.3.7.3 1.2.5 1.6.6.7.2 1.3.2 1.8.1.5-.1 1.7-.7 1.9-1.3.2-.6.2-1.2.2-1.3-.1-.2-.3-.3-.6-.4Z"/></svg>',
+      link: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>',
+      facebook: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22 12a10 10 0 1 0-11.6 9.9v-7h-2.5V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.5h-1.3c-1.2 0-1.6.8-1.6 1.6V12h2.8l-.4 2.9h-2.4v7A10 10 0 0 0 22 12Z"/></svg>',
+      instagram: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>',
+      copy: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2.8-2.8a5 5 0 0 0-7.1-7.1l-1.6 1.6"/><path d="M14 11a5 5 0 0 0-7.1 0l-2.8 2.8a5 5 0 0 0 7.1 7.1l1.6-1.6"/></svg>',
+      share: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>',
+    }
+    const makeAction = (label, className, onClick, icon = '', key = '', disabled = false) => {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = `dm-premium-action ${className}${disabled ? ' dm-premium-disabled' : ''}`
+      btn.innerHTML = `${icon}<span>${label}</span>`
+      if (key) btn.dataset.actionKey = key
+      if (!disabled) btn.addEventListener('click', onClick)
+      return btn
+    }
+    const appendAction = (label, className, onClick, icon = '', key = '', disabled = false) => {
+      const btn = makeAction(label, className, onClick, icon, key, disabled)
+      actionBar.appendChild(btn)
+      return btn
+    }
+    actionDefinitions = []
+    if (contactAction?.enabled && contactAction?.phone) {
+      const openWhatsApp = (messageCopy) => {
+        const messageLines = [
+          `Hola, me interesa: ${marker.name || 'esta ficha'}`,
+          marker.reference ? `Referencia: ${marker.reference}` : '',
+        ].filter(Boolean)
+        const finalCopy = messageCopy || contactAction.message_template || ''
+        if (finalCopy) messageLines.push('', finalCopy)
+        const message = messageLines.join('\n')
+        window.open(`https://wa.me/${String(contactAction.phone).replace(/[^\d]/g, '')}?text=${encodeURIComponent(message)}`, '_blank', 'noopener')
+      }
+      actionDefinitions.push(['contact_whatsapp', contactAction.label || 'Contactar vendedor', 'dm-action-whatsapp', () => openWhatsApp(''), icons.whatsapp, (label) => openWhatsApp(label)])
+    }
+    if (actions.external_link?.enabled && safeUrl(actions.external_link.url)) {
+      actionDefinitions.push(['external_link', actions.external_link.label || 'Ver enlace', 'dm-action-link', () => {
+        window.open(safeUrl(actions.external_link.url), '_blank', 'noopener')
+      }, icons.link])
+    }
+    offerTarget = offer.active && ['contact_whatsapp', 'external_link'].includes(offerCtaConfig?.target) ? offerCtaConfig.target : ''
+    if (offerTarget && offerCtaSlot) {
+      const selected = actionDefinitions.find(([key]) => key === offerTarget)
+      if (selected) {
+        const visibleLabel = offerCtaCopy || selected[1]
+        const onClick = selected[5] ? () => selected[5](visibleLabel) : selected[3]
+        offerCtaSlot.appendChild(makeAction(visibleLabel, selected[2], onClick, selected[4], selected[0]))
+      }
+    }
+    actionDefinitions
+      .filter(([key]) => key !== offerTarget)
+      .forEach(([key, label, className, onClick, icon]) => appendAction(label, className, onClick, icon, key))
+    const shareEnabled = Boolean(shareAction.enabled || shareAction.whatsapp || shareAction.facebook || shareAction.copy_link || shareAction.native)
+    if (shareEnabled) {
+      const sharePanel = document.createElement('div')
+      sharePanel.className = 'dm-premium-share'
+      const shareTitle = document.createElement('div')
+      shareTitle.className = 'dm-premium-share-title'
+      shareTitle.textContent = 'Compartir en'
+      const shareGrid = document.createElement('div')
+      shareGrid.className = 'dm-premium-share-grid'
+      const shareText = `${marker.name || document.title}\n${location.href}`
+      const addShare = (label, icon, onClick) => {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.innerHTML = icon
+        btn.title = label
+        btn.setAttribute('aria-label', label)
+        btn.addEventListener('click', onClick)
+        shareGrid.appendChild(btn)
+        return btn
+      }
+      if (shareAction.whatsapp) addShare('WhatsApp', icons.whatsapp, () => window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank', 'noopener')).dataset.network = 'whatsapp'
+      if (shareAction.facebook) addShare('Facebook', icons.facebook, () => window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(location.href)}`, '_blank', 'noopener')).dataset.network = 'facebook'
+      if (safeUrl(shareAction.instagram_url)) addShare('Instagram', icons.instagram, () => window.open(safeUrl(shareAction.instagram_url), '_blank', 'noopener')).dataset.network = 'instagram'
+      if (shareAction.copy_link) addShare('Copiar enlace', icons.copy, async () => {
+        if (await copyTextToClipboard(location.href)) showMarkerToast('Enlace copiado')
+      })
+      if (shareAction.native && navigator.share) addShare('Compartir', icons.share, async () => {
+        try {
+          await navigator.share({ title: marker.name || document.title, text: marker.description || '', url: location.href })
+        } catch (e) {}
+      })
+      sharePanel.appendChild(shareTitle)
+      sharePanel.appendChild(shareGrid)
+      if (shareGrid.childElementCount) actionBar.appendChild(sharePanel)
+    }
+    if (actionBar.childElementCount) body.appendChild(actionBar)
+
+    function cleanup() {
+      stopAllGalleryTimers()
+      cleanupRenderedMedia()
+      if (countdownTimer) clearInterval(countdownTimer)
+      document.removeEventListener('keydown', onKey)
+      back.remove()
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') cleanup()
+    }
+    close.addEventListener('click', cleanup)
+    back.addEventListener('click', (e) => { if (e.target === back) cleanup() })
+    document.addEventListener('keydown', onKey)
+
+    box.appendChild(close)
+    box.appendChild(body)
+    back.appendChild(box)
+    document.body.appendChild(back)
+    renderMedia()
+    if (offer.active && !countdownTimer) {
+      updateCountdown()
+      countdownTimer = setInterval(updateCountdown, 1000)
+    }
+    startGalleryTimer()
+  }
+
+  function ensurePublicCatalogStyles() {
+    if (document.getElementById('dynamic-marker-catalog-styles')) return
+    const style = document.createElement('style')
+    style.id = 'dynamic-marker-catalog-styles'
+    style.textContent = `
+      .dm-catalog-trigger{min-width:auto;padding:0 12px;border:0;border-radius:999px;background:#4f46e5;color:#fff;font:800 12px Inter,system-ui,sans-serif;cursor:pointer;height:38px;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap}.dm-catalog-trigger svg{width:15px;height:15px;flex:0 0 auto}
+      .dm-catalog-overlay{position:fixed;inset:0;z-index:2100;background:rgba(2,6,23,.38);display:flex;align-items:flex-start;justify-content:flex-end;padding:78px 18px 18px;font-family:Inter,system-ui,sans-serif;color:#111827}
+      .dm-catalog-panel{width:min(430px,calc(100vw - 36px));max-height:min(720px,calc(100dvh - 96px));border:1px solid rgba(15,23,42,.12);border-radius:18px;background:#fff;box-shadow:0 24px 70px rgba(15,23,42,.35);display:flex;flex-direction:column;overflow:hidden}
+      .dm-catalog-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:16px 16px 12px;border-bottom:1px solid #e5e7eb}.dm-catalog-title{margin:0;font-size:18px;color:#111827}.dm-catalog-copy{margin:3px 0 0;color:#6b7280;font-size:12px;line-height:1.35}.dm-catalog-close{border:1px solid #d1d5db;border-radius:999px;background:#fff;color:#374151;width:32px;height:32px;font-size:20px;line-height:1;cursor:pointer}
+      .dm-catalog-form{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 16px;border-bottom:1px solid #f3f4f6}.dm-catalog-form label{display:flex;flex-direction:column;gap:4px;color:#4b5563;font-size:11px;font-weight:850}.dm-catalog-form input,.dm-catalog-form select{min-width:0;border:1px solid #d1d5db;border-radius:10px;background:#fff;color:#111827;padding:9px 10px;font:500 13px Inter,system-ui,sans-serif;box-sizing:border-box}.dm-catalog-form .dm-catalog-wide{grid-column:1/-1}.dm-catalog-search-row{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}.dm-catalog-query{min-width:0}.dm-catalog-actions{display:flex;gap:8px;align-items:flex-end}.dm-catalog-help{grid-column:1/-1;margin:0;color:#4b5563;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-size:12px;line-height:1.35}.dm-catalog-search,.dm-catalog-clear,.dm-catalog-more{border:0;border-radius:10px;padding:10px 12px;font:900 13px Inter,system-ui,sans-serif;cursor:pointer}.dm-catalog-search{background:#4f46e5;color:#fff}.dm-catalog-clear,.dm-catalog-more{background:#f3f4f6;color:#374151}
+      .dm-catalog-body{min-height:150px;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:9px}.dm-catalog-state{border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;color:#6b7280;padding:16px;text-align:center;font-size:13px;line-height:1.45}.dm-catalog-error{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+      .dm-catalog-item{border:1px solid #e5e7eb;border-radius:12px;background:#fff;padding:9px;display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;text-align:left;color:#111827;cursor:pointer;font-family:Inter,system-ui,sans-serif}.dm-catalog-item:disabled{opacity:.66;cursor:wait}.dm-catalog-cover{width:64px;height:64px;border-radius:10px;background:linear-gradient(135deg,#f9fafb,#e5e7eb);overflow:hidden;display:flex;align-items:center;justify-content:center;color:#6b7280;font-size:10px;font-weight:900}.dm-catalog-cover img{width:100%;height:100%;object-fit:cover;display:block}.dm-catalog-info{min-width:0;display:flex;flex-direction:column;gap:4px}.dm-catalog-row{display:flex;gap:6px;align-items:center;min-width:0}.dm-catalog-name{font-size:13px;font-weight:950;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dm-catalog-badge{border-radius:999px;background:#fff7ed;color:#9a3412;padding:2px 7px;font-size:10px;font-weight:950;white-space:nowrap}.dm-catalog-meta{color:#6b7280;font-size:11.5px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dm-catalog-price{color:#111827;font-size:12px;font-weight:900}
+      .dm-catalog-footer{padding:0 16px 14px;display:flex;justify-content:center}.dm-catalog-more:disabled{opacity:.6;cursor:wait}
+      @media (max-width: 820px){.dm-catalog-trigger{width:38px;padding:0}.dm-catalog-trigger span{display:none}.dm-catalog-overlay{align-items:flex-end;justify-content:center;padding:0;background:rgba(2,6,23,.52)}.dm-catalog-panel{width:100vw;max-height:88dvh;border-radius:22px 22px 0 0}.dm-catalog-form,.dm-catalog-search-row{grid-template-columns:1fr}.dm-catalog-actions{flex-direction:column}.dm-catalog-search,.dm-catalog-clear{width:100%}}
+    `
+    document.head.appendChild(style)
+  }
+
+  function setupPublicCatalogSearch() {
+    const controls = document.getElementById('controls')
+    const shareBtn = document.getElementById('btn-share')
+    if (!controls || !shareBtn || document.getElementById('btn-dynamic-catalog')) return
+
+    ensurePublicCatalogStyles()
+
+    const state = {
+      visible: false,
+      initialized: false,
+      loading: false,
+      loadingMore: false,
+      detailLoadingId: '',
+      error: '',
+      items: [],
+      page: { has_more: false, next_cursor: null },
+      filters: { q: '', category: '', availability: '', price_min: '', price_max: '' },
+      meta: { filters: { categories: [], availabilities: [], price_range: { min_minor: null, max_minor: null, currency: 'USD' } } },
+    }
+
+    const trigger = document.createElement('button')
+    trigger.id = 'btn-dynamic-catalog'
+    trigger.type = 'button'
+    trigger.className = 'dm-catalog-trigger'
+    trigger.title = 'Buscar en catálogo'
+    trigger.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg><span>Buscar</span>'
+    trigger.dataset.flipInteractive = 'true'
+    trigger.style.display = 'none'
+
+    const sep = document.createElement('div')
+    sep.className = 'ctrl-sep'
+    sep.dataset.catalogSeparator = 'true'
+    sep.style.display = 'none'
+
+    controls.insertBefore(sep, shareBtn)
+    controls.insertBefore(trigger, shareBtn)
+
+    let overlay = null
+    let body = null
+    let footer = null
+    let priceRangeHelp = null
+    const inputs = {}
+
+    function catalogUrl({ append = false } = {}) {
+      const qs = new URLSearchParams()
+      qs.set('limit', '12')
+      if (append && state.page.next_cursor) qs.set('cursor', state.page.next_cursor)
+      Object.entries(state.filters).forEach(([key, value]) => {
+        const clean = String(value || '').trim()
+        if (!clean) return
+        qs.set(key, clean)
+      })
+      return `${API_BASE}/view/${encodeURIComponent(slug)}/dynamic-markers/catalog?${qs.toString()}`
+    }
+
+    function money(value, currency) {
+      return formatMarkerMoney(value, currency)
+    }
+
+    function friendlyCatalogError(error, action = 'load') {
+      const message = rawErrorMessage(error)
+      const normalized = message.toLowerCase()
+      if (normalized.includes('price_min') && normalized.includes('price_max')) return 'El precio mínimo no puede ser mayor que el precio máximo.'
+      if (normalized.includes('price_min')) return 'Ingresa un precio mínimo válido.'
+      if (normalized.includes('price_max')) return 'Ingresa un precio máximo válido.'
+      if (normalized.includes('cursor')) return 'No pudimos cargar más resultados. Inténtalo nuevamente.'
+      if (/\b404\b|no encontrado|not found/.test(normalized)) return action === 'detail' ? 'Esta ficha ya no está disponible.' : 'No encontramos fichas disponibles.'
+      if (/failed to fetch|network|fetch/.test(normalized)) return action === 'detail' ? 'No pudimos abrir esta ficha. Revisa tu conexión e inténtalo otra vez.' : 'No pudimos cargar las fichas. Revisa tu conexión e inténtalo nuevamente.'
+      if (message && !isTechnicalErrorMessage(message)) return message
+      if (action === 'detail') return 'No pudimos abrir esta ficha. Inténtalo otra vez.'
+      return 'No pudimos cargar las fichas. Inténtalo nuevamente.'
+    }
+
+    function decimalFromMinor(value) {
+      return value == null ? '' : (Number(value) / 100).toFixed(2)
+    }
+
+    function filterMeta() {
+      return state.meta?.filters || {}
+    }
+
+    function priceRangeMeta() {
+      return filterMeta().price_range || { min_minor: null, max_minor: null, currency: 'USD' }
+    }
+
+    function filterOptions(key) {
+      if (key === 'category') return [['', 'Todas'], ...(filterMeta().categories || []).map((value) => [value, value])]
+      if (key === 'availability') return [['', 'Todas'], ...(filterMeta().availabilities || []).map((value) => [value, value])]
+      return null
+    }
+
+    function updateSelectOptions(input, options) {
+      if (!input || !options) return
+      const current = input.value
+      input.innerHTML = ''
+      options.forEach(([value, text]) => {
+        const option = document.createElement('option')
+        option.value = value
+        option.textContent = text
+        input.appendChild(option)
+      })
+      input.value = options.some(([value]) => value === current) ? current : ''
+    }
+
+    function updatePriceGuidance() {
+      const range = priceRangeMeta()
+      const min = range.min_minor
+      const max = range.max_minor
+      const currency = range.currency || 'USD'
+      if (inputs.price_min) inputs.price_min.placeholder = min == null ? 'Sin mínimo' : decimalFromMinor(min)
+      if (inputs.price_max) inputs.price_max.placeholder = max == null ? 'Sin máximo' : decimalFromMinor(max)
+      if (!priceRangeHelp) return
+      if (min == null || max == null) {
+        priceRangeHelp.textContent = 'Esta publicación todavía no tiene precios visibles.'
+        return
+      }
+      priceRangeHelp.textContent = `Rango disponible: ${money(min, currency)} - ${money(max, currency)}`
+    }
+
+    function syncInputsFromState() {
+      Object.entries(inputs).forEach(([key, input]) => {
+        updateSelectOptions(input, filterOptions(key))
+        input.value = state.filters[key] || ''
+      })
+      updatePriceGuidance()
+    }
+
+    function setFiltersFromInputs() {
+      Object.keys(state.filters).forEach((key) => {
+        state.filters[key] = inputs[key]?.value?.trim?.() || ''
+      })
+    }
+
+    async function fetchCatalog({ append = false, silent = false } = {}) {
+      if (append && !state.page.next_cursor) return
+      state.error = ''
+      if (append) state.loadingMore = true
+      else state.loading = true
+      if (!silent) renderPanel()
+
+      try {
+        const response = await fetch(catalogUrl({ append }))
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok || !payload.success) throw new Error(payload.error || 'No pudimos cargar las fichas. Inténtalo nuevamente.')
+        const incoming = Array.isArray(payload.data) ? payload.data : []
+        if (append) {
+          const known = new Set(state.items.map((item) => item.id))
+          state.items = [...state.items, ...incoming.filter((item) => !known.has(item.id))]
+        } else {
+          state.items = incoming
+        }
+        state.page = payload.page || { has_more: false, next_cursor: null }
+        state.meta = payload.meta || state.meta
+        state.initialized = true
+      } catch (error) {
+        state.error = friendlyCatalogError(error, append ? 'more' : 'load')
+        if (!append) {
+          state.items = []
+          state.page = { has_more: false, next_cursor: null }
+        }
+      } finally {
+        state.loading = false
+        state.loadingMore = false
+        if (!silent) renderPanel()
+      }
+    }
+
+    async function openMarkerFromCatalog(item) {
+      state.detailLoadingId = item.id
+      state.error = ''
+      renderPanel()
+      try {
+        const response = await fetch(`${API_BASE}/view/${encodeURIComponent(slug)}/dynamic-markers/${encodeURIComponent(item.id)}`)
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok || !payload.success) throw new Error(payload.error || 'No pudimos abrir esta ficha. Inténtalo otra vez.')
+        showDynamicMarkerModal(payload.data)
+        if (window.matchMedia('(max-width: 820px)').matches) closePanel()
+      } catch (error) {
+        state.error = friendlyCatalogError(error, 'detail')
+      } finally {
+        state.detailLoadingId = ''
+        renderPanel()
+      }
+    }
+
+    function renderItems() {
+      if (!body) return
+      body.innerHTML = ''
+
+      if (state.loading && !state.items.length) {
+        const empty = document.createElement('div')
+        empty.className = 'dm-catalog-state'
+        empty.textContent = 'Cargando fichas...'
+        body.appendChild(empty)
+        return
+      }
+
+      if (state.error) {
+        const err = document.createElement('div')
+        err.className = 'dm-catalog-state dm-catalog-error'
+        err.textContent = state.error
+        body.appendChild(err)
+      }
+
+      if (!state.items.length && !state.error) {
+        const empty = document.createElement('div')
+        empty.className = 'dm-catalog-state'
+        empty.textContent = 'No encontramos fichas con esos filtros.'
+        body.appendChild(empty)
+        return
+      }
+
+      state.items.forEach((item) => {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'dm-catalog-item'
+        btn.disabled = state.detailLoadingId === item.id
+        btn.dataset.flipInteractive = 'true'
+        btn.addEventListener('click', () => openMarkerFromCatalog(item))
+
+        const cover = document.createElement('span')
+        cover.className = 'dm-catalog-cover'
+        if (item.cover_url) {
+          const img = document.createElement('img')
+          img.src = item.cover_url
+          img.alt = ''
+          cover.appendChild(img)
+        } else {
+          cover.textContent = 'Sin portada'
+        }
+
+        const info = document.createElement('span')
+        info.className = 'dm-catalog-info'
+        const top = document.createElement('span')
+        top.className = 'dm-catalog-row'
+        const name = document.createElement('span')
+        name.className = 'dm-catalog-name'
+        name.textContent = item.name || 'Ficha sin nombre'
+        top.appendChild(name)
+        if (item.badge_text) {
+          const badge = document.createElement('span')
+          badge.className = 'dm-catalog-badge'
+          badge.textContent = item.badge_text
+          top.appendChild(badge)
+        }
+        info.appendChild(top)
+
+        const meta = document.createElement('span')
+        meta.className = 'dm-catalog-meta'
+        meta.textContent = [item.reference ? `Ref. ${item.reference}` : '', item.category || '', item.availability || ''].filter(Boolean).join(' · ') || 'Sin datos adicionales'
+        info.appendChild(meta)
+
+        const price = money(item.price_minor, item.currency)
+        if (price) {
+          const bottom = document.createElement('span')
+          bottom.className = 'dm-catalog-row'
+          if (price) {
+            const priceNode = document.createElement('span')
+            priceNode.className = 'dm-catalog-price'
+            priceNode.textContent = price
+            bottom.appendChild(priceNode)
+          }
+          info.appendChild(bottom)
+        }
+
+        btn.appendChild(cover)
+        btn.appendChild(info)
+        body.appendChild(btn)
+      })
+    }
+
+    function renderFooter() {
+      if (!footer) return
+      footer.innerHTML = ''
+      if (!state.page.has_more || !state.page.next_cursor) return
+      const more = document.createElement('button')
+      more.type = 'button'
+      more.className = 'dm-catalog-more'
+      more.disabled = state.loadingMore
+      more.textContent = state.loadingMore ? 'Cargando fichas...' : 'Ver más resultados'
+      more.addEventListener('click', () => fetchCatalog({ append: true }))
+      footer.appendChild(more)
+    }
+
+    function renderPanel() {
+      if (!overlay) return
+      syncInputsFromState()
+      renderItems()
+      renderFooter()
+    }
+
+    function makeField(label, key, options) {
+      const wrap = document.createElement('label')
+      wrap.textContent = label
+      const selectOptions = options || filterOptions(key)
+      const input = selectOptions ? document.createElement('select') : document.createElement('input')
+      if (selectOptions) {
+        selectOptions.forEach(([value, text]) => {
+          const option = document.createElement('option')
+          option.value = value
+          option.textContent = text
+          input.appendChild(option)
+        })
+      }
+      input.name = key
+      input.value = state.filters[key] || ''
+      if (!selectOptions) input.type = key.startsWith('price_') ? 'number' : 'text'
+      if (key.startsWith('price_')) {
+        input.min = '0'
+        input.step = '0.01'
+        input.inputMode = 'decimal'
+      }
+      inputs[key] = input
+      wrap.appendChild(input)
+      return wrap
+    }
+
+    function openPanel() {
+      if (overlay) {
+        closePanel()
+        return
+      }
+      state.visible = true
+      ensurePublicCatalogStyles()
+      overlay = document.createElement('div')
+      overlay.className = 'dm-catalog-overlay'
+      overlay.dataset.flipInteractive = 'true'
+      const panel = document.createElement('section')
+      panel.className = 'dm-catalog-panel'
+      panel.setAttribute('aria-label', 'Buscar en catálogo')
+
+      const head = document.createElement('div')
+      head.className = 'dm-catalog-head'
+      const titleBox = document.createElement('div')
+      const title = document.createElement('h2')
+      title.className = 'dm-catalog-title'
+      title.textContent = 'Buscar en catálogo'
+      const copy = document.createElement('p')
+      copy.className = 'dm-catalog-copy'
+      copy.textContent = 'Explora fichas activas de esta publicación.'
+      titleBox.appendChild(title)
+      titleBox.appendChild(copy)
+      const close = document.createElement('button')
+      close.type = 'button'
+      close.className = 'dm-catalog-close'
+      close.setAttribute('aria-label', 'Cerrar catálogo')
+      close.textContent = '×'
+      close.addEventListener('click', closePanel)
+      head.appendChild(titleBox)
+      head.appendChild(close)
+
+      const form = document.createElement('form')
+      form.className = 'dm-catalog-form'
+      const searchRow = document.createElement('div')
+      searchRow.className = 'dm-catalog-search-row'
+      const queryField = makeField('Buscar', 'q')
+      queryField.classList.add('dm-catalog-query')
+      searchRow.appendChild(queryField)
+      const actions = document.createElement('div')
+      actions.className = 'dm-catalog-actions'
+      const search = document.createElement('button')
+      search.type = 'submit'
+      search.className = 'dm-catalog-search'
+      search.textContent = 'Buscar'
+      const clear = document.createElement('button')
+      clear.type = 'button'
+      clear.className = 'dm-catalog-clear'
+      clear.textContent = 'Limpiar filtros'
+      clear.addEventListener('click', () => {
+        Object.keys(state.filters).forEach((key) => { state.filters[key] = '' })
+        fetchCatalog()
+      })
+      actions.appendChild(search)
+      actions.appendChild(clear)
+      searchRow.appendChild(actions)
+      form.appendChild(searchRow)
+      form.appendChild(makeField('Categoría', 'category'))
+      form.appendChild(makeField('Disponibilidad', 'availability'))
+      form.appendChild(makeField('Precio mínimo', 'price_min'))
+      form.appendChild(makeField('Precio máximo', 'price_max'))
+      priceRangeHelp = document.createElement('p')
+      priceRangeHelp.className = 'dm-catalog-help'
+      form.appendChild(priceRangeHelp)
+      form.addEventListener('submit', (event) => {
+        event.preventDefault()
+        setFiltersFromInputs()
+        fetchCatalog()
+      })
+
+      body = document.createElement('div')
+      body.className = 'dm-catalog-body'
+      footer = document.createElement('div')
+      footer.className = 'dm-catalog-footer'
+
+      panel.appendChild(head)
+      panel.appendChild(form)
+      panel.appendChild(body)
+      panel.appendChild(footer)
+      overlay.appendChild(panel)
+      overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) closePanel()
+      })
+      document.body.appendChild(overlay)
+      document.addEventListener('keydown', onCatalogKey)
+      renderPanel()
+    }
+
+    function closePanel() {
+      state.visible = false
+      document.removeEventListener('keydown', onCatalogKey)
+      overlay?.remove()
+      overlay = null
+      body = null
+      footer = null
+      priceRangeHelp = null
+    }
+
+    function onCatalogKey(event) {
+      if (event.key === 'Escape') closePanel()
+    }
+
+    trigger.addEventListener('click', openPanel)
+
+    fetchCatalog({ silent: true }).then(() => {
+      if (state.items.length) {
+        trigger.style.display = ''
+        sep.style.display = ''
+      }
+    })
+  }
+
+  function dynamicMarkerClipPath(obj, bounds) {
+    const coords = typeof obj.getCoords === 'function' ? obj.getCoords() : null
+    if (!coords || !coords.length || !bounds.width || !bounds.height) return ''
+    const points = coords.map((point) => {
+      const x = ((point.x - bounds.left) / bounds.width) * 100
+      const y = ((point.y - bounds.top) / bounds.height) * 100
+      return `${x.toFixed(2)}% ${y.toFixed(2)}%`
+    })
+    return `polygon(${points.join(',')})`
+  }
 
   // Registrar vista (fire-and-forget — no bloqueamos la carga del flipbook)
   fetch(`${API_BASE}/view/${slug}/track`, { method: 'POST' }).catch(() => {})
@@ -1764,7 +3058,7 @@ async function init() {
             wrap.appendChild(tbl)
           })
           .catch(() => {
-            spinner.textContent = 'Error al cargar unidades.'
+            spinner.textContent = 'No pudimos cargar las unidades. Inténtalo nuevamente.'
           })
 
         return wrap
@@ -2060,6 +3354,38 @@ async function init() {
         const d = obj.data || {}
         obj.__showHideWrap = wrap
         const r = obj.getBoundingRect(true)
+        const currentPage = div.__pageData || data.pages[pageIndex - lead]
+        const dynamicMarker = getDynamicMarker(currentPage?.id, d.elementId)
+        if (dynamicMarker) {
+          const clipPath = dynamicMarkerClipPath(obj, r)
+          const hot = document.createElement('button')
+          hot.type = 'button'
+          hot.setAttribute('aria-label', `Abrir ficha ${dynamicMarker.name || 'dinámica'}`)
+          hot.style.cssText = [
+            'position:absolute',
+            `left:${r.left}px`,
+            `top:${r.top}px`,
+            `width:${r.width}px`,
+            `height:${r.height}px`,
+            'border:0',
+            'padding:0',
+            'margin:0',
+            'background:transparent',
+            'cursor:pointer',
+            'pointer-events:auto',
+            clipPath ? `clip-path:${clipPath}` : '',
+          ].filter(Boolean).join(';')
+          hot.dataset.flipInteractive = 'true'
+          hot.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            showDynamicMarkerModal(dynamicMarker)
+          })
+          blockFlipDrag(hot)
+          wrap.appendChild(hot)
+          fcanvas.remove(obj)
+          return
+        }
 
         // Hotspot animado: reemplazar con div CSS
         if (d.kind === 'hotspot') {
@@ -2800,6 +4126,8 @@ async function init() {
     openShareMenu()
   })
 
+  setupPublicCatalogSearch()
+
   document.getElementById('btn-thumbnails').addEventListener('click', () => {
     document.getElementById('thumbnail-panel').classList.toggle('open')
   })
@@ -2890,9 +4218,15 @@ async function init() {
       controls.appendChild(el)
     }
   }
+  notifyViewerReady()
 }
 
-init().catch((err) => console.error('Flipbook init error:', err))
+init().catch((err) => {
+  console.error('Flipbook init error:', err)
+  if (document.body.dataset.viewerError !== '1') {
+    showViewerError('No se pudo inicializar el visor.')
+  }
+})
 
 // Al rotar el dispositivo o redimensionar la ventana, recargar para recalcular dimensiones.
 // Se espera 400ms para que el viewport termine de acomodarse antes de recargar.
