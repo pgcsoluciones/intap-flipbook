@@ -407,6 +407,51 @@ CREATE TABLE IF NOT EXISTS appointment_slot_allocations (
   UNIQUE(calendar_id, slot_start_utc, capacity_unit)
 );
 
+CREATE TABLE IF NOT EXISTS lead_intakes (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES users(id),
+  publication_id TEXT NOT NULL REFERENCES publications(id),
+  marker_id TEXT NOT NULL REFERENCES dynamic_markers(id),
+  request_type TEXT NOT NULL DEFAULT 'quote',
+  status TEXT NOT NULL DEFAULT 'new',
+  customer_name TEXT NOT NULL,
+  customer_phone TEXT NOT NULL,
+  customer_email TEXT,
+  customer_message TEXT,
+  marker_snapshot_json TEXT NOT NULL,
+  selection_json TEXT,
+  source_url TEXT,
+  internal_note TEXT,
+  crm_contact_id TEXT,
+  crm_lead_id TEXT,
+  booking_id TEXT,
+  read_at TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  handled_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lead_intake_customer_messages (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES users(id),
+  lead_intake_id TEXT NOT NULL REFERENCES lead_intakes(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'quote_sent',
+    'booking_confirmed',
+    'booking_rejected',
+    'booking_cancelled',
+    'booking_rescheduled'
+  )),
+  channel TEXT NOT NULL DEFAULT 'whatsapp' CHECK (channel IN ('whatsapp')),
+  message_text TEXT NOT NULL,
+  note_text TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'opened', 'sent')),
+  opened_at TEXT,
+  sent_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Índices
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_publications_user_id ON publications(user_id);
@@ -437,6 +482,14 @@ CREATE INDEX IF NOT EXISTS idx_appointment_calendar_bookings_user_local_date ON 
 CREATE INDEX IF NOT EXISTS idx_appointment_calendar_bookings_marker ON appointment_calendar_bookings(marker_id, starts_at_utc);
 CREATE INDEX IF NOT EXISTS idx_appointment_calendar_bookings_status ON appointment_calendar_bookings(calendar_id, status, starts_at_utc);
 CREATE INDEX IF NOT EXISTS idx_appointment_allocations_booking ON appointment_slot_allocations(booking_id);
+CREATE INDEX IF NOT EXISTS idx_lead_intakes_tenant_created ON lead_intakes(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lead_intakes_publication ON lead_intakes(publication_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lead_intakes_marker ON lead_intakes(marker_id);
+CREATE INDEX IF NOT EXISTS idx_lead_intakes_status ON lead_intakes(tenant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lead_intakes_tenant_created_id ON lead_intakes(tenant_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_lead_intakes_tenant_status_request_type ON lead_intakes(tenant_id, status, request_type);
+CREATE INDEX IF NOT EXISTS idx_lead_intakes_tenant_read_created_id ON lead_intakes(tenant_id, read_at, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_lead_intake_customer_messages_lead ON lead_intake_customer_messages(tenant_id, lead_intake_id, status, created_at DESC);
 
 -- Seeds: Planes
 INSERT OR IGNORE INTO plans VALUES ('free',  'Free',  1,    10,   50,   0, 0, 0);

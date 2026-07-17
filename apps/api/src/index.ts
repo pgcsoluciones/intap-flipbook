@@ -11,6 +11,8 @@ import svgRoutes from './routes/svg'
 import dynamicMarkerRoutes from './routes/dynamicMarkers'
 import publicDynamicMarkerRoutes, { publicMarkersForPublication } from './routes/publicDynamicMarkers'
 import appointmentRoutes from './routes/appointmentCalendars'
+import leadIntakeRoutes from './routes/leadIntakes'
+import leadIntakeCustomerMessageRoutes from './routes/leadIntakeCustomerMessages'
 import { jwtMiddleware } from './middleware/jwt'
 import { getUserPlan, getPlanUsage } from './lib/plans'
 import type { AuthVariables } from './middleware/jwt'
@@ -103,6 +105,8 @@ app.route('/api/publications', publicationRoutes)
 app.route('/api/upload', uploadRoutes)
 app.route('/api/dynamic-markers', dynamicMarkerRoutes)
 app.route('/', appointmentRoutes)
+app.route('/', leadIntakeRoutes)
+app.route('/', leadIntakeCustomerMessageRoutes)
 app.route('/api', pageRoutes)
 app.route('/admin', adminRoutes)
 app.route('/admin/svg', svgRoutes)

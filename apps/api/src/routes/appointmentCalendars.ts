@@ -866,6 +866,7 @@ appointmentRoutes.post('/view/:slug/markers/:markerId/booking', async (c) => {
 
   const now = new Date().toISOString()
   const bookingId = crypto.randomUUID()
+  const leadId = crypto.randomUUID()
   const priceMinorUnit = currentMarkerPriceMinor(marker)
   const holdExpiresAt = addMinutesIso(now, bundle.calendar.hold_expires_after_minutes)
   const endsAtUtc = addMinutesIso(selectedSlot.starts_at_utc, duration)
@@ -918,6 +919,25 @@ appointmentRoutes.post('/view/:slug/markers/:markerId/booking', async (c) => {
         locationSnapshot,
         customerInstructionsSnapshot,
         holdExpiresAt,
+      ),
+      c.env.DB.prepare(
+        `INSERT INTO lead_intakes (
+          id, tenant_id, publication_id, marker_id, request_type, status,
+          customer_name, customer_phone, customer_email, customer_message,
+          marker_snapshot_json, selection_json, source_url, booking_id
+        ) VALUES (?, ?, ?, ?, 'booking', 'new', ?, ?, ?, ?, ?, NULL, ?, ?)`,
+      ).bind(
+        leadId,
+        marker.user_id,
+        marker.publication_id,
+        marker.id,
+        name,
+        phone,
+        email,
+        message || null,
+        JSON.stringify(snapshot),
+        sourceUrl,
+        bookingId,
       ),
       ...occupiedStarts.map((slotStart) => c.env.DB.prepare(
         `INSERT INTO appointment_slot_allocations
