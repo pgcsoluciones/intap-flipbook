@@ -313,7 +313,7 @@ export default function AppointmentAgendaPanel({
   }, [calendarId])
 
   useEffect(() => {
-    // Agenda configura reglas; la atención de citas vive en Solicitudes.
+    // Agenda configura reglas; las reservas se atienden con los controles disponibles.
     setItems([])
     setPage(null)
     setAvailability(null)
@@ -544,7 +544,7 @@ export default function AppointmentAgendaPanel({
         <div>
           <h3 style={styles.title}>{calendarDraft?.name || 'Agenda'}</h3>
           <p style={styles.copy}>
-            Configura disponibilidad, tipos de cita, bloqueos y cupos. Atiende y gestiona las citas desde Solicitudes.
+            Configura disponibilidad, tipos de cita, bloqueos, cupos y reservas.
           </p>
         </div>
 
@@ -574,8 +574,7 @@ export default function AppointmentAgendaPanel({
       >
         <strong>Configuración de Agenda</strong>
         <span>
-          Aquí defines horarios, tipos de cita, cupos y bloqueos. Para confirmar, rechazar,
-          cancelar o reprogramar una cita, entra al módulo Solicitudes.
+          Aquí defines horarios, tipos de cita, cupos y bloqueos, y puedes revisar las reservas generadas.
         </span>
       </div>
 
