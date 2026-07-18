@@ -13,9 +13,55 @@ const CUSTOMER_MESSAGE_EVENTS = [
   'booking_rescheduled',
 ] as const
 const CUSTOMER_MESSAGE_STATUSES = ['pending', 'opened', 'sent'] as const
+const QUOTE_ATTACHMENT_TYPES: Record<string, string> = {
+  'application/pdf': 'pdf',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+}
+const QUOTE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024
 
 function cleanLeadText(value: unknown, max: number): string {
   return typeof value === 'string' ? value.trim().slice(0, max) : ''
+}
+
+function cleanQuoteAttachmentName(value: unknown, extension: string) {
+  const safe = String(value ?? '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/[\\/]/g, '-')
+    .trim()
+    .slice(0, 160)
+  return safe || `cotizacion.${extension}`
+}
+
+function bytesToBase64Url(bytes: Uint8Array) {
+  let value = ''
+  for (const byte of bytes) value += String.fromCharCode(byte)
+  return btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function createDownloadToken() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return bytesToBase64Url(bytes)
+}
+
+async function tokenHash(value: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return Array.from(new Uint8Array(digest))
+    .map((item) => item.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function attachmentDownloadUrl(c: any, token: string) {
+  const url = new URL(c.req.url)
+  url.pathname = `/public/customer-files/${encodeURIComponent(token)}`
+  url.search = ''
+  url.hash = ''
+  return url.toString()
 }
 
 function customerMessageDateLabel(value: unknown) {
@@ -112,14 +158,38 @@ leadIntakeCustomerMessageRoutes.get('/api/lead-intakes/:id/customer-messages', j
   if (!exists) return c.json({ success: false, error: 'Solicitud no encontrada' }, 404)
 
   const { results } = await c.env.DB.prepare(
-    `SELECT *
-     FROM lead_intake_customer_messages
-     WHERE lead_intake_id = ? AND tenant_id = ?
-     ORDER BY created_at DESC, id DESC
+    `SELECT m.*,
+            a.id AS attachment_id,
+            a.original_name AS attachment_original_name,
+            a.mime_type AS attachment_mime_type,
+            a.size_bytes AS attachment_size_bytes,
+            a.download_expires_at AS attachment_download_expires_at,
+            a.created_at AS attachment_created_at
+     FROM lead_intake_customer_messages m
+     LEFT JOIN lead_intake_customer_message_attachments a
+       ON a.customer_message_id = m.id AND a.tenant_id = m.tenant_id
+     WHERE m.lead_intake_id = ? AND m.tenant_id = ?
+     ORDER BY m.created_at DESC, m.id DESC
      LIMIT 30`,
   ).bind(leadId, userId).all<Record<string, unknown>>()
 
-  return c.json({ success: true, data: results ?? [] })
+  const data = (results ?? []).map((row) => ({
+    ...row,
+    attachment: row.attachment_id
+      ? {
+          id: String(row.attachment_id),
+          original_name: String(row.attachment_original_name || 'cotizacion'),
+          mime_type: String(row.attachment_mime_type || 'application/octet-stream'),
+          size_bytes: Number(row.attachment_size_bytes || 0),
+          download_expires_at: typeof row.attachment_download_expires_at === 'string'
+            ? row.attachment_download_expires_at
+            : null,
+          created_at: String(row.attachment_created_at || ''),
+        }
+      : null,
+  }))
+
+  return c.json({ success: true, data })
 })
 
 leadIntakeCustomerMessageRoutes.post('/api/lead-intakes/:id/customer-messages', jwtMiddleware, async (c) => {
@@ -243,6 +313,165 @@ leadIntakeCustomerMessageRoutes.patch('/api/lead-intakes/:id/customer-messages/:
   ).bind(messageId, leadId, userId).first()
 
   return c.json({ success: true, data: row })
+})
+
+leadIntakeCustomerMessageRoutes.post('/api/lead-intakes/:id/customer-messages/:messageId/attachment', jwtMiddleware, async (c) => {
+  const userId = c.get('user').sub
+  const leadId = c.req.param('id')
+  const messageId = c.req.param('messageId')
+
+  const message = await c.env.DB.prepare(
+    `SELECT id, event_type, status
+     FROM lead_intake_customer_messages
+     WHERE id = ? AND lead_intake_id = ? AND tenant_id = ?`,
+  ).bind(messageId, leadId, userId).first<{ id: string; event_type: string; status: string }>()
+
+  if (!message) return c.json({ success: false, error: 'Respuesta al cliente no encontrada' }, 404)
+  if (message.event_type !== 'quote_sent') {
+    return c.json({ success: false, error: 'Solo puedes adjuntar un documento a una cotización' }, 409)
+  }
+  if (message.status === 'sent') {
+    return c.json({ success: false, error: 'No puedes modificar una cotización ya marcada como enviada' }, 409)
+  }
+
+  const formData = await c.req.formData().catch(() => null)
+  const incomingFile = formData?.get('file')
+  if (!incomingFile || typeof incomingFile === 'string') {
+    return c.json({ success: false, error: 'Selecciona un archivo para adjuntar' }, 400)
+  }
+  const file = incomingFile as File
+
+  const extension = QUOTE_ATTACHMENT_TYPES[file.type]
+  if (!extension) {
+    return c.json({ success: false, error: 'Formato no permitido. Adjunta PDF, JPG, PNG, Word o Excel.' }, 415)
+  }
+  if (!file.size || file.size > QUOTE_ATTACHMENT_MAX_BYTES) {
+    return c.json({ success: false, error: 'El archivo debe pesar entre 1 byte y 25 MB.' }, 413)
+  }
+
+  const previous = await c.env.DB.prepare(
+    `SELECT storage_key
+     FROM lead_intake_customer_message_attachments
+     WHERE tenant_id = ? AND lead_intake_id = ? AND customer_message_id = ?`,
+  ).bind(userId, leadId, messageId).first<{ storage_key: string }>()
+
+  const attachmentId = crypto.randomUUID()
+  const originalName = cleanQuoteAttachmentName(file.name, extension)
+  const storageKey = `private/quotes/${userId}/${leadId}/${messageId}/${crypto.randomUUID()}.${extension}`
+
+  try {
+    await c.env.PRIVATE_MEDIA.put(storageKey, await file.arrayBuffer(), {
+      httpMetadata: { contentType: file.type },
+    })
+
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `DELETE FROM lead_intake_customer_message_attachments
+         WHERE tenant_id = ? AND lead_intake_id = ? AND customer_message_id = ?`,
+      ).bind(userId, leadId, messageId),
+      c.env.DB.prepare(
+        `INSERT INTO lead_intake_customer_message_attachments
+         (id, tenant_id, lead_intake_id, customer_message_id, storage_key, original_name, mime_type, size_bytes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        attachmentId,
+        userId,
+        leadId,
+        messageId,
+        storageKey,
+        originalName,
+        file.type,
+        file.size,
+      ),
+    ])
+
+    if (previous?.storage_key) {
+      await c.env.PRIVATE_MEDIA.delete(previous.storage_key).catch(() => undefined)
+    }
+  } catch {
+    await c.env.PRIVATE_MEDIA.delete(storageKey).catch(() => undefined)
+    return c.json({ success: false, error: 'No se pudo guardar el adjunto privado' }, 500)
+  }
+
+  return c.json({
+    success: true,
+    data: {
+      id: attachmentId,
+      original_name: originalName,
+      mime_type: file.type,
+      size_bytes: file.size,
+      download_expires_at: null,
+      created_at: new Date().toISOString(),
+    },
+  }, 201)
+})
+
+leadIntakeCustomerMessageRoutes.delete('/api/lead-intakes/:id/customer-messages/:messageId/attachment', jwtMiddleware, async (c) => {
+  const userId = c.get('user').sub
+  const leadId = c.req.param('id')
+  const messageId = c.req.param('messageId')
+
+  const current = await c.env.DB.prepare(
+    `SELECT a.storage_key, m.status
+     FROM lead_intake_customer_message_attachments a
+     JOIN lead_intake_customer_messages m ON m.id = a.customer_message_id
+     WHERE a.tenant_id = ? AND a.lead_intake_id = ? AND a.customer_message_id = ?
+       AND m.tenant_id = ? AND m.lead_intake_id = ?`,
+  ).bind(userId, leadId, messageId, userId, leadId).first<{ storage_key: string; status: string }>()
+
+  if (!current) return c.json({ success: false, error: 'Adjunto no encontrado' }, 404)
+  if (current.status === 'sent') {
+    return c.json({ success: false, error: 'No puedes retirar una cotización ya marcada como enviada' }, 409)
+  }
+
+  await c.env.DB.prepare(
+    `DELETE FROM lead_intake_customer_message_attachments
+     WHERE tenant_id = ? AND lead_intake_id = ? AND customer_message_id = ?`,
+  ).bind(userId, leadId, messageId).run()
+
+  await c.env.PRIVATE_MEDIA.delete(current.storage_key).catch(() => undefined)
+  return c.json({ success: true })
+})
+
+leadIntakeCustomerMessageRoutes.post('/api/lead-intakes/:id/customer-messages/:messageId/attachment-link', jwtMiddleware, async (c) => {
+  const userId = c.get('user').sub
+  const leadId = c.req.param('id')
+  const messageId = c.req.param('messageId')
+
+  const attachment = await c.env.DB.prepare(
+    `SELECT id
+     FROM lead_intake_customer_message_attachments
+     WHERE tenant_id = ? AND lead_intake_id = ? AND customer_message_id = ?`,
+  ).bind(userId, leadId, messageId).first<{ id: string }>()
+
+  if (!attachment) {
+    return c.json({ success: false, error: 'Esta respuesta no tiene una cotización formal adjunta' }, 404)
+  }
+
+  const token = createDownloadToken()
+  const hash = await tokenHash(token)
+
+  await c.env.DB.prepare(
+    `UPDATE lead_intake_customer_message_attachments
+     SET download_token_hash = ?,
+         download_expires_at = datetime('now', '+30 days'),
+         updated_at = datetime('now')
+     WHERE id = ? AND tenant_id = ?`,
+  ).bind(hash, attachment.id, userId).run()
+
+  const fresh = await c.env.DB.prepare(
+    `SELECT download_expires_at
+     FROM lead_intake_customer_message_attachments
+     WHERE id = ? AND tenant_id = ?`,
+  ).bind(attachment.id, userId).first<{ download_expires_at: string | null }>()
+
+  return c.json({
+    success: true,
+    data: {
+      download_url: attachmentDownloadUrl(c, token),
+      expires_at: fresh?.download_expires_at ?? null,
+    },
+  })
 })
 
 export default leadIntakeCustomerMessageRoutes

@@ -21,6 +21,7 @@ export type Env = {
   DB: D1Database
   SESSIONS: KVNamespace
   MEDIA: R2Bucket
+  PRIVATE_MEDIA: R2Bucket
   JWT_SECRET: string
   CORS_ORIGIN: string
   APP_ENV?: string
@@ -30,6 +31,18 @@ export type Env = {
 }
 
 const app = new Hono<{ Bindings: Env }>()
+
+async function tokenHash(value: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return Array.from(new Uint8Array(digest))
+    .map((item) => item.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function contentDispositionFileName(name: string) {
+  const fallback = name.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'cotizacion'
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(name)}`
+}
 
 function parseOrigins(value?: string): string[] {
   return (value ?? '').split(',').map((origin) => origin.trim()).filter(Boolean)
@@ -94,6 +107,52 @@ app.use('*', async (c, next) => {
 })
 
 app.get('/', (c) => c.json({ service: 'intap-flipbook-api', status: 'ok' }))
+
+app.get('/public/customer-files/:token', async (c) => {
+  const token = c.req.param('token')
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) {
+    return c.json({ success: false, error: 'Enlace de descarga inválido' }, 404)
+  }
+
+  const hash = await tokenHash(token)
+  const attachment = await c.env.DB.prepare(
+    `SELECT storage_key, original_name, mime_type
+     FROM lead_intake_customer_message_attachments
+     WHERE download_token_hash = ?
+       AND download_expires_at IS NOT NULL
+       AND download_expires_at > datetime('now')`,
+  ).bind(hash).first<{
+    storage_key: string
+    original_name: string
+    mime_type: string
+  }>()
+
+  if (!attachment) {
+    return c.json({ success: false, error: 'Este enlace venció o ya no está disponible' }, 410)
+  }
+
+  const object = await c.env.PRIVATE_MEDIA.get(attachment.storage_key)
+  if (!object) {
+    return c.json({ success: false, error: 'Archivo no encontrado' }, 404)
+  }
+
+  const headers = new Headers()
+  object.writeHttpMetadata(headers)
+  headers.set('Content-Type', attachment.mime_type || 'application/octet-stream')
+  headers.set('Content-Disposition', contentDispositionFileName(attachment.original_name))
+  headers.set('Cache-Control', 'private, no-store, max-age=0')
+  headers.set('X-Content-Type-Options', 'nosniff')
+  headers.set('etag', object.httpEtag)
+
+  void c.env.DB.prepare(
+    `UPDATE lead_intake_customer_message_attachments
+     SET downloaded_at = COALESCE(downloaded_at, datetime('now')),
+         updated_at = datetime('now')
+     WHERE storage_key = ?`,
+  ).bind(attachment.storage_key).run()
+
+  return new Response(object.body, { status: 200, headers })
+})
 
 // Auth (public)
 app.route('/auth', authRoutes)

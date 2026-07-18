@@ -452,6 +452,22 @@ CREATE TABLE IF NOT EXISTS lead_intake_customer_messages (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS lead_intake_customer_message_attachments (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES users(id),
+  lead_intake_id TEXT NOT NULL REFERENCES lead_intakes(id) ON DELETE CASCADE,
+  customer_message_id TEXT NOT NULL UNIQUE REFERENCES lead_intake_customer_messages(id) ON DELETE CASCADE,
+  storage_key TEXT NOT NULL UNIQUE,
+  original_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+  download_token_hash TEXT UNIQUE,
+  download_expires_at TEXT,
+  downloaded_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Índices
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_publications_user_id ON publications(user_id);
@@ -490,6 +506,8 @@ CREATE INDEX IF NOT EXISTS idx_lead_intakes_tenant_created_id ON lead_intakes(te
 CREATE INDEX IF NOT EXISTS idx_lead_intakes_tenant_status_request_type ON lead_intakes(tenant_id, status, request_type);
 CREATE INDEX IF NOT EXISTS idx_lead_intakes_tenant_read_created_id ON lead_intakes(tenant_id, read_at, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_lead_intake_customer_messages_lead ON lead_intake_customer_messages(tenant_id, lead_intake_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lead_intake_customer_message_attachments_message ON lead_intake_customer_message_attachments(tenant_id, lead_intake_id, customer_message_id);
+CREATE INDEX IF NOT EXISTS idx_lead_intake_customer_message_attachments_token ON lead_intake_customer_message_attachments(download_token_hash);
 
 -- Seeds: Planes
 INSERT OR IGNORE INTO plans VALUES ('free',  'Free',  1,    10,   50,   0, 0, 0);

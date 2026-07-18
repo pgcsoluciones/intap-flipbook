@@ -24,6 +24,11 @@ id = "8a0d51a9b1334c0c9c65e04109731ded"
 binding = "MEDIA"
 bucket_name = "intap-flipbook-media"
 
+# Documentos privados de cotizaciones: nunca se exponen mediante R2_PUBLIC_BASE_URL.
+[[r2_buckets]]
+binding = "PRIVATE_MEDIA"
+bucket_name = "intap-flipbook-private-media"
+
 [triggers]
 crons = ["0 6 * * *"]
 
