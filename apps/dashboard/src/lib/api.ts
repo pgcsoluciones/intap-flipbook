@@ -348,6 +348,16 @@ export type LeadIntakeCustomerMessage = {
   sent_at: string | null
   created_at: string
   updated_at: string
+  attachment?: LeadIntakeCustomerMessageAttachment | null
+}
+
+export type LeadIntakeCustomerMessageAttachment = {
+  id: string
+  original_name: string
+  mime_type: string
+  size_bytes: number
+  download_expires_at: string | null
+  created_at: string
 }
 
 export const api = {
@@ -663,6 +673,35 @@ export const api = {
         request<{ success: true; data: LeadIntakeCustomerMessage }>(
           `/api/lead-intakes/${encodeURIComponent(id)}/customer-messages/${encodeURIComponent(messageId)}`,
           { method: 'PATCH', body: JSON.stringify(body) },
+        ),
+      attach: (id: string, messageId: string, file: File) => {
+        const token = getToken()
+        const form = new FormData()
+        form.append('file', file)
+        return fetch(
+          `${API_BASE}/api/lead-intakes/${encodeURIComponent(id)}/customer-messages/${encodeURIComponent(messageId)}/attachment`,
+          {
+            method: 'POST',
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            body: form,
+          },
+        ).then(async (response) => {
+          const data = await response.json().catch(() => null)
+          if (!response.ok || !data?.success) {
+            throw new Error(data?.error ?? `Error ${response.status} al adjuntar cotización`)
+          }
+          return data
+        }) as Promise<{ success: true; data: LeadIntakeCustomerMessageAttachment }>
+      },
+      removeAttachment: (id: string, messageId: string) =>
+        request<{ success: true }>(
+          `/api/lead-intakes/${encodeURIComponent(id)}/customer-messages/${encodeURIComponent(messageId)}/attachment`,
+          { method: 'DELETE' },
+        ),
+      createAttachmentLink: (id: string, messageId: string) =>
+        request<{ success: true; data: { download_url: string; expires_at: string | null } }>(
+          `/api/lead-intakes/${encodeURIComponent(id)}/customer-messages/${encodeURIComponent(messageId)}/attachment-link`,
+          { method: 'POST' },
         ),
     },
     get: (id: string) =>

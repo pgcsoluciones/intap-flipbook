@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   api,
   type LeadIntake,
   type LeadIntakeCustomerMessage,
+  type LeadIntakeCustomerMessageAttachment,
   type LeadIntakeCustomerMessageEvent,
   type LeadIntakeCustomerMessageStatus,
   type LeadIntakeRequestType,
@@ -240,11 +241,93 @@ function ConfirmationModal({
   )
 }
 
+function formatFileSize(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function QuoteAttachmentField({
+  attachment,
+  busy,
+  onUpload,
+  onRemove,
+}: {
+  attachment?: LeadIntakeCustomerMessageAttachment | null
+  busy: boolean
+  onUpload: (file: File) => void
+  onRemove: () => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [dragOver, setDragOver] = useState(false)
+
+  function selectFile(file?: File | null) {
+    if (!file || busy) return
+    onUpload(file)
+  }
+
+  if (attachment) {
+    return (
+      <div style={s.quoteAttachmentReady}>
+        <div style={s.quoteAttachmentInfo}>
+          <strong>{attachment.original_name}</strong>
+          <span>{formatFileSize(attachment.size_bytes)} · Enlace privado de descarga</span>
+        </div>
+        <button
+          type="button"
+          style={s.quoteAttachmentRemove}
+          disabled={busy}
+          onClick={onRemove}
+        >
+          Quitar archivo
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      style={{
+        ...s.quoteAttachmentDrop,
+        ...(dragOver ? s.quoteAttachmentDropActive : {}),
+        ...(busy ? s.quoteAttachmentDropBusy : {}),
+      }}
+      onClick={() => !busy && inputRef.current?.click()}
+      onDragOver={(event) => {
+        event.preventDefault()
+        if (!busy) setDragOver(true)
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(event) => {
+        event.preventDefault()
+        setDragOver(false)
+        selectFile(event.dataTransfer.files?.[0])
+      }}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf,image/jpeg,image/png,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        style={{ display: 'none' }}
+        onChange={(event) => {
+          selectFile(event.target.files?.[0])
+          event.target.value = ''
+        }}
+      />
+      <strong>{busy ? 'Guardando adjunto...' : 'Examinar archivo'}</strong>
+      <span>o arrastra y suelta aquí</span>
+      <small>PDF, JPG, PNG, Word o Excel · Máx. 25 MB</small>
+    </div>
+  )
+}
+
 function CustomerResponseModal({
   draft,
   saving,
   onChangeText,
   onChangeNote,
+  onUploadAttachment,
+  onRemoveAttachment,
   onLater,
   onOpenWhatsApp,
   onClose,
@@ -253,6 +336,8 @@ function CustomerResponseModal({
   saving: boolean
   onChangeText: (value: string) => void
   onChangeNote: (value: string) => void
+  onUploadAttachment: (file: File) => void
+  onRemoveAttachment: () => void
   onLater: () => void
   onOpenWhatsApp: () => void
   onClose: () => void
@@ -296,8 +381,20 @@ function CustomerResponseModal({
           />
         </label>
 
+        {draft.message.event_type === 'quote_sent' && (
+          <label style={s.modalField}>
+            Cotización formal adjunta
+            <QuoteAttachmentField
+              attachment={draft.message.attachment}
+              busy={saving}
+              onUpload={onUploadAttachment}
+              onRemove={onRemoveAttachment}
+            />
+          </label>
+        )}
+
         <p style={s.modalHint}>
-          Abrir WhatsApp guarda esta respuesta y deja el chat listo. La plataforma no puede confirmar automáticamente que el mensaje fue enviado; podrás marcarlo después.
+          Abrir WhatsApp guarda esta respuesta y deja el chat listo. Cuando adjuntes una cotización formal, el mensaje incluirá un enlace privado de descarga válido por 30 días. La plataforma no puede confirmar automáticamente que el mensaje fue enviado; podrás marcarlo después.
         </p>
 
         <div style={s.modalActions}>
@@ -423,15 +520,36 @@ export default function TenantRequests() {
         },
       )
 
-      const updated = response.data
-      const outgoingText = customerMessageTextWithNote(
+      const updated = {
+        ...response.data,
+        attachment: currentDraft.message.attachment ?? null,
+      }
+      let outgoingText = customerMessageTextWithNote(
         updated.message_text,
         updated.note_text ?? '',
       )
 
+      if (openWhatsApp && updated.event_type === 'quote_sent' && updated.attachment) {
+        const secureLink = await api.leadIntakes.customerMessages.createAttachmentLink(
+          selected.id,
+          updated.id,
+        )
+        outgoingText = [
+          outgoingText,
+          `Descarga tu cotización formal de forma segura aquí: ${secureLink.data.download_url}`,
+          secureLink.data.expires_at
+            ? `El enlace estará disponible hasta ${formatDate(secureLink.data.expires_at)}.`
+            : '',
+        ].filter(Boolean).join('\n\n')
+        updated.attachment = {
+          ...updated.attachment,
+          download_expires_at: secureLink.data.expires_at,
+        }
+      }
+
       setCustomerMessages((current) => current.map((item) => (
         item.id === updated.id
-          ? updated
+          ? { ...updated, attachment: item.attachment ?? updated.attachment }
           : item
       )))
       setCustomerResponse(null)
@@ -478,12 +596,70 @@ export default function TenantRequests() {
 
       setCustomerMessages((current) => current.map((item) => (
         item.id === response.data.id
-          ? response.data
+          ? { ...response.data, attachment: item.attachment ?? response.data.attachment ?? null }
           : item
       )))
       setNotice('La respuesta fue marcada como enviada al cliente.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo actualizar la respuesta al cliente.')
+    } finally {
+      setCustomerMessageSaving(false)
+    }
+  }
+
+  async function uploadCustomerAttachment(file: File) {
+    if (!selected || !customerResponse) return
+
+    setCustomerMessageSaving(true)
+    setError('')
+
+    try {
+      const response = await api.leadIntakes.customerMessages.attach(
+        selected.id,
+        customerResponse.message.id,
+        file,
+      )
+      const attachment = response.data
+
+      setCustomerMessages((current) => current.map((item) => (
+        item.id === customerResponse.message.id
+          ? { ...item, attachment }
+          : item
+      )))
+      setCustomerResponse((current) => current
+        ? { ...current, message: { ...current.message, attachment } }
+        : current)
+      setNotice('La cotización formal quedó adjunta de forma privada.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo adjuntar la cotización.')
+    } finally {
+      setCustomerMessageSaving(false)
+    }
+  }
+
+  async function removeCustomerAttachment() {
+    if (!selected || !customerResponse) return
+
+    setCustomerMessageSaving(true)
+    setError('')
+
+    try {
+      await api.leadIntakes.customerMessages.removeAttachment(
+        selected.id,
+        customerResponse.message.id,
+      )
+
+      setCustomerMessages((current) => current.map((item) => (
+        item.id === customerResponse.message.id
+          ? { ...item, attachment: null }
+          : item
+      )))
+      setCustomerResponse((current) => current
+        ? { ...current, message: { ...current.message, attachment: null } }
+        : current)
+      setNotice('El adjunto fue retirado de la respuesta.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo retirar el adjunto.')
     } finally {
       setCustomerMessageSaving(false)
     }
@@ -850,6 +1026,8 @@ export default function TenantRequests() {
           saving={customerMessageSaving}
           onChangeText={(text) => setCustomerResponse((current) => current ? { ...current, text } : current)}
           onChangeNote={(note) => setCustomerResponse((current) => current ? { ...current, note } : current)}
+          onUploadAttachment={(file) => void uploadCustomerAttachment(file)}
+          onRemoveAttachment={() => void removeCustomerAttachment()}
           onClose={() => setCustomerResponse(null)}
           onLater={() => void saveCustomerResponse('pending')}
           onOpenWhatsApp={() => void saveCustomerResponse('opened', true)}
@@ -1172,6 +1350,17 @@ export default function TenantRequests() {
                           <strong>{customerMessageEventLabel(message.event_type)}</strong>
                           <span>{message.message_text}</span>
                           {message.note_text && <small>Nota incluida: {message.note_text}</small>}
+                          {message.attachment && (
+                            <small>
+                              Adjunto privado: {message.attachment.original_name}
+                              {' · '}
+                              {formatFileSize(message.attachment.size_bytes)}
+                              {' · '}
+                              {message.attachment.download_expires_at
+                                ? `enlace vigente hasta ${formatDate(message.attachment.download_expires_at)}`
+                                : 'sin enlace generado'}
+                            </small>
+                          )}
                           <small>Creada: {formatDate(message.created_at)}</small>
                         </div>
 
@@ -1476,4 +1665,10 @@ const s: Record<string, CSSProperties> = {
   messageStatusSent: { borderRadius: 999, background: '#dcfce7', color: '#166534', padding: '3px 7px', fontSize: 10, fontWeight: 800, whiteSpace: 'nowrap' },
   messageActionButton: { border: '1px solid #c7d2fe', borderRadius: 7, background: '#eef2ff', color: '#3730a3', padding: '6px 8px', fontSize: 10.5, fontWeight: 800, cursor: 'pointer' },
   messageSentButton: { border: '1px solid #bbf7d0', borderRadius: 7, background: '#f0fdf4', color: '#166534', padding: '6px 8px', fontSize: 10.5, fontWeight: 800, cursor: 'pointer' },
+  quoteAttachmentDrop: { display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center', border: '1px dashed #818cf8', borderRadius: 9, background: '#f8faff', color: '#4f46e5', padding: 13, cursor: 'pointer', textAlign: 'center', fontSize: 12 },
+  quoteAttachmentDropActive: { borderColor: '#4f46e5', background: '#eef2ff' },
+  quoteAttachmentDropBusy: { cursor: 'wait', opacity: 0.7 },
+  quoteAttachmentReady: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', border: '1px solid #bbf7d0', borderRadius: 9, background: '#f0fdf4', padding: 10 },
+  quoteAttachmentInfo: { display: 'flex', flexDirection: 'column', gap: 3, color: '#166534', fontSize: 11.5, lineHeight: 1.4 },
+  quoteAttachmentRemove: { border: '1px solid #fecaca', borderRadius: 7, background: '#fff', color: '#b91c1c', padding: '6px 8px', fontSize: 10.5, fontWeight: 800, cursor: 'pointer' },
 }
