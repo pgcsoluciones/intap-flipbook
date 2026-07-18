@@ -10,6 +10,10 @@ const pages = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 pages.use('*', jwtMiddleware)
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
 // POST /api/publications/:pubId/pages
 pages.post('/publications/:pubId/pages', async (c) => {
   const userId = c.get('user').sub
@@ -109,6 +113,7 @@ pages.put('/pages/:pageId', async (c) => {
 pages.delete('/pages/:pageId', async (c) => {
   const userId = c.get('user').sub
   const pageId = c.req.param('pageId')
+  const reqId = c.req.header('CF-Ray') ?? crypto.randomUUID()
 
   const page = await c.env.DB.prepare(
     `SELECT pg.id, pg.publication_id FROM pages pg
@@ -119,10 +124,85 @@ pages.delete('/pages/:pageId', async (c) => {
     .first<{ id: string; publication_id: string }>()
   if (!page) return c.json({ success: false, error: 'Página no encontrada' }, 404)
 
-  await c.env.DB.prepare('DELETE FROM pages WHERE id = ?').bind(pageId).run()
-  await c.env.DB.prepare(`UPDATE publications SET updated_at = datetime('now') WHERE id = ?`)
-    .bind(page.publication_id)
-    .run()
+  const historySql = `SELECT
+       COUNT(DISTINCT b.id) AS bookings_count,
+       COUNT(DISTINCT li.id) AS lead_intakes_count
+     FROM dynamic_markers dm
+     LEFT JOIN appointment_calendar_bookings b ON b.marker_id = dm.id
+     LEFT JOIN lead_intakes li ON li.marker_id = dm.id
+     WHERE dm.page_id = ?`
+
+  try {
+    const history = await c.env.DB.prepare(historySql)
+      .bind(pageId)
+      .first<{ bookings_count: number; lead_intakes_count: number }>()
+
+    if ((history?.bookings_count ?? 0) > 0 || (history?.lead_intakes_count ?? 0) > 0) {
+      return c.json({
+        success: false,
+        code: 'PAGE_HAS_HISTORY',
+        error: 'Esta página tiene solicitudes o reservas vinculadas y no puede eliminarse.',
+      }, 409)
+    }
+
+    const { results: remainingPages } = await c.env.DB.prepare(
+      `SELECT id
+       FROM pages
+       WHERE publication_id = ?
+         AND id <> ?
+       ORDER BY page_number ASC, created_at ASC, id ASC`,
+    ).bind(page.publication_id, pageId).all<{ id: string }>()
+
+    await c.env.DB.batch([
+      c.env.DB.prepare('UPDATE units SET page_id = NULL WHERE page_id = ?')
+        .bind(pageId),
+      c.env.DB.prepare(
+        `UPDATE dynamic_markers
+         SET cloned_from_marker_id = NULL
+         WHERE cloned_from_marker_id IN (
+           SELECT id
+           FROM dynamic_markers
+           WHERE page_id = ?
+         )`,
+      ).bind(pageId),
+      c.env.DB.prepare('DELETE FROM dynamic_markers WHERE page_id = ?')
+        .bind(pageId),
+      c.env.DB.prepare('DELETE FROM pages WHERE id = ?')
+        .bind(pageId),
+      ...remainingPages.map((remainingPage, index) =>
+        c.env.DB.prepare('UPDATE pages SET page_number = ? WHERE id = ?')
+          .bind(index + 1, remainingPage.id),
+      ),
+      c.env.DB.prepare(`UPDATE publications SET updated_at = datetime('now') WHERE id = ?`)
+        .bind(page.publication_id),
+    ])
+  } catch (error) {
+    const history = await c.env.DB.prepare(historySql)
+      .bind(pageId)
+      .first<{ bookings_count: number; lead_intakes_count: number }>()
+      .catch(() => null)
+
+    if ((history?.bookings_count ?? 0) > 0 || (history?.lead_intakes_count ?? 0) > 0) {
+      return c.json({
+        success: false,
+        code: 'PAGE_HAS_HISTORY',
+        error: 'Esta página tiene solicitudes o reservas vinculadas y no puede eliminarse.',
+      }, 409)
+    }
+
+    console.error('[pages.delete] failed', {
+      request_id: reqId,
+      user_id: userId,
+      publication_id: page.publication_id,
+      page_id: pageId,
+      error: errorMessage(error),
+    })
+    return c.json({
+      success: false,
+      code: 'PAGE_DELETE_FAILED',
+      error: 'No se pudo eliminar la página.',
+    }, 500)
+  }
 
   return c.json({ success: true, data: { deleted: true } })
 })

@@ -41,20 +41,24 @@ name = "intap-flipbook-api-preview"
 
 [env.preview.vars]
 APP_ENV = "preview"
-CORS_ORIGIN = "https://studio.flip.intaprd.com,https://flip.intaprd.com,http://localhost:5174"
-ALLOWED_WRITE_ORIGINS = "https://studio.flip.intaprd.com,https://flip.intaprd.com,http://localhost:5174"
+CORS_ORIGIN = "https://studio.flip.intaprd.com,https://flip.intaprd.com,http://localhost:5174,https://fix-page-lifecycle-safe-dele.intap-flipbook-dashboard.pages.dev"
+ALLOWED_WRITE_ORIGINS = "https://studio.flip.intaprd.com,https://flip.intaprd.com,http://localhost:5174,https://fix-page-lifecycle-safe-dele.intap-flipbook-dashboard.pages.dev"
 JWT_EXPIRY_DAYS = "7"
 R2_PUBLIC_BASE_URL = "https://pub-b720f233e0f84125b246181d82f993da.r2.dev"
 
 [[env.preview.d1_databases]]
 binding = "DB"
-database_name = "intap-flipbook-db"
-database_id = "f5e1ca62-8487-4250-a9d4-851d4880dcb3"
+database_name = "pgc-landing-saas-db"
+database_id = "f1c1eab5-6c9d-414d-b08c-870fde708898"
 
 [[env.preview.kv_namespaces]]
 binding = "SESSIONS"
-id = "8a0d51a9b1334c0c9c65e04109731ded"
+id = "1ccdc84b62194c4eae83cab31ce47deb"
 
 [[env.preview.r2_buckets]]
 binding = "MEDIA"
-bucket_name = "intap-flipbook-media"
+bucket_name = "intap-flipbook-media-preview"
+
+[[env.preview.r2_buckets]]
+binding = "PRIVATE_MEDIA"
+bucket_name = "intap-flipbook-private-media-preview"

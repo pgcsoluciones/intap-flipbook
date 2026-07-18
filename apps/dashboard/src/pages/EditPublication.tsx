@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 // @ts-ignore
 import { fabric } from 'fabric'
-import { api, toCanvasSafeAssetUrl } from '../lib/api'
+import { ApiRequestError, api, toCanvasSafeAssetUrl } from '../lib/api'
 import FileField from '../components/FileField'
 import WidgetPreview from '../components/WidgetPreview'
 import DynamicMarkerPanel from '../components/DynamicMarkerPanel'
@@ -143,6 +143,7 @@ const DYNAMIC_ASSOCIATION_KEYS = new Set([
   'target_object_id',
   'syncGroupId',
   'sync_group_id',
+  'booking_calendar_id',
   'hiddenInEditor',
   'originalOpacity',
 ])
@@ -195,11 +196,34 @@ function resetDuplicateData(obj: any, existingElementIds: Set<string>) {
 }
 
 function resetDuplicateTree(obj: any, existingElementIds: Set<string>) {
+  for (const key of DYNAMIC_ASSOCIATION_KEYS) delete obj?.[key]
   resetDuplicateData(obj, existingElementIds)
-  const children = typeof obj?.getObjects === 'function' ? obj.getObjects() : obj?._objects
+  const children = typeof obj?.getObjects === 'function' ? obj.getObjects() : (obj?._objects ?? obj?.objects)
   if (Array.isArray(children)) {
     children.forEach((child: any) => resetDuplicateTree(child, existingElementIds))
   }
+}
+
+function emptyFabricCanvasJson() {
+  return { version: fabric.version, objects: [] }
+}
+
+function normalizeSourceCanvasJson(value: any) {
+  if (!value) return emptyFabricCanvasJson()
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : clonePlainValue(value)
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.objects)) return emptyFabricCanvasJson()
+    return parsed
+  } catch {
+    return emptyFabricCanvasJson()
+  }
+}
+
+function cloneCanvasJsonForDuplicate(sourceJson: any) {
+  const clonedJson = clonePlainValue(normalizeSourceCanvasJson(sourceJson))
+  const existingElementIds = new Set<string>()
+  ;(clonedJson.objects ?? []).forEach((obj: any) => resetDuplicateTree(obj, existingElementIds))
+  return clonedJson
 }
 
 function restoreDuplicateInteractivity(clone: any, source: any) {
@@ -1023,6 +1047,11 @@ export default function EditPublication() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
   const pageIdRef = useRef<string | null>(null)
+  const canvasReadyRef = useRef(false)
+  const canvasGenerationRef = useRef(0)
+  const duplicateInFlightRef = useRef(false)
+  const deletingPageIdsRef = useRef(new Set<string>())
+  const deletedPageIdsRef = useRef(new Set<string>())
   // Fuente estable para resolver trabajos persisted sin closures viejos.
   const pagesRef = useRef<any[]>([])
   // Solo para priorización/verificación de página activa; no reconstruye snapshots live.
@@ -1388,6 +1417,9 @@ export default function EditPublication() {
   // Se llama tras cada cambio (debounce) y al cambiar de página.
   const persistCanvas = useCallback(async (pageId: string, canvas: any, flash = true) => {
     if (!pageId || !canvas) return
+    if (deletingPageIdsRef.current.has(pageId) || deletedPageIdsRef.current.has(pageId)) return
+    const isCurrentCanvas = pageId === pageIdRef.current && canvas === fabricRef.current
+    if (isCurrentCanvas && !canvasReadyRef.current) return
     const seq = (saveSeqRef.current[pageId] ?? 0) + 1
     saveSeqRef.current[pageId] = seq
 
@@ -1404,6 +1436,7 @@ export default function EditPublication() {
     const json = JSON.stringify(rawJson)
 
     const run = async () => {
+      if (deletingPageIdsRef.current.has(pageId) || deletedPageIdsRef.current.has(pageId)) return
       setSaveState('saving')
       await api.pages.saveCanvas(pageId, json)
       if (saveSeqRef.current[pageId] !== seq) return
@@ -1438,6 +1471,7 @@ export default function EditPublication() {
               })
               if (changed) {
                 const newJson = JSON.stringify({ ...pj, objects: updatedObjs })
+                if (deletingPageIdsRef.current.has(page.id) || deletedPageIdsRef.current.has(page.id)) continue
                 await api.pages.saveCanvas(page.id, newJson)
                 setPages((prev) => {
                   const next = prev.map((p) => (p.id === page.id ? { ...p, canvas_json: newJson } : p))
@@ -1469,8 +1503,13 @@ export default function EditPublication() {
   // Programa un guardado diferido tras el último cambio confirmado.
   const scheduleAutosave = useCallback(() => {
     if (!pageIdRef.current) return
+    if (deletingPageIdsRef.current.has(pageIdRef.current) || deletedPageIdsRef.current.has(pageIdRef.current)) return
+    if (!canvasReadyRef.current) return
     clearTimeout(autosaveTimer.current)
     autosaveTimer.current = setTimeout(() => {
+      if (!pageIdRef.current) return
+      if (deletingPageIdsRef.current.has(pageIdRef.current) || deletedPageIdsRef.current.has(pageIdRef.current)) return
+      if (!canvasReadyRef.current) return
       if (fabricRef.current && pageIdRef.current) persistCanvas(pageIdRef.current, fabricRef.current)
     }, AUTOSAVE_DELAY_MS)
   }, [persistCanvas])
@@ -1482,11 +1521,10 @@ export default function EditPublication() {
   useEffect(() => {
     if (!activePage || !canvasRef.current) return
 
-    // Guarda la página anterior ANTES de cambiar (no perder trabajo)
-    if (fabricRef.current && pageIdRef.current && pageIdRef.current !== activePage.id) {
-      clearTimeout(autosaveTimer.current)
-      persistCanvas(pageIdRef.current, fabricRef.current, false)
-    }
+    const generation = canvasGenerationRef.current + 1
+    canvasGenerationRef.current = generation
+    const loadingPageId = activePage.id
+    canvasReadyRef.current = false
     pageIdRef.current = activePage.id
     if (fabricRef.current) { fabricRef.current.dispose(); fabricRef.current = null }
     selectedRef.current = null
@@ -1507,6 +1545,10 @@ export default function EditPublication() {
     const canvas = new fabric.Canvas(canvasRef.current, { width: W, height: H, backgroundColor: bgColor, preserveObjectStacking: true })
     canvas.uniformScaling = true   // escalado uniforme por defecto: las esquinas no deforman
     fabricRef.current = canvas
+    const isCurrentLoad = () =>
+      generation === canvasGenerationRef.current &&
+      pageIdRef.current === loadingPageId &&
+      fabricRef.current === canvas
 
     // Inicializa el encuadre de esta página desde cover_json (o cubrir centrado).
     bgImgRef.current = null
@@ -1526,16 +1568,38 @@ export default function EditPublication() {
     // Carga el fondo DESPUÉS de loadFromJSON porque loadFromJSON llama canvas.clear()
     // internamente, lo que borra cualquier backgroundImage ya puesta. Llamar fromURL
     // antes del clear hace que el fondo desaparezca.
-    const loadBg = () => {
+    const loadBg = (onDone: () => void) => {
+      if (!activePage.image_url) {
+        if (!isCurrentLoad()) return
+        canvas.renderAll()
+        if (!isCurrentLoad()) return
+        canvasReadyRef.current = true
+        onDone()
+        return
+      }
       fabric.Image.fromURL(activePage.image_url, (img: any) => {
+        if (!isCurrentLoad()) return
+        if (!img) {
+          canvas.renderAll()
+          if (!isCurrentLoad()) return
+          canvasReadyRef.current = true
+          onDone()
+          return
+        }
         img.set({ selectable: false, evented: false })
         if (img && img.width && img.height) {
           bgNatRef.current = { iw: img.width, ih: img.height }
           const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
           img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
         }
-        canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
-        bgImgRef.current = canvas.backgroundImage ?? img
+        canvas.setBackgroundImage(img, () => {
+          if (!isCurrentLoad()) return
+          bgImgRef.current = canvas.backgroundImage ?? img
+          canvas.renderAll()
+          if (!isCurrentLoad()) return
+          canvasReadyRef.current = true
+          onDone()
+        })
       })
     }
 
@@ -1578,6 +1642,7 @@ export default function EditPublication() {
         : activePage.canvas_json
       const jsonWithoutBg = stripBackgroundImage(pageJson)
       canvas.loadFromJSON(jsonWithoutBg, () => {
+        if (!isCurrentLoad()) return
         isLoading = false
         canvas.getObjects().forEach((o: any) => {
           if (o.data?.hiddenInEditor) {
@@ -1586,14 +1651,12 @@ export default function EditPublication() {
         })
         canvas.renderAll()
         pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
-        loadBg()
-        tryDeepLinkSelection()
+        loadBg(tryDeepLinkSelection)
       })
     } else {
       isLoading = false
       pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
-      loadBg()
-      tryDeepLinkSelection()
+      loadBg(tryDeepLinkSelection)
     }
 
     const onSel = (kind: string) => (e: any) => {
@@ -1730,12 +1793,24 @@ export default function EditPublication() {
     canvas.on('text:editing:entered', onTextEditingEntered)
     canvas.on('text:editing:exited', onTextEditingExited)
 
+    const cleanupCanvas = canvas
+    const cleanupPageId = loadingPageId
+
     return () => {
       window.removeEventListener('keydown', onKeyDown)
-      if (fabricRef.current) {
-        clearTimeout(autosaveTimer.current)
-        persistCanvas(activePage.id, fabricRef.current, false)
-        fabricRef.current.dispose()
+      clearTimeout(autosaveTimer.current)
+      if (
+        isCurrentLoad() &&
+        canvasReadyRef.current &&
+        !deletingPageIdsRef.current.has(cleanupPageId) &&
+        !deletedPageIdsRef.current.has(cleanupPageId)
+      ) {
+        persistCanvas(cleanupPageId, cleanupCanvas, false)
+      }
+      canvasGenerationRef.current += 1
+      canvasReadyRef.current = false
+      cleanupCanvas.dispose()
+      if (fabricRef.current === cleanupCanvas) {
         fabricRef.current = null
       }
     }
@@ -1782,6 +1857,7 @@ export default function EditPublication() {
   useEffect(() => {
     const handler = () => {
       if (fabricRef.current && pageIdRef.current) {
+        if (deletingPageIdsRef.current.has(pageIdRef.current) || deletedPageIdsRef.current.has(pageIdRef.current)) return
         try {
           const json = JSON.stringify(serializeCanvasJson(fabricRef.current))
           api.pages.saveCanvas(pageIdRef.current, json).catch(() => {})
@@ -2111,11 +2187,25 @@ export default function EditPublication() {
     for (const file of files) await handleUpload(file)
   }
   async function handleDeletePage(pageId: string) {
+    if (deletingPageIdsRef.current.has(pageId)) return
     if (!confirm('¿Eliminar esta página?')) return
-    await api.pages.delete(pageId)
-    setPages((prev) => {
-      const next = prev.filter((p) => p.id !== pageId)
-      pagesRef.current = next
+    deletingPageIdsRef.current.add(pageId)
+    setUploading(true)
+
+    const reconcileDeletedPage = () => {
+      deletedPageIdsRef.current.add(pageId)
+      deletingPageIdsRef.current.delete(pageId)
+      saveSeqRef.current[pageId] = (saveSeqRef.current[pageId] ?? 0) + 1
+      delete saveChainRef.current[pageId]
+
+      const currentPages = pagesRef.current
+      const originalIndex = currentPages.findIndex((p) => p.id === pageId)
+      const nextPages = currentPages
+        .filter((p) => p.id !== pageId)
+        .map((p, index) => ({ ...p, page_number: index + 1 }))
+
+      pagesRef.current = nextPages
+      setPages(nextPages)
       invalidateThumbnailJob(pageId)
       setThumbnailByPageId((curr) => {
         if (!(pageId in curr)) return curr
@@ -2123,49 +2213,119 @@ export default function EditPublication() {
         delete nextCache[pageId]
         return nextCache
       })
-      if (activePage?.id === pageId) setActivePage(next[0] ?? null)
-      return next
-    })
-    const nextPage = pagesRef.current.find((p) => p.id !== pageId)
-    if (nextPage?.id) requestThumbnailUpdate(nextPage.id, 'persisted', { immediate: true, priority: true })
+
+      const nextActivePage = originalIndex >= 0
+        ? (nextPages[originalIndex] ?? nextPages[originalIndex - 1] ?? nextPages[0] ?? null)
+        : (nextPages[0] ?? null)
+      if (activePage?.id === pageId) {
+        setActivePage(nextActivePage)
+      }
+      if (nextActivePage?.id) requestThumbnailUpdate(nextActivePage.id, 'persisted', { immediate: true, priority: true })
+    }
+
+    try {
+      if (activePage?.id === pageId) {
+        clearTimeout(autosaveTimer.current)
+      }
+      await (saveChainRef.current[pageId] ?? Promise.resolve()).catch(() => {})
+      await api.pages.delete(pageId)
+      reconcileDeletedPage()
+    } catch (e: any) {
+      const status = e instanceof ApiRequestError ? e.status : e?.status
+      const code = e instanceof ApiRequestError ? e.code : e?.code
+      if (status === 404) {
+        reconcileDeletedPage()
+        return
+      }
+      deletingPageIdsRef.current.delete(pageId)
+      if (status === 409 && code === 'PAGE_HAS_HISTORY') {
+        alert(e?.message ?? 'No se puede eliminar esta página porque tiene historial asociado.')
+        return
+      }
+      alert(e?.message ?? 'No se pudo eliminar la página.')
+    } finally {
+      setUploading(false)
+    }
   }
 
   // Duplica una página existente con todo su contenido (imagen de fondo + canvas_json + cover_json).
   // Si la página a duplicar es la activa, primero guarda el estado actual del canvas para no perder cambios.
   async function duplicatePage(page: any) {
+    let createdCopyId: string | null = null
+    if (duplicateInFlightRef.current) return
+    if (page.id === pageIdRef.current && !canvasReadyRef.current) {
+      alert('Espera a que la página termine de cargar')
+      return
+    }
+    duplicateInFlightRef.current = true
+    clearTimeout(autosaveTimer.current)
     setUploading(true)
     try {
-      // Si se duplica la página activa, capturar el JSON actual del canvas (puede tener cambios sin guardar).
-      let canvasJson = page.canvas_json ?? null
-      let coverJson = page.cover_json ?? null
-      if (page.id === pageIdRef.current && fabricRef.current) {
-        canvasJson = JSON.stringify(serializeCanvasJson(fabricRef.current))
-        coverJson = page.cover_json ?? null
+      const sourcePageId = page.id
+      const coverJson = page.cover_json ?? null
+      let sourceSnapshot: any
+      let savedSourceCanvasJson: string | null = null
+
+      if (sourcePageId === pageIdRef.current) {
+        const sourceCanvas = fabricRef.current
+        if (!sourceCanvas || pageIdRef.current !== sourcePageId) return
+        sourceSnapshot = serializeCanvasJson(sourceCanvas)
+        const sourceCanvasJson = JSON.stringify(sourceSnapshot)
+        savedSourceCanvasJson = sourceCanvasJson
+        const seq = (saveSeqRef.current[sourcePageId] ?? 0) + 1
+        saveSeqRef.current[sourcePageId] = seq
+        const previous = saveChainRef.current[sourcePageId] ?? Promise.resolve()
+        const queued = previous.catch(() => {}).then(async () => {
+          setSaveState('saving')
+          await api.pages.saveCanvas(sourcePageId, sourceCanvasJson)
+          if (saveSeqRef.current[sourcePageId] !== seq) return
+          setSaveState('idle')
+        }).catch(() => {
+          if (saveSeqRef.current[sourcePageId] === seq) setSaveState('idle')
+          throw new Error('No se pudo guardar la página original')
+        })
+        saveChainRef.current[sourcePageId] = queued
+        await queued
+      } else {
+        sourceSnapshot = normalizeSourceCanvasJson(page.canvas_json)
       }
-      // 1. Crear la página nueva con la misma imagen de fondo.
+
+      const copyCanvasJson = JSON.stringify(cloneCanvasJsonForDuplicate(sourceSnapshot))
+      const basePages = savedSourceCanvasJson
+        ? pagesRef.current.map((p) => (p.id === sourcePageId ? { ...p, canvas_json: savedSourceCanvasJson } : p))
+        : pagesRef.current
       const res = await api.pages.add(id!, { image_url: page.image_url })
-      const newPage = res.data
-      // 2. Copiar el canvas y el encuadre de hoja si existen.
-      if (canvasJson || coverJson) {
-        await api.pages.update(newPage.id, { canvas_json: canvasJson, cover_json: coverJson })
-        newPage.canvas_json = canvasJson
-        newPage.cover_json = coverJson
-      }
-      // 3. Insertar la copia justo después de la página original en el rail.
-      setPages((prev) => {
-        const idx = prev.findIndex((p) => p.id === page.id)
-        const next = [...prev]
-        next.splice(idx + 1, 0, newPage)
-        pagesRef.current = next
-        // Reordenar en la API para que los page_number reflejen la posición.
-        api.pages.reorder(id!, next.map((p) => p.id))
-        return next
-      })
-      setActivePage(newPage)
-      requestThumbnailUpdate(newPage.id, 'persisted', { immediate: true, priority: true })
+      const createdPage = res.data
+      createdCopyId = createdPage.id
+      const updateRes = await api.pages.update(createdPage.id, { canvas_json: copyCanvasJson, cover_json: coverJson })
+      const updatedPage = { ...createdPage, ...(updateRes?.data ?? {}), canvas_json: copyCanvasJson, cover_json: coverJson }
+      const idx = basePages.findIndex((p) => p.id === sourcePageId)
+      const insertAt = idx >= 0 ? idx + 1 : basePages.length
+      const nextPages = [...basePages]
+      nextPages.splice(insertAt, 0, updatedPage)
+      const numberedPages = nextPages.map((p, index) => ({ ...p, page_number: index + 1 }))
+      await api.pages.reorder(id!, numberedPages.map((p) => p.id))
+      createdCopyId = null
+      pagesRef.current = numberedPages
+      setPages(numberedPages)
+      setActivePage(numberedPages[insertAt])
+      requestThumbnailUpdate(updatedPage.id, 'persisted', { immediate: true, priority: true })
     } catch (e: any) {
+      if (createdCopyId) {
+        try {
+          await api.pages.delete(createdCopyId)
+        } catch (rollbackError) {
+          console.error('[duplicatePage] rollback failed', {
+            page_id: createdCopyId,
+            error: rollbackError,
+          })
+        }
+      }
       alert(e.message ?? 'No se pudo duplicar la página')
-    } finally { setUploading(false) }
+    } finally {
+      duplicateInFlightRef.current = false
+      setUploading(false)
+    }
   }
 
   // Agrega una página en blanco (lienzo blanco) a la publicación actual.

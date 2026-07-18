@@ -20,6 +20,20 @@ function getToken(): string | null {
   return localStorage.getItem('token')
 }
 
+export class ApiRequestError extends Error {
+  status: number
+  code?: string
+  data?: unknown
+
+  constructor(message: string, status: number, code?: string, data?: unknown) {
+    super(message)
+    this.name = 'ApiRequestError'
+    this.status = status
+    this.code = code
+    this.data = data
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken()
   const res = await fetch(`${API_BASE}${path}`, {
@@ -36,15 +50,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     data = raw ? JSON.parse(raw) : null
   } catch {
     if (!res.ok) {
-      throw new Error(
-        res.status === 404
-          ? 'Esta función aún no está disponible en el servidor (falta desplegar la API).'
-          : `Error ${res.status}: ${raw.slice(0, 120)}`,
-      )
+      throw new ApiRequestError(`Error ${res.status}`, res.status)
     }
     throw new Error('Respuesta inválida del servidor')
   }
-  if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
+  if (!res.ok) throw new ApiRequestError(data?.error ?? `HTTP ${res.status}`, res.status, data?.code, data)
   return data
 }
 
