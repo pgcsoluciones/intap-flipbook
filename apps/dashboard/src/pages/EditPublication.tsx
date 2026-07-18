@@ -202,6 +202,61 @@ function resetDuplicateTree(obj: any, existingElementIds: Set<string>) {
   }
 }
 
+function collectCanvasJsonElementIds(json: any, out = new Set<string>()) {
+  const root = typeof json === 'string'
+    ? (() => {
+        try { return JSON.parse(json) } catch { return null }
+      })()
+    : json
+  const visit = (node: any) => {
+    if (!node || typeof node !== 'object') return
+    const elementId = node?.data?.elementId
+    if (typeof elementId === 'string' && elementId) out.add(elementId)
+    const children = Array.isArray(node.objects)
+      ? node.objects
+      : Array.isArray(node._objects) ? node._objects : []
+    children.forEach(visit)
+  }
+  const objects = Array.isArray(root?.objects) ? root.objects : []
+  objects.forEach(visit)
+  return out
+}
+
+function resetDuplicateCanvasJson(json: any, existingElementIds: Set<string>) {
+  const root = clonePlainValue(typeof json === 'string' ? JSON.parse(json) : json)
+  const visit = (node: any) => {
+    if (!node || typeof node !== 'object') return node
+    if (node.data || node.type) resetDuplicateData(node, existingElementIds)
+    const children = Array.isArray(node.objects)
+      ? node.objects
+      : Array.isArray(node._objects) ? node._objects : []
+    children.forEach(visit)
+    return node
+  }
+  const objects = Array.isArray(root?.objects) ? root.objects : []
+  objects.forEach(visit)
+  return root
+}
+
+function clonePageCanvasJsonForDuplicate(canvasJson: any, existingElementIds: Set<string>) {
+  if (!canvasJson) return null
+  try {
+    return JSON.stringify(resetDuplicateCanvasJson(canvasJson, existingElementIds))
+  } catch {
+    return typeof canvasJson === 'string' ? canvasJson : JSON.stringify(clonePlainValue(canvasJson))
+  }
+}
+
+function cloneCoverJsonForDuplicate(coverJson: any) {
+  if (!coverJson) return null
+  try {
+    const parsed = typeof coverJson === 'string' ? JSON.parse(coverJson) : coverJson
+    return JSON.stringify(clonePlainValue(parsed))
+  } catch {
+    return typeof coverJson === 'string' ? coverJson : JSON.stringify(clonePlainValue(coverJson))
+  }
+}
+
 function restoreDuplicateInteractivity(clone: any, source: any) {
   clone.set?.({
     visible: source?.visible !== false,
@@ -2135,32 +2190,41 @@ export default function EditPublication() {
   async function duplicatePage(page: any) {
     setUploading(true)
     try {
-      // Si se duplica la página activa, capturar el JSON actual del canvas (puede tener cambios sin guardar).
+      clearTimeout(autosaveTimer.current)
+      const sourcePageId = page.id
+      const existingElementIds = pagesRef.current.reduce((ids, item) => {
+        collectCanvasJsonElementIds(item?.canvas_json, ids)
+        return ids
+      }, collectFabricElementIds(fabricRef.current?.getObjects?.() ?? []))
+
+      // Si se duplica la página activa, guardar primero el canvas actual para no
+      // cambiar de página con un autosave pendiente que pueda serializar vacío.
       let canvasJson = page.canvas_json ?? null
       let coverJson = page.cover_json ?? null
-      if (page.id === pageIdRef.current && fabricRef.current) {
-        canvasJson = JSON.stringify(serializeCanvasJson(fabricRef.current))
-        coverJson = page.cover_json ?? null
+      if (sourcePageId === pageIdRef.current && fabricRef.current) {
+        const liveJson = serializeCanvasJson(fabricRef.current)
+        canvasJson = JSON.stringify(liveJson)
+        await persistCanvas(sourcePageId, fabricRef.current, false)
       }
+      const duplicateCanvasJson = clonePageCanvasJsonForDuplicate(canvasJson, existingElementIds)
+      const duplicateCoverJson = cloneCoverJsonForDuplicate(coverJson)
       // 1. Crear la página nueva con la misma imagen de fondo.
       const res = await api.pages.add(id!, { image_url: page.image_url })
       const newPage = res.data
       // 2. Copiar el canvas y el encuadre de hoja si existen.
-      if (canvasJson || coverJson) {
-        await api.pages.update(newPage.id, { canvas_json: canvasJson, cover_json: coverJson })
-        newPage.canvas_json = canvasJson
-        newPage.cover_json = coverJson
+      if (duplicateCanvasJson || duplicateCoverJson) {
+        await api.pages.update(newPage.id, { canvas_json: duplicateCanvasJson, cover_json: duplicateCoverJson })
+        newPage.canvas_json = duplicateCanvasJson
+        newPage.cover_json = duplicateCoverJson
       }
       // 3. Insertar la copia justo después de la página original en el rail.
-      setPages((prev) => {
-        const idx = prev.findIndex((p) => p.id === page.id)
-        const next = [...prev]
-        next.splice(idx + 1, 0, newPage)
-        pagesRef.current = next
-        // Reordenar en la API para que los page_number reflejen la posición.
-        api.pages.reorder(id!, next.map((p) => p.id))
-        return next
-      })
+      const currentPages = pagesRef.current.length > 0 ? pagesRef.current : pages
+      const idx = currentPages.findIndex((p) => p.id === sourcePageId)
+      const nextPages = [...currentPages]
+      nextPages.splice(idx >= 0 ? idx + 1 : nextPages.length, 0, newPage)
+      pagesRef.current = nextPages
+      setPages(nextPages)
+      if (nextPages.length > 0) await api.pages.reorder(id!, nextPages.map((p) => p.id))
       setActivePage(newPage)
       requestThumbnailUpdate(newPage.id, 'persisted', { immediate: true, priority: true })
     } catch (e: any) {
