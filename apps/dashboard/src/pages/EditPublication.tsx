@@ -336,11 +336,49 @@ function normalizeSourceCanvasJson(value: any) {
   }
 }
 
-function cloneCanvasJsonForDuplicate(sourceJson: any) {
+function collectCanvasJsonElementIds(json: any, out = new Set<string>()) {
+  const root = typeof json === 'string'
+    ? (() => {
+        try { return JSON.parse(json) } catch { return null }
+      })()
+    : json
+
+  const visit = (node: any) => {
+    if (!node || typeof node !== 'object') return
+    const elementId = node?.data?.elementId
+    if (typeof elementId === 'string' && elementId) out.add(elementId)
+    const children = Array.isArray(node.objects)
+      ? node.objects
+      : Array.isArray(node._objects) ? node._objects : []
+    children.forEach(visit)
+  }
+
+  const objects = Array.isArray(root?.objects) ? root.objects : []
+  objects.forEach(visit)
+  return out
+}
+
+function cloneCanvasJsonForDuplicate(
+  sourceJson: any,
+  existingElementIds = new Set<string>(),
+) {
   const clonedJson = clonePlainValue(normalizeSourceCanvasJson(sourceJson))
-  const existingElementIds = new Set<string>()
-  ;(clonedJson.objects ?? []).forEach((obj: any) => resetDuplicateTree(obj, existingElementIds))
+  ;(clonedJson.objects ?? []).forEach((obj: any) =>
+    resetDuplicateTree(obj, existingElementIds),
+  )
   return clonedJson
+}
+
+function cloneCoverJsonForDuplicate(coverJson: any) {
+  if (!coverJson) return null
+  try {
+    const parsed = typeof coverJson === 'string' ? JSON.parse(coverJson) : coverJson
+    return JSON.stringify(clonePlainValue(parsed))
+  } catch {
+    return typeof coverJson === 'string'
+      ? coverJson
+      : JSON.stringify(clonePlainValue(coverJson))
+  }
 }
 
 function restoreDuplicateInteractivity(clone: any, source: any) {
@@ -2828,18 +2866,26 @@ export default function EditPublication() {
     try {
       const sourcePageId = page.id
       const coverJson = page.cover_json ?? null
+      const existingElementIds = pagesRef.current.reduce((ids, item) => {
+        collectCanvasJsonElementIds(item?.canvas_json, ids)
+        return ids
+      }, collectFabricElementIds(fabricRef.current?.getObjects?.() ?? []))
+
       let sourceSnapshot: any
       let savedSourceCanvasJson: string | null = null
 
       if (sourcePageId === pageIdRef.current) {
         const sourceCanvas = fabricRef.current
         if (!sourceCanvas || pageIdRef.current !== sourcePageId) return
+
         sourceSnapshot = serializeCanvasJson(sourceCanvas)
         const sourceCanvasJson = JSON.stringify(sourceSnapshot)
         savedSourceCanvasJson = sourceCanvasJson
+
         const seq = (saveSeqRef.current[sourcePageId] ?? 0) + 1
         saveSeqRef.current[sourcePageId] = seq
         const previous = saveChainRef.current[sourcePageId] ?? Promise.resolve()
+
         const queued = previous.catch(() => {}).then(async () => {
           setSaveState('saving')
           await api.pages.saveCanvas(sourcePageId, sourceCanvasJson)
@@ -2849,32 +2895,62 @@ export default function EditPublication() {
           if (saveSeqRef.current[sourcePageId] === seq) setSaveState('idle')
           throw new Error('No se pudo guardar la página original')
         })
+
         saveChainRef.current[sourcePageId] = queued
         await queued
       } else {
         sourceSnapshot = normalizeSourceCanvasJson(page.canvas_json)
       }
 
-      const copyCanvasJson = JSON.stringify(cloneCanvasJsonForDuplicate(sourceSnapshot))
+      const copyCanvasJson = JSON.stringify(
+        cloneCanvasJsonForDuplicate(sourceSnapshot, existingElementIds),
+      )
+      const copyCoverJson = cloneCoverJsonForDuplicate(coverJson)
+
       const basePages = savedSourceCanvasJson
-        ? pagesRef.current.map((p) => (p.id === sourcePageId ? { ...p, canvas_json: savedSourceCanvasJson } : p))
+        ? pagesRef.current.map((p) =>
+            p.id === sourcePageId
+              ? { ...p, canvas_json: savedSourceCanvasJson }
+              : p,
+          )
         : pagesRef.current
+
       const res = await api.pages.add(id!, { image_url: page.image_url })
       const createdPage = res.data
       createdCopyId = createdPage.id
-      const updateRes = await api.pages.update(createdPage.id, { canvas_json: copyCanvasJson, cover_json: coverJson })
-      const updatedPage = { ...createdPage, ...(updateRes?.data ?? {}), canvas_json: copyCanvasJson, cover_json: coverJson }
+
+      const updateRes = await api.pages.update(createdPage.id, {
+        canvas_json: copyCanvasJson,
+        cover_json: copyCoverJson,
+      })
+
+      const updatedPage = {
+        ...createdPage,
+        ...(updateRes?.data ?? {}),
+        canvas_json: copyCanvasJson,
+        cover_json: copyCoverJson,
+      }
+
       const idx = basePages.findIndex((p) => p.id === sourcePageId)
       const insertAt = idx >= 0 ? idx + 1 : basePages.length
       const nextPages = [...basePages]
       nextPages.splice(insertAt, 0, updatedPage)
-      const numberedPages = nextPages.map((p, index) => ({ ...p, page_number: index + 1 }))
+
+      const numberedPages = nextPages.map((p, index) => ({
+        ...p,
+        page_number: index + 1,
+      }))
+
       await api.pages.reorder(id!, numberedPages.map((p) => p.id))
+
       createdCopyId = null
       pagesRef.current = numberedPages
       setPages(numberedPages)
       setActivePage(numberedPages[insertAt])
-      requestThumbnailUpdate(updatedPage.id, 'persisted', { immediate: true, priority: true })
+      requestThumbnailUpdate(updatedPage.id, 'persisted', {
+        immediate: true,
+        priority: true,
+      })
     } catch (e: any) {
       if (createdCopyId) {
         try {
