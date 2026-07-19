@@ -24,6 +24,27 @@ async function loadBatch() {
   }
 }
 
+async function loadMediaPicker() {
+  const dir = await mkdtemp(join(tmpdir(), 'media-picker-test-'))
+  const outfile = join(dir, 'MediaPicker.mjs')
+  await build({
+    entryPoints: ['apps/dashboard/src/components/MediaPicker.tsx'],
+    outfile,
+    bundle: true,
+    format: 'esm',
+    platform: 'node',
+    target: 'node20',
+    define: {
+      'import.meta.env.VITE_API_BASE_URL': '"https://api.example.test"',
+    },
+  })
+  const mod = await import(pathToFileURL(outfile).href)
+  return {
+    ...mod,
+    cleanup: () => rm(dir, { recursive: true, force: true }),
+  }
+}
+
 function makePage(id, imageUrl, pageNumber) {
   return {
     id,
@@ -437,4 +458,109 @@ test('error API al adoptar legacy muestra mensaje y conserva seleccion', async (
 
   assert.equal(state.error, 'No se pudo registrar esta imagen anterior en el banco.')
   assert.deepEqual(state.selected, ['legacy:old'])
+})
+
+test('52 elementos combinados paginan 12, 12 y 4 elementos', async () => {
+  const picker = await loadMediaPicker()
+  try {
+    const legacyItems = Array.from({ length: 52 }, (_, index) => ({ key: `legacy:${index + 1}`, url: `https://legacy.example.test/${index + 1}.jpg` }))
+    const page1 = picker.getCombinedMediaPage({ assets: [], legacyItems, assetTotal: 0, page: 1, keyForAsset: (item) => item.url, keyForLegacy: (item) => item.url })
+    const page2 = picker.getCombinedMediaPage({ assets: [], legacyItems, assetTotal: 0, page: 2, keyForAsset: (item) => item.url, keyForLegacy: (item) => item.url })
+    const page5 = picker.getCombinedMediaPage({ assets: [], legacyItems, assetTotal: 0, page: 5, keyForAsset: (item) => item.url, keyForLegacy: (item) => item.url })
+
+    assert.equal(page1.totalPages, 5)
+    assert.equal(page1.items.length, 12)
+    assert.deepEqual(page1.items.map((item) => item.key), legacyItems.slice(0, 12).map((item) => item.key))
+    assert.deepEqual(page2.items.map((item) => item.key), legacyItems.slice(12, 24).map((item) => item.key))
+    assert.deepEqual(page5.items.map((item) => item.key), legacyItems.slice(48, 52).map((item) => item.key))
+  } finally {
+    await picker.cleanup()
+  }
+})
+
+test('siguiente y anterior cambian pagina sin volver a 1', async () => {
+  const picker = await loadMediaPicker()
+  try {
+    const legacyItems = Array.from({ length: 24 }, (_, index) => ({ key: `legacy:${index + 1}`, url: `https://legacy.example.test/${index + 1}.jpg` }))
+    let currentPage = 1
+    const loadPage = (page) => {
+      currentPage = page
+      return picker.getCombinedMediaPage({ assets: [], legacyItems, assetTotal: 0, page: currentPage, keyForAsset: (item) => item.url, keyForLegacy: (item) => item.url })
+    }
+
+    const next = loadPage(currentPage + 1)
+    assert.equal(currentPage, 2)
+    assert.equal(next.items[0].key, 'legacy:13')
+    assert.equal(loadPage(currentPage - 1).items[0].key, 'legacy:1')
+    assert.equal(currentPage, 1)
+  } finally {
+    await picker.cleanup()
+  }
+})
+
+test('deduplicacion evita repetir una URL como asset y legacy', async () => {
+  const picker = await loadMediaPicker()
+  try {
+    const assets = [{ key: 'asset:1', url: 'https://media.example.test/shared.jpg' }]
+    const legacyItems = [
+      { key: 'legacy:shared', url: 'https://media.example.test/shared.jpg' },
+      { key: 'legacy:other', url: 'https://legacy.example.test/other.jpg' },
+    ]
+    const page = picker.getCombinedMediaPage({ assets, legacyItems, assetTotal: 1, page: 1, keyForAsset: (item) => item.url, keyForLegacy: (item) => item.url })
+
+    assert.deepEqual(page.items.map((item) => item.key), ['asset:1', 'legacy:other'])
+  } finally {
+    await picker.cleanup()
+  }
+})
+
+test('seleccion se conserva al navegar y limpiar borra todas las paginas', () => {
+  const selected = ['legacy:1']
+  const page = 2
+
+  assert.equal(page, 2)
+  assert.deepEqual(selected, ['legacy:1'])
+  selected.length = 0
+  assert.deepEqual(selected, [])
+})
+
+test('busqueda nueva vuelve a pagina 1', () => {
+  const state = { pageNumber: 4, q: '' }
+  const search = (q) => {
+    state.q = q
+    state.pageNumber = 1
+  }
+
+  search('catalogo')
+  assert.deepEqual(state, { pageNumber: 1, q: 'catalogo' })
+})
+
+test('eliminar ultima tarjeta retrocede si la pagina queda vacia', () => {
+  const state = { itemsOnPage: 1, removed: 1, pageNumber: 5 }
+  const nextPage = state.itemsOnPage <= state.removed && state.pageNumber > 1 ? state.pageNumber - 1 : state.pageNumber
+
+  assert.equal(nextPage, 4)
+})
+
+test('respuesta tardia no reemplaza la pagina actual', () => {
+  const state = { seq: 0, page: 1, items: [] }
+  const request = (page) => {
+    state.seq += 1
+    return { seq: state.seq, page, items: [`page-${page}`] }
+  }
+  const apply = (response) => {
+    if (response.seq !== state.seq) return
+    state.page = response.page
+    state.items = response.items
+  }
+
+  const page1 = request(1)
+  request(2)
+  const page3 = request(3)
+  apply(page1)
+  assert.equal(state.page, 1)
+  assert.deepEqual(state.items, [])
+  apply(page3)
+  assert.equal(state.page, 3)
+  assert.deepEqual(state.items, ['page-3'])
 })

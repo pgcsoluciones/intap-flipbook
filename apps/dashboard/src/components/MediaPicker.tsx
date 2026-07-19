@@ -4,6 +4,7 @@ import { api, toCanvasSafeAssetUrl, type MediaAsset } from '../lib/api'
 const ACCEPT_IMAGE = 'image/jpeg,image/png,image/webp,image/svg+xml,image/gif'
 const ACCEPT_SVG = '.svg,image/svg+xml'
 const MAX_PDF_BYTES = 50 * 1024 * 1024
+const BANK_PAGE_SIZE = 12
 
 type MediaPickerMode = 'image' | 'pages' | 'svg'
 
@@ -43,6 +44,46 @@ type DeletePrompt = {
   mode: 'in-use' | 'unused'
   assets: Array<{ asset: MediaAsset; usage_count: number; can_delete_physical: boolean; usages: Array<{ label: string; type: string }> }>
   totalUses: number
+}
+
+export function getCombinedMediaPage<TAsset, TLegacy>({
+  assets,
+  legacyItems,
+  assetTotal,
+  page,
+  pageSize = BANK_PAGE_SIZE,
+  keyForAsset,
+  keyForLegacy,
+}: {
+  assets: TAsset[]
+  legacyItems: TLegacy[]
+  assetTotal: number
+  page: number
+  pageSize?: number
+  keyForAsset: (asset: TAsset) => string
+  keyForLegacy: (legacy: TLegacy) => string
+}) {
+  const safePage = Math.max(1, page)
+  const safeAssetTotal = Math.max(0, assetTotal)
+  const offset = (safePage - 1) * pageSize
+  const assetSlots = Math.max(0, Math.min(pageSize, safeAssetTotal - offset))
+  const pageAssets = assetSlots > 0 ? assets.slice(0, assetSlots) : []
+  const legacyStart = Math.max(0, offset - safeAssetTotal)
+  const legacySlots = pageSize - pageAssets.length
+  const seen = new Set(pageAssets.map(keyForAsset))
+  const pageLegacy: TLegacy[] = []
+  for (const legacy of legacyItems.slice(legacyStart)) {
+    if (pageLegacy.length >= legacySlots) break
+    const key = keyForLegacy(legacy)
+    if (seen.has(key)) continue
+    seen.add(key)
+    pageLegacy.push(legacy)
+  }
+  return {
+    items: [...pageAssets, ...pageLegacy],
+    total: safeAssetTotal + legacyItems.length,
+    totalPages: Math.max(1, Math.ceil((safeAssetTotal + legacyItems.length) / pageSize)),
+  }
 }
 
 function formatBytes(bytes: number) {
@@ -199,21 +240,21 @@ export default function MediaPicker({
       const res = await api.mediaAssets.list({
         publication_id: publicationId,
         q,
-        limit: 12,
+        limit: BANK_PAGE_SIZE,
         page: nextPage,
       })
       if (seq !== loadSeqRef.current) return
       setAssets(res.data ?? [])
       setKnownAssetUrls(res.meta?.known_urls ?? res.page?.known_urls ?? [])
-      setPageNumber(res.page?.page ?? nextPage)
+      setPageNumber(nextPage)
       setPageInfo({
-        page: res.page?.page ?? nextPage,
+        page: nextPage,
         total: res.page?.total ?? 0,
         total_pages: res.page?.total_pages ?? 1,
         has_more: !!res.page?.has_more,
       })
     } catch (err: any) {
-      setError(err?.message ?? 'No se pudo cargar el banco del proyecto')
+      if (seq === loadSeqRef.current) setError(err?.message ?? 'No se pudo cargar el banco del proyecto')
     } finally {
       if (seq === loadSeqRef.current) setLoading(false)
     }
@@ -249,18 +290,13 @@ export default function MediaPicker({
     return result
   }, [knownAssetUrls, legacyUrls, mode, q])
 
-  const combinedTotal = pageInfo.total + legacyItems.length
-  const combinedTotalPages = Math.max(1, Math.ceil(combinedTotal / 12))
-
   const items = useMemo(() => {
-    const seen = new Set<string>()
-    const result: PickerItem[] = []
+    const assetItems: PickerItem[] = []
     for (const asset of assets) {
       if (!isAllowedAsset(asset, mode)) continue
       const url = toCanvasSafeAssetUrl(asset.public_url)
-      if (!url || seen.has(url)) continue
-      seen.add(url)
-      result.push({
+      if (!url || assetItems.some((item) => item.url === url)) continue
+      assetItems.push({
         key: `asset:${asset.id}`,
         url,
         name: asset.original_name,
@@ -269,14 +305,26 @@ export default function MediaPicker({
         asset: { ...asset, public_url: url },
       })
     }
-    for (const legacy of legacyItems) {
-      if (result.length >= 12) break
-      if (seen.has(legacy.url)) continue
-      seen.add(legacy.url)
-      result.push(legacy)
-    }
-    return result
-  }, [assets, legacyItems, mode])
+    return getCombinedMediaPage({
+      assets: assetItems,
+      legacyItems,
+      assetTotal: pageInfo.total,
+      page: pageNumber,
+      keyForAsset: (asset) => normalizeUrlForCompare(asset.url),
+      keyForLegacy: (legacy) => normalizeUrlForCompare(legacy.url),
+    }).items
+  }, [assets, legacyItems, mode, pageInfo.total, pageNumber])
+
+  const combinedPage = useMemo(() => getCombinedMediaPage({
+    assets: [],
+    legacyItems,
+    assetTotal: pageInfo.total,
+    page: pageNumber,
+    keyForAsset: () => '',
+    keyForLegacy: (legacy) => normalizeUrlForCompare(legacy.url),
+  }), [legacyItems, pageInfo.total, pageNumber])
+  const combinedTotal = combinedPage.total
+  const combinedTotalPages = combinedPage.totalPages
 
   if (!open) return null
 
@@ -706,7 +754,7 @@ export default function MediaPicker({
             <div style={styles.pagination}>
               <button type="button" style={styles.more} disabled={loading || pageNumber <= 1} onClick={() => void loadAssets(pageNumber - 1)}>Anterior</button>
               <span>Página {pageInfo.page} de {combinedTotalPages}</span>
-              <button type="button" style={styles.more} disabled={loading || pageNumber >= combinedTotalPages || (!pageInfo.has_more && pageNumber >= pageInfo.total_pages)} onClick={() => void loadAssets(pageNumber + 1)}>Siguiente</button>
+              <button type="button" style={styles.more} disabled={loading || pageNumber >= combinedTotalPages} onClick={() => void loadAssets(pageNumber + 1)}>Siguiente</button>
             </div>
             {isMulti && (
               <div style={styles.actions}>
