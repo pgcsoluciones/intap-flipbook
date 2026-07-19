@@ -821,9 +821,19 @@ export const api = {
       return request<{
         success: true
         data: MediaAsset[]
-        page: { limit: number; page: number; total: number; total_pages: number; has_more: boolean; next_cursor: string | null }
+        page: { limit: number; page: number; total: number; total_pages: number; has_more: boolean; next_cursor: string | null; known_urls?: string[] }
+        meta?: { known_urls?: string[]; excluded_legacy_urls?: string[] }
       }>(`/api/upload/media-assets?${qs}`)
     },
+    adopt: (input: { publication_id: string; public_url: string; original_name?: string }) =>
+      request<{ success: true; data: { asset: MediaAsset; url: string; reused: boolean } }>('/api/upload/media-assets/adopt', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }).then((data) => {
+        if (data?.data?.asset?.public_url) data.data.asset.public_url = toCanvasSafeAssetUrl(data.data.asset.public_url)
+        if (data?.data?.url) data.data.url = toCanvasSafeAssetUrl(data.data.url)
+        return data
+      }),
     upload: (input: { publication_id: string; file: File; width?: number | null; height?: number | null }) => {
       const token = getToken()
       const form = new FormData()

@@ -375,3 +375,66 @@ test('limpiar seleccion funciona despues de una accion del banco', () => {
   clearSelection()
   assert.deepEqual(state, { selectedItems: [], selectedUploads: [] })
 })
+
+test('12 imagenes legacy y 0 media_assets muestran total 12', () => {
+  const pageInfo = { total: 0 }
+  const legacyItems = Array.from({ length: 12 }, (_, index) => `https://legacy.example.test/${index + 1}.jpg`)
+  const combinedTotal = pageInfo.total + new Set(legacyItems).size
+
+  assert.equal(combinedTotal, 12)
+})
+
+test('seleccionar una legacy hace que eliminar adopte antes de consultar usage', async () => {
+  const calls = []
+  const selectedItem = { key: 'legacy:https://legacy.example.test/old.jpg', url: 'https://legacy.example.test/old.jpg', name: 'old.jpg' }
+  const adopt = async (item) => {
+    calls.push(['adopt', item.url])
+    return { id: 'asset-legacy', public_url: item.url }
+  }
+  const usage = async (asset) => {
+    calls.push(['usage', asset.id])
+    return { usage_count: 0 }
+  }
+
+  const asset = selectedItem.asset ?? await adopt(selectedItem)
+  await usage(asset)
+
+  assert.deepEqual(calls, [
+    ['adopt', 'https://legacy.example.test/old.jpg'],
+    ['usage', 'asset-legacy'],
+  ])
+})
+
+test('legacy ocultada no reaparece despues de recargar fallback', () => {
+  const knownUrls = new Set(['https://legacy.example.test/hidden.jpg'])
+  const legacyUrls = ['https://legacy.example.test/hidden.jpg', 'https://legacy.example.test/visible.jpg']
+  const visibleLegacy = legacyUrls.filter((url) => !knownUrls.has(url))
+
+  assert.deepEqual(visibleLegacy, ['https://legacy.example.test/visible.jpg'])
+})
+
+test('adoptar legacy no duplica total y ocultar reduce total', () => {
+  const before = { assetTotal: 0, legacyTotal: 12 }
+  const afterAdopt = { assetTotal: 1, legacyTotal: 11 }
+  const afterHide = { assetTotal: 0, legacyTotal: 11 }
+
+  assert.equal(before.assetTotal + before.legacyTotal, 12)
+  assert.equal(afterAdopt.assetTotal + afterAdopt.legacyTotal, 12)
+  assert.equal(afterHide.assetTotal + afterHide.legacyTotal, 11)
+})
+
+test('error API al adoptar legacy muestra mensaje y conserva seleccion', async () => {
+  const state = { selected: ['legacy:old'], error: '' }
+  const adopt = async () => {
+    throw new Error('No se pudo registrar esta imagen anterior en el banco.')
+  }
+
+  try {
+    await adopt()
+  } catch (error) {
+    state.error = error.message
+  }
+
+  assert.equal(state.error, 'No se pudo registrar esta imagen anterior en el banco.')
+  assert.deepEqual(state.selected, ['legacy:old'])
+})

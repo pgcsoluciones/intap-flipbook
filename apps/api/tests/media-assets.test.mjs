@@ -124,6 +124,14 @@ class FakeStatement {
       const [publicationId] = this.params
       return this.db.publications.find((pub) => pub.id === publicationId) ?? null
     }
+    if (sql.startsWith('SELECT * FROM media_assets WHERE') && sql.includes('public_url = ?')) {
+      const [tenantId, publicationId, publicUrl] = this.params
+      return this.db.mediaAssets.find((asset) =>
+        asset.tenant_id === tenantId
+        && asset.publication_id === publicationId
+        && asset.public_url === publicUrl
+      ) ?? null
+    }
     if (sql.startsWith('SELECT * FROM media_assets WHERE') && !sql.includes('sha256 = ?')) {
       const [assetId, publicationId] = this.params
       return this.db.mediaAssets.find((asset) =>
@@ -160,6 +168,13 @@ class FakeStatement {
   }
 
   async all() {
+    if (this.sql.startsWith('SELECT public_url FROM media_assets')) {
+      const [tenantId, publicationId] = this.params
+      return { results: this.db.mediaAssets.filter((asset) =>
+        asset.tenant_id === tenantId
+        && asset.publication_id === publicationId
+      ).map((asset) => ({ public_url: asset.public_url })) }
+    }
     if (this.sql.includes('FROM media_assets')) {
       const [tenantId, publicationId, storageBucket] = this.params
       let index = 3
@@ -546,6 +561,100 @@ test('listing paginates 12 assets and reports total pages', async () => {
   assert.equal(result.body.page.total, 13)
   assert.equal(result.body.page.total_pages, 2)
   assert.equal(result.body.page.has_more, true)
+})
+
+test('listing includes known urls so hidden legacy entries do not reappear', async () => {
+  const db = new FakeD1({
+    mediaAssets: [
+      { id: 'hidden', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'EXTERNAL', storage_key: 'external/hidden', public_url: 'https://legacy.example.test/hidden.jpg', original_name: 'hidden.jpg', mime_type: 'image/jpeg', size_bytes: 0, sha256: 'legacy:hidden', width: null, height: null, is_hidden: 1, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const result = await requestUpload(db, r2, '/media-assets?publication_id=pub-1&limit=12&page=1', { method: 'GET' })
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.data.length, 0)
+  assert.deepEqual(result.body.meta.known_urls, ['https://legacy.example.test/hidden.jpg'])
+})
+
+test('adopting legacy URL creates media_asset without R2 put and reusing same URL does not duplicate', async () => {
+  const db = new FakeD1()
+  const r2 = new FakeR2()
+  const body = JSON.stringify({
+    publication_id: 'pub-1',
+    public_url: 'https://legacy.example.test/old.jpg',
+    original_name: 'old.jpg',
+  })
+  const first = await requestUpload(db, r2, '/media-assets/adopt', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body,
+  })
+  const second = await requestUpload(db, r2, '/media-assets/adopt', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body,
+  })
+
+  assert.equal(first.status, 201)
+  assert.equal(first.body.data.reused, false)
+  assert.equal(first.body.data.asset.public_url, 'https://legacy.example.test/old.jpg')
+  assert.equal(first.body.data.asset.storage_bucket, 'EXTERNAL')
+  assert.equal(second.status, 200)
+  assert.equal(second.body.data.reused, true)
+  assert.equal(db.mediaAssets.length, 1)
+  assert.equal(r2.puts.length, 0)
+})
+
+test('adopted legacy used in a page reports usage and can be hidden without deleting origin', async () => {
+  const db = new FakeD1({
+    pages: [
+      { id: 'p1', publication_id: 'pub-1', page_number: 4, image_url: 'https://legacy.example.test/used.jpg', canvas_json: null, cover_json: null },
+    ],
+  })
+  const r2 = new FakeR2()
+  const adopted = await requestUpload(db, r2, '/media-assets/adopt', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', public_url: 'https://legacy.example.test/used.jpg' }),
+  })
+  const assetId = adopted.body.data.asset.id
+  const usage = await requestUpload(db, r2, `/media-assets/${assetId}/usage?publication_id=pub-1`, { method: 'GET' })
+  const hidden = await requestUpload(db, r2, `/media-assets/${assetId}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ is_hidden: true }),
+  })
+
+  assert.equal(usage.status, 200)
+  assert.equal(usage.body.data.usage_count, 1)
+  assert.equal(usage.body.data.can_delete_physical, false)
+  assert.equal(hidden.status, 200)
+  assert.equal(db.mediaAssets[0].is_hidden, 1)
+  assert.equal(db.pages[0].image_url, 'https://legacy.example.test/used.jpg')
+  assert.deepEqual(r2.deletes, [])
+})
+
+test('external adopted URL cannot be physically deleted but trusted R2 legacy URL can when unused', async () => {
+  const db = new FakeD1()
+  const r2 = new FakeR2()
+  const external = await requestUpload(db, r2, '/media-assets/adopt', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', public_url: 'https://legacy.example.test/free.jpg' }),
+  })
+  const trusted = await requestUpload(db, r2, '/media-assets/adopt', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', public_url: 'https://media.example.test/uploads/user-1/trusted.jpg' }),
+  })
+  const externalDelete = await requestUpload(db, r2, `/media-assets/${external.body.data.asset.id}?publication_id=pub-1`, { method: 'DELETE' })
+  const trustedDelete = await requestUpload(db, r2, `/media-assets/${trusted.body.data.asset.id}?publication_id=pub-1`, { method: 'DELETE' })
+
+  assert.equal(externalDelete.status, 409)
+  assert.equal(externalDelete.body.code, 'MEDIA_ASSET_UNSAFE_STORAGE_KEY')
+  assert.equal(trustedDelete.status, 200)
+  assert.deepEqual(r2.deletes, ['uploads/user-1/trusted.jpg'])
 })
 
 test('asset without usages returns usage_count 0', async () => {

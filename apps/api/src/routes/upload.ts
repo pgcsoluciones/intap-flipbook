@@ -153,6 +153,48 @@ function encodeMediaAssetCursor(row: MediaAssetRow) {
   return btoa(JSON.stringify({ created_at: row.created_at, id: row.id }))
 }
 
+function normalizeStoredAssetUrl(value: string) {
+  return value.trim()
+}
+
+function legacyAssetSha(publicUrl: string) {
+  return `legacy:${publicUrl}`
+}
+
+function mimeFromAssetUrl(publicUrl: string) {
+  const pathname = (() => {
+    try { return new URL(publicUrl).pathname } catch { return publicUrl }
+  })().toLowerCase()
+  if (pathname.endsWith('.svg')) return 'image/svg+xml'
+  if (pathname.endsWith('.gif')) return 'image/gif'
+  if (pathname.endsWith('.webp')) return 'image/webp'
+  if (pathname.endsWith('.png')) return 'image/png'
+  return 'image/jpeg'
+}
+
+function assetNameFromUrl(publicUrl: string, fallback = 'Imagen anterior') {
+  try {
+    const pathname = new URL(publicUrl).pathname
+    const name = pathname.split('/').filter(Boolean).pop()
+    return name ? decodeURIComponent(name) : fallback
+  } catch {
+    const name = publicUrl.split('/').filter(Boolean).pop()?.split('?')[0]
+    return name ? decodeURIComponent(name) : fallback
+  }
+}
+
+function storageKeyFromKnownPublicUrl(c: any, publicUrl: string) {
+  const normalized = publicUrl.trim()
+  const uploadMatch = normalized.match(/(?:^|\/)api\/upload\/(uploads\/[^?#]+)$/)
+  if (uploadMatch?.[1] && isPublicUploadKey(uploadMatch[1])) return uploadMatch[1]
+  const base = String(c.env.R2_PUBLIC_BASE_URL ?? '').replace(/\/+$/, '')
+  if (base && normalized.startsWith(`${base}/`)) {
+    const key = normalized.slice(base.length + 1).split(/[?#]/)[0]
+    if (isPublicUploadKey(key)) return key
+  }
+  return null
+}
+
 async function getOwnedPublication(c: any, publicationId: string, userId: string) {
   return c.env.DB.prepare(
     'SELECT id FROM publications WHERE id = ? AND user_id = ?',
@@ -187,6 +229,17 @@ function assetReferenceCandidates(asset: MediaAssetRow) {
     candidates.push(publicUrl.slice(publicUrl.indexOf(storageKey)))
   }
   return Array.from(new Set(candidates.filter((value) => typeof value === 'string' && value.trim())))
+}
+
+async function findMediaAssetByPublicUrl(c: any, userId: string, publicationId: string, publicUrl: string) {
+  return c.env.DB.prepare(
+    `SELECT *
+     FROM media_assets
+     WHERE tenant_id = ?
+       AND publication_id = ?
+       AND public_url = ?
+     LIMIT 1`,
+  ).bind(userId, publicationId, publicUrl).first<MediaAssetRow>()
 }
 
 function textContainsAnyReference(value: unknown, candidates: string[]) {
@@ -251,7 +304,7 @@ async function countMediaAssetUsage(c: any, asset: MediaAssetRow) {
   return {
     asset_id: asset.id,
     usage_count: usages.length,
-    can_delete_physical: usages.length === 0,
+    can_delete_physical: usages.length === 0 && asset.storage_bucket === 'MEDIA' && !!asset.storage_key && isPublicUploadKey(asset.storage_key),
     usages,
   }
 }
@@ -408,9 +461,16 @@ upload.get('/media-assets', async (c) => {
   `
   params.push(limit + 1, offset)
   const result = await c.env.DB.prepare(sql).bind(...params).all<MediaAssetRow>()
+  const knownRows = await c.env.DB.prepare(
+    `SELECT public_url
+     FROM media_assets
+     WHERE tenant_id = ?
+       AND publication_id = ?`,
+  ).bind(userId, publicationId).all<{ public_url: string }>()
   const rows = result.results ?? []
   const pageRows = rows.slice(0, limit)
   const hasMore = rows.length > limit
+  const knownUrls = Array.from(new Set((knownRows.results ?? []).map((row) => normalizeStoredAssetUrl(row.public_url)).filter(Boolean)))
   return c.json({
     success: true,
     data: pageRows.map(mediaAssetResponse),
@@ -421,8 +481,89 @@ upload.get('/media-assets', async (c) => {
       total_pages: Math.max(1, Math.ceil((totalRow?.count ?? pageRows.length) / limit)),
       has_more: hasMore,
       next_cursor: hasMore ? encodeMediaAssetCursor(pageRows[pageRows.length - 1]) : null,
+      known_urls: knownUrls,
     },
+    meta: { known_urls: knownUrls, excluded_legacy_urls: knownUrls },
   })
+})
+
+upload.post('/media-assets/adopt', async (c) => {
+  const userId = c.get('user').sub
+  const reqId = c.req.header('CF-Ray') ?? crypto.randomUUID()
+  const body = await c.req.json<{ publication_id?: string; public_url?: string; original_name?: string }>().catch(() => ({}))
+  const publicationId = String(body.publication_id ?? '').trim()
+  const publicUrl = normalizeStoredAssetUrl(String(body.public_url ?? ''))
+  const originalName = String(body.original_name ?? '').trim() || assetNameFromUrl(publicUrl)
+
+  if (!publicationId) return c.json({ success: false, error: 'publication_id es requerido' }, 400)
+  if (!publicUrl) return c.json({ success: false, error: 'public_url es requerido' }, 400)
+  const publication = await getOwnedPublication(c, publicationId, userId)
+  if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  try {
+    const existing = await findMediaAssetByPublicUrl(c, userId, publicationId, publicUrl)
+    if (existing) {
+      return c.json({ success: true, data: { asset: mediaAssetResponse(existing), url: existing.public_url, reused: true } })
+    }
+
+    const storageKey = storageKeyFromKnownPublicUrl(c, publicUrl)
+    const now = new Date().toISOString()
+    const asset: MediaAssetRow = {
+      id: crypto.randomUUID(),
+      tenant_id: userId,
+      publication_id: publicationId,
+      storage_bucket: storageKey ? 'MEDIA' : 'EXTERNAL',
+      storage_key: storageKey ?? `external/${crypto.randomUUID()}`,
+      public_url: publicUrl,
+      original_name: originalName,
+      mime_type: mimeFromAssetUrl(publicUrl),
+      size_bytes: 0,
+      sha256: legacyAssetSha(publicUrl),
+      width: null,
+      height: null,
+      is_hidden: 0,
+      deleted_at: null,
+      created_at: now,
+      updated_at: now,
+    }
+
+    await c.env.DB.prepare(
+      `INSERT INTO media_assets (
+         id, tenant_id, publication_id, storage_bucket, storage_key, public_url,
+         original_name, mime_type, size_bytes, sha256, width, height, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      asset.id,
+      asset.tenant_id,
+      asset.publication_id,
+      asset.storage_bucket,
+      asset.storage_key,
+      asset.public_url,
+      asset.original_name,
+      asset.mime_type,
+      asset.size_bytes,
+      asset.sha256,
+      asset.width,
+      asset.height,
+      asset.created_at,
+      asset.updated_at,
+    ).run()
+
+    return c.json({ success: true, data: { asset: mediaAssetResponse(asset), url: asset.public_url, reused: false } }, 201)
+  } catch (error: any) {
+    if (String(error?.message ?? '').includes('UNIQUE constraint')) {
+      const existing = await findMediaAssetByPublicUrl(c, userId, publicationId, publicUrl)
+      if (existing) return c.json({ success: true, data: { asset: mediaAssetResponse(existing), url: existing.public_url, reused: true } })
+    }
+    console.error('[media-assets.adopt] failed', {
+      request_id: reqId,
+      user_id: userId,
+      publication_id: publicationId,
+      public_url: publicUrl,
+      error: errorMessage(error),
+    })
+    return c.json({ success: false, code: 'MEDIA_ASSET_ADOPT_FAILED', error: 'No se pudo registrar esta imagen anterior en el banco.' }, 500)
+  }
 })
 
 upload.get('/media-assets/:assetId/usage', async (c) => {
@@ -464,7 +605,7 @@ upload.delete('/media-assets/:assetId', async (c) => {
   const lookup = await getOwnedMediaAsset(c, userId, c.req.param('assetId'), c.req.query('publication_id') ?? undefined)
   if (lookup.status === 'missing') return c.json({ success: false, error: 'Imagen no encontrada' }, 404)
   if (lookup.status === 'forbidden') return c.json({ success: false, error: 'No tienes acceso a esta imagen' }, 403)
-  if (!lookup.asset.storage_key || !isPublicUploadKey(lookup.asset.storage_key)) {
+  if (lookup.asset.storage_bucket !== 'MEDIA' || !lookup.asset.storage_key || !isPublicUploadKey(lookup.asset.storage_key)) {
     return c.json({ success: false, code: 'MEDIA_ASSET_UNSAFE_STORAGE_KEY', error: 'No se puede eliminar físicamente una imagen sin storage_key confiable.' }, 409)
   }
   const usage = await countMediaAssetUsage(c, lookup.asset)

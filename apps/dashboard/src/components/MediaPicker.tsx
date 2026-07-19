@@ -41,7 +41,7 @@ type UploadResult = {
 
 type DeletePrompt = {
   mode: 'in-use' | 'unused'
-  assets: Array<{ asset: MediaAsset; usage_count: number; usages: Array<{ label: string; type: string }> }>
+  assets: Array<{ asset: MediaAsset; usage_count: number; can_delete_physical: boolean; usages: Array<{ label: string; type: string }> }>
   totalUses: number
 }
 
@@ -131,6 +131,7 @@ export default function MediaPicker({
   const [tab, setTab] = useState<'bank' | 'upload' | 'pdf'>('bank')
   const [q, setQ] = useState('')
   const [assets, setAssets] = useState<MediaAsset[]>([])
+  const [knownAssetUrls, setKnownAssetUrls] = useState<string[]>([])
   const [pageNumber, setPageNumber] = useState(1)
   const [pageInfo, setPageInfo] = useState({ page: 1, total: 0, total_pages: 1, has_more: false })
   const [loading, setLoading] = useState(false)
@@ -203,6 +204,7 @@ export default function MediaPicker({
       })
       if (seq !== loadSeqRef.current) return
       setAssets(res.data ?? [])
+      setKnownAssetUrls(res.meta?.known_urls ?? res.page?.known_urls ?? [])
       setPageNumber(res.page?.page ?? nextPage)
       setPageInfo({
         page: res.page?.page ?? nextPage,
@@ -225,6 +227,31 @@ export default function MediaPicker({
     return () => window.clearTimeout(handle)
   }, [loadAssets, open])
 
+  const legacyItems = useMemo(() => {
+    const seen = new Set<string>()
+    const query = q.trim().toLowerCase()
+    const known = new Set(knownAssetUrls.map(normalizeUrlForCompare))
+    const result: PickerItem[] = []
+    for (const legacyUrl of legacyUrls) {
+      const url = toCanvasSafeAssetUrl(legacyUrl)
+      if (!url || seen.has(url) || known.has(normalizeUrlForCompare(url)) || !isAllowedLegacyUrl(url, mode)) continue
+      const name = url.split('/').pop()?.split('?')[0] || 'Imagen anterior'
+      if (query && !name.toLowerCase().includes(query) && !url.toLowerCase().includes(query)) continue
+      seen.add(url)
+      result.push({
+        key: `legacy:${url}`,
+        url,
+        name,
+        format: isSvgUrl(url) ? 'SVG' : 'URL',
+        size: 'Anterior',
+      })
+    }
+    return result
+  }, [knownAssetUrls, legacyUrls, mode, q])
+
+  const combinedTotal = pageInfo.total + legacyItems.length
+  const combinedTotalPages = Math.max(1, Math.ceil(combinedTotal / 12))
+
   const items = useMemo(() => {
     const seen = new Set<string>()
     const result: PickerItem[] = []
@@ -242,24 +269,14 @@ export default function MediaPicker({
         asset: { ...asset, public_url: url },
       })
     }
-    const query = q.trim().toLowerCase()
-    for (const legacyUrl of legacyUrls) {
+    for (const legacy of legacyItems) {
       if (result.length >= 12) break
-      const url = toCanvasSafeAssetUrl(legacyUrl)
-      if (!url || seen.has(url) || !isAllowedLegacyUrl(url, mode)) continue
-      const name = url.split('/').pop()?.split('?')[0] || 'Imagen anterior'
-      if (query && !name.toLowerCase().includes(query) && !url.toLowerCase().includes(query)) continue
-      seen.add(url)
-      result.push({
-        key: `legacy:${url}`,
-        url,
-        name,
-        format: isSvgUrl(url) ? 'SVG' : 'URL',
-        size: 'Anterior',
-      })
+      if (seen.has(legacy.url)) continue
+      seen.add(legacy.url)
+      result.push(legacy)
     }
     return result
-  }, [assets, legacyUrls, mode, q])
+  }, [assets, legacyItems, mode])
 
   if (!open) return null
 
@@ -289,8 +306,8 @@ export default function MediaPicker({
   }
 
   const deleteSelectedFromBank = async () => {
-    const selectedAssets = selectedItems.filter((item) => item.asset).map((item) => item.asset!)
-    if (!selectedAssets.length) {
+    const selectedBankItems = selectedItems.filter((item) => item.asset || item.key.startsWith('legacy:'))
+    if (!selectedBankItems.length) {
       setError('Selecciona una imagen del banco para eliminarla.')
       return
     }
@@ -301,14 +318,33 @@ export default function MediaPicker({
     try {
       let totalUses = 0
       const usageByAsset: DeletePrompt['assets'] = []
-      for (const asset of selectedAssets) {
+      const adoptedAssets: MediaAsset[] = []
+      for (const item of selectedBankItems) {
+        let asset = item.asset
+        if (!asset) {
+          const adopted = await api.mediaAssets.adopt({
+            publication_id: publicationId,
+            public_url: item.url,
+            original_name: item.name,
+          })
+          asset = adopted.data.asset
+          adoptedAssets.push(asset)
+        }
         const usage = await api.mediaAssets.usage(asset.id, publicationId)
         totalUses += usage.data.usage_count
         usageByAsset.push({
           asset,
           usage_count: usage.data.usage_count,
+          can_delete_physical: usage.data.can_delete_physical,
           usages: usage.data.usages.map((item) => ({ label: item.label, type: item.type })),
         })
+      }
+      if (adoptedAssets.length) {
+        setAssets((prev) => {
+          const seen = new Set(prev.map((asset) => asset.id))
+          return [...adoptedAssets.filter((asset) => !seen.has(asset.id)), ...prev]
+        })
+        setKnownAssetUrls((prev) => Array.from(new Set([...prev, ...adoptedAssets.map((asset) => asset.public_url)])))
       }
       setDeletePrompt({ mode: totalUses > 0 ? 'in-use' : 'unused', assets: usageByAsset, totalUses })
     } catch (err: any) {
@@ -319,7 +355,12 @@ export default function MediaPicker({
   }
 
   const refreshAfterBankRemoval = async (removedAssets: MediaAsset[]) => {
-    setSelectedItems((prev) => prev.filter((item) => !item.asset || !removedAssets.some((asset) => asset.id === item.asset?.id)))
+    setSelectedItems((prev) => prev.filter((item) => {
+      if (item.asset) return !removedAssets.some((asset) => asset.id === item.asset?.id)
+      return !removedAssets.some((asset) => normalizeUrlForCompare(asset.public_url) === normalizeUrlForCompare(item.url))
+    }))
+    setAssets((prev) => prev.filter((asset) => !removedAssets.some((removed) => removed.id === asset.id)))
+    setKnownAssetUrls((prev) => Array.from(new Set([...prev, ...removedAssets.map((asset) => asset.public_url)])))
     const nextPage = items.length <= removedAssets.length && pageNumber > 1 ? pageNumber - 1 : pageNumber
     await loadAssets(nextPage)
   }
@@ -569,6 +610,7 @@ export default function MediaPicker({
 
   if (deletePrompt) {
     const labels = deletePrompt.assets.flatMap((item) => item.usages.map((usage) => usage.label))
+    const canDeleteAllPhysical = deletePrompt.assets.every((item) => item.can_delete_physical)
     return (
       <div style={styles.overlay} onClick={() => setDeletePrompt(null)}>
         <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
@@ -580,7 +622,9 @@ export default function MediaPicker({
             <div style={deletePrompt.mode === 'in-use' ? styles.warning : styles.error}>
               {deletePrompt.mode === 'in-use'
                 ? `${deletePrompt.assets.length === 1 ? 'Esta imagen está' : 'Estas imágenes están'} siendo utilizada${deletePrompt.assets.length === 1 ? '' : 's'} en ${deletePrompt.totalUses} lugares del proyecto.`
-                : `${deletePrompt.assets.length === 1 ? 'Esta imagen no está' : 'Estas imágenes no están'} siendo utilizada${deletePrompt.assets.length === 1 ? '' : 's'}. ¿Deseas eliminarla${deletePrompt.assets.length === 1 ? '' : 's'} definitivamente?`}
+                : canDeleteAllPhysical
+                  ? `${deletePrompt.assets.length === 1 ? 'Esta imagen no está' : 'Estas imágenes no están'} siendo utilizada${deletePrompt.assets.length === 1 ? '' : 's'}. ¿Deseas eliminarla${deletePrompt.assets.length === 1 ? '' : 's'} definitivamente?`
+                  : `${deletePrompt.assets.length === 1 ? 'Esta imagen no está' : 'Estas imágenes no están'} siendo utilizada${deletePrompt.assets.length === 1 ? '' : 's'}, pero el archivo de origen no pertenece a un almacenamiento seguro para borrado físico.`}
             </div>
             {notice && <div style={styles.success}>{notice}</div>}
             {error && <div style={styles.error}>{error}</div>}
@@ -597,8 +641,10 @@ export default function MediaPicker({
                   <button type="button" style={styles.secondary} disabled={!labels.length || loading} onClick={() => setNotice(labels.join(', '))}>Ver dónde se utiliza</button>
                   <button type="button" style={styles.primary} disabled={loading} onClick={() => void hidePromptAssets()}>{loading ? 'Quitando...' : 'Quitar del banco'}</button>
                 </>
-              ) : (
+              ) : canDeleteAllPhysical ? (
                 <button type="button" style={styles.primary} disabled={loading} onClick={() => void deletePromptAssets()}>{loading ? 'Eliminando...' : 'Eliminar definitivamente'}</button>
+              ) : (
+                <button type="button" style={styles.primary} disabled={loading} onClick={() => void hidePromptAssets()}>{loading ? 'Quitando...' : 'Quitar del banco'}</button>
               )}
             </div>
           </div>
@@ -637,7 +683,7 @@ export default function MediaPicker({
             {(busyMessage || selectionStatus) && <div style={styles.empty}>{busyMessage || selectionStatus}</div>}
             <div style={styles.pageSummary}>
               <span>{selectedItems.length} seleccionada(s)</span>
-              <span>{pageInfo.total} imagen(es)</span>
+              <span>{combinedTotal} imagen(es)</span>
             </div>
             {loading && items.length === 0 ? (
               <div style={styles.empty}>Cargando imágenes...</div>
@@ -659,14 +705,14 @@ export default function MediaPicker({
             )}
             <div style={styles.pagination}>
               <button type="button" style={styles.more} disabled={loading || pageNumber <= 1} onClick={() => void loadAssets(pageNumber - 1)}>Anterior</button>
-              <span>Página {pageInfo.page} de {pageInfo.total_pages}</span>
-              <button type="button" style={styles.more} disabled={loading || !pageInfo.has_more} onClick={() => void loadAssets(pageNumber + 1)}>Siguiente</button>
+              <span>Página {pageInfo.page} de {combinedTotalPages}</span>
+              <button type="button" style={styles.more} disabled={loading || pageNumber >= combinedTotalPages || (!pageInfo.has_more && pageNumber >= pageInfo.total_pages)} onClick={() => void loadAssets(pageNumber + 1)}>Siguiente</button>
             </div>
             {isMulti && (
               <div style={styles.actions}>
                 <button type="button" style={styles.secondary} disabled={processingSelection} onClick={onClose}>Cancelar</button>
                 <button type="button" style={styles.secondary} disabled={!selectedItems.length || processingSelection} onClick={clearSelection}>Limpiar selección</button>
-                <button type="button" style={styles.secondary} disabled={!selectedItems.some((item) => item.asset) || processingSelection || loading} onClick={() => void deleteSelectedFromBank()}>Eliminar del banco</button>
+                <button type="button" style={styles.secondary} disabled={!selectedItems.some((item) => item.asset || item.key.startsWith('legacy:')) || processingSelection || loading} onClick={() => void deleteSelectedFromBank()}>Eliminar del banco</button>
                 <button type="button" style={styles.primary} disabled={!selectedItems.length || processingSelection} onClick={() => void useSelectedItems()}>
                   {processingSelection ? (busyMessage || selectionStatus || 'Procesando...') : mode === 'pages' ? `Agregar páginas (${selectedItems.length})` : `Usar selección (${selectedItems.length})`}
                 </button>
