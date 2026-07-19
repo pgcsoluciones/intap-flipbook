@@ -370,6 +370,25 @@ export type LeadIntakeCustomerMessageAttachment = {
   created_at: string
 }
 
+export type MediaAsset = {
+  id: string
+  tenant_id: string
+  publication_id: string
+  storage_bucket: string
+  storage_key: string
+  public_url: string
+  original_name: string
+  mime_type: string
+  size_bytes: number
+  sha256: string
+  width: number | null
+  height: number | null
+  is_hidden?: number | null
+  deleted_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
 export const api = {
   auth: {
     register: (email: string, password: string, name?: string, slug?: string) =>
@@ -409,6 +428,11 @@ export const api = {
   pages: {
     add: (pubId: string, body: { image_url: string; title?: string; description?: string; price?: string }) =>
       request<{ success: true; data: any }>(`/api/publications/${pubId}/pages`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    addBatch: (pubId: string, body: { pages: Array<{ image_url: string; canvas_json: unknown; size_bytes?: number }> }) =>
+      request<{ success: true; pages: any[]; data?: { pages: any[] } }>(`/api/publications/${pubId}/pages/batch`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
@@ -784,6 +808,58 @@ export const api = {
     feed: (tenantSlug: string) =>
       fetch(`${API_BASE}/public/${encodeURIComponent(tenantSlug)}`)
         .then((r) => r.json()) as Promise<{ success: true; data: any[] }>,
+  },
+
+  mediaAssets: {
+    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number }) => {
+      const qs = new URLSearchParams()
+      qs.set('publication_id', params.publication_id)
+      if (params.q) qs.set('q', params.q)
+      if (params.limit != null) qs.set('limit', String(params.limit))
+      if (params.cursor) qs.set('cursor', params.cursor)
+      if (params.page != null) qs.set('page', String(params.page))
+      return request<{
+        success: true
+        data: MediaAsset[]
+        page: { limit: number; page: number; total: number; total_pages: number; has_more: boolean; next_cursor: string | null }
+      }>(`/api/upload/media-assets?${qs}`)
+    },
+    upload: (input: { publication_id: string; file: File; width?: number | null; height?: number | null }) => {
+      const token = getToken()
+      const form = new FormData()
+      form.append('publication_id', input.publication_id)
+      form.append('file', input.file)
+      if (input.width != null) form.append('width', String(input.width))
+      if (input.height != null) form.append('height', String(input.height))
+      return fetch(`${API_BASE}/api/upload/media-assets`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      }).then(async (r) => {
+        const data = await r.json().catch(() => null)
+        if (!r.ok || !data?.success) throw new Error(data?.error ?? `Error ${r.status} al subir imagen`)
+        if (data?.data?.asset?.public_url) data.data.asset.public_url = toCanvasSafeAssetUrl(data.data.asset.public_url)
+        if (data?.data?.url) data.data.url = toCanvasSafeAssetUrl(data.data.url)
+        return data
+      }) as Promise<{ success: true; data: { asset: MediaAsset; url: string; reused: boolean } }>
+    },
+    usage: (assetId: string, publicationId: string) => {
+      const qs = new URLSearchParams({ publication_id: publicationId })
+      return request<{ success: true; data: { asset_id: string; usage_count: number; can_delete_physical: boolean; usages: Array<{ type: string; page_id?: string; page_number?: number | null; marker_id?: string; field: string; label: string }> } }>(
+        `/api/upload/media-assets/${encodeURIComponent(assetId)}/usage?${qs}`,
+      )
+    },
+    hide: (assetId: string, isHidden = true) =>
+      request<{ success: true; data: MediaAsset }>(`/api/upload/media-assets/${encodeURIComponent(assetId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_hidden: isHidden }),
+      }),
+    deleteMediaAsset: (assetId: string, publicationId: string) => {
+      const qs = new URLSearchParams({ publication_id: publicationId })
+      return request<{ success: true; data: { deleted: true } }>(`/api/upload/media-assets/${encodeURIComponent(assetId)}?${qs}`, {
+        method: 'DELETE',
+      })
+    },
   },
 
   upload: (file: File) => {

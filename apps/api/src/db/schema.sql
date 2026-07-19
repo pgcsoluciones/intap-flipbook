@@ -196,6 +196,25 @@ CREATE TABLE IF NOT EXISTS editor_elements (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS media_assets (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES users(id),
+  publication_id TEXT NOT NULL REFERENCES publications(id),
+  storage_bucket TEXT NOT NULL,
+  storage_key TEXT NOT NULL,
+  public_url TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  sha256 TEXT NOT NULL,
+  width INTEGER,
+  height INTEGER,
+  is_hidden INTEGER NOT NULL DEFAULT 0,
+  deleted_at TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS tutorials (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
@@ -481,6 +500,9 @@ CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_pub_views_pub ON publication_views(publication_id);
 CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_media_assets_dedup ON media_assets(tenant_id, publication_id, storage_bucket, sha256);
+CREATE INDEX IF NOT EXISTS idx_media_assets_publication_recent ON media_assets(tenant_id, publication_id, storage_bucket, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_media_assets_publication_name ON media_assets(tenant_id, publication_id, original_name);
 CREATE INDEX IF NOT EXISTS idx_dynamic_markers_publication ON dynamic_markers(publication_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dynamic_markers_page ON dynamic_markers(page_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dynamic_markers_status ON dynamic_markers(publication_id, status, updated_at DESC);

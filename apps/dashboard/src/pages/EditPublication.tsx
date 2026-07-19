@@ -1,9 +1,11 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 // @ts-ignore
 import { fabric } from 'fabric'
-import { ApiRequestError, api, toCanvasSafeAssetUrl } from '../lib/api'
+import { ApiRequestError, api, toCanvasSafeAssetUrl, type MediaAsset } from '../lib/api'
+import { PageBatchConfirmationError, pdfPageAssetName, processPageBatch, uploadPdfRenderedPagesAsAssets } from '../lib/pageBatch'
 import FileField from '../components/FileField'
+import MediaPicker from '../components/MediaPicker'
 import WidgetPreview from '../components/WidgetPreview'
 import DynamicMarkerPanel from '../components/DynamicMarkerPanel'
 
@@ -69,6 +71,26 @@ function parseCoverFrame(coverJson: any) {
 
 function isHttpUrl(url: any) {
   return typeof url === 'string' && /^https?:\/\//i.test(url)
+}
+
+function formatMediaBytes(bytes?: number | null) {
+  if (!Number.isFinite(bytes ?? 0) || !bytes || bytes <= 0) return ''
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function formatMediaMime(mime?: string | null) {
+  if (!mime) return 'Imagen'
+  if (mime.includes('svg')) return 'SVG'
+  if (mime.includes('jpeg')) return 'JPG'
+  if (mime.includes('png')) return 'PNG'
+  if (mime.includes('webp')) return 'WebP'
+  if (mime.includes('gif')) return 'GIF'
+  return mime.split('/').pop()?.toUpperCase() ?? 'Imagen'
+}
+
+function emptyFabricJson() {
+  return { version: '5.3.0', objects: [] }
 }
 
 // PROTECTED: Rewrites legacy direct R2 image URLs for Fabric-safe thumbnail loading.
@@ -311,6 +333,8 @@ async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas
   el.width = CANVAS_W
   el.height = CANVAS_H
   const sc = new fabric.StaticCanvas(el, { width: CANVAS_W, height: CANVAS_H })
+  let disposed = false
+  const isCanvasAlive = () => !disposed && !!(sc as any).lowerCanvasEl && !!(sc as any).contextContainer
   try {
     const rawJson = snapshot.canvas_json
     const parsedJson = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson
@@ -327,8 +351,12 @@ async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas
     }
 
     await new Promise<void>((resolve) => {
-      sc.loadFromJSON(safeJson, () => resolve())
+      sc.loadFromJSON(safeJson, () => {
+        if (isCanvasAlive()) resolve()
+        else resolve()
+      })
     })
+    if (!isCanvasAlive()) return null
     // canvas_json hereda backgroundColor:'#ffffff' del canvas principal (bgColor state).
     // Si no lo limpiamos, renderAll() rellena el canvas con blanco antes de los objetos
     // → overlay opaco que tapa la foto de fondo. Forzar vacío → canvas transparente.
@@ -343,6 +371,7 @@ async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas
     console.error('[thumbnail] persisted snapshot failed', error)
     return null
   } finally {
+    disposed = true
     sc.dispose()
   }
 }
@@ -1005,6 +1034,8 @@ export default function EditPublication() {
   const selectedRef = useRef<any>(null)
   const [defaultFont, setDefaultFont] = useState<string>(FONTS[0].family) // tipografía para texto nuevo
   const [imageBank, setImageBank] = useState<string[]>([]) // banco de imágenes subidas en este proyecto
+  const [mediaBankAssets, setMediaBankAssets] = useState<MediaAsset[]>([])
+  const [mediaBankTotal, setMediaBankTotal] = useState(0)
   const [selectVersion, setSelectVersion] = useState(0) // fuerza refresco del panel de props
   // Miniaturas reales por página: conserva solo el último dataURL válido por page.id.
   const [thumbnailByPageId, setThumbnailByPageId] = useState<Record<string, string>>({})
@@ -1032,10 +1063,22 @@ export default function EditPublication() {
   const [pagePanelTab, setPagePanelTab] = useState<'config' | 'actions' | 'dynamic'>('config')
   const [ctxMenu, setCtxMenu]       = useState<{ x: number; y: number } | null>(null)
   const [alignRef, setAlignRef]     = useState<'canvas' | 'selection'>('canvas')
-  const [replaceModal, setReplaceModal] = useState(false)
+  const [mediaPickerMode, setMediaPickerMode] = useState<'add' | 'replace' | 'pages' | 'svg' | null>(null)
+  const [mediaPickerProgress, setMediaPickerProgress] = useState('')
   const [templates, setTemplates]   = useState<any[]>([])
   const [tplQuery, setTplQuery]     = useState('')
   const [bgColor, setBgColor]       = useState('#ffffff')
+
+  const refreshMediaBank = useCallback(async () => {
+    if (!id) return
+    try {
+      const res = await api.mediaAssets.list({ publication_id: id, limit: 48 })
+      setMediaBankAssets(res.data ?? [])
+      setMediaBankTotal(res.page?.total ?? (res.data ?? []).length)
+    } catch (err) {
+      console.warn('[media-bank] failed to load assets', err)
+    }
+  }, [id])
 
   // Biblioteca SVG (recursos vectoriales del super admin, filtrados por plan)
   const [svgLib, setSvgLib]         = useState<any[]>([])
@@ -1056,11 +1099,6 @@ export default function EditPublication() {
   const pagesRef = useRef<any[]>([])
   // Solo para priorización/verificación de página activa; no reconstruye snapshots live.
   const activePageRef = useRef<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const imgInputRef  = useRef<HTMLInputElement>(null)
-  const svgInputRef = useRef<HTMLInputElement>(null)
-  const pdfPagesInputRef = useRef<HTMLInputElement>(null)
-  const replaceInputRef = useRef<HTMLInputElement>(null)
   // Objeto que se va a reemplazar in-situ (icono/SVG/forma/botón/texto): al insertar
   // el siguiente elemento desde el panel, se intercambia por éste conservando caja y posición.
   const replaceTargetRef = useRef<any>(null)
@@ -1364,6 +1402,7 @@ export default function EditPublication() {
       try { stored = JSON.parse(localStorage.getItem(`imgbank_${id}`) ?? '[]') } catch {}
       const merged = Array.from(new Set([...collectBankFromPages(ps), ...stored]))
       setImageBank(merged)
+      void refreshMediaBank()
       bootstrapTimer = setTimeout(() => {
         if (cancelled || !thumbnailMountedRef.current) return
         const currentPages = pagesRef.current
@@ -1380,38 +1419,60 @@ export default function EditPublication() {
       cancelled = true
       if (bootstrapTimer) clearTimeout(bootstrapTimer)
     }
-  }, [id])
+  }, [id, refreshMediaBank])
 
   // Agrega una URL al banco de imágenes del proyecto (sin duplicar) y lo persiste
   const addToBank = useCallback((url: string) => {
     if (!url) return
+    const safeUrl = toCanvasSafeAssetUrl(url)
     setImageBank((prev) => {
-      if (prev.includes(url)) return prev
-      const next = [url, ...prev]
+      if (prev.includes(safeUrl)) return prev
+      const next = [safeUrl, ...prev]
       try { localStorage.setItem(`imgbank_${id}`, JSON.stringify(next)) } catch {}
       return next
     })
   }, [id])
 
-  // Borra una imagen del banco: la elimina de R2, del estado y de localStorage.
-  const deleteFromBank = useCallback(async (url: string) => {
-    if (!url) return
-    const ok = window.confirm(
-      '¿Eliminar esta imagen?\n\nSe borrará del almacenamiento. Si está en uso en alguna página, dejará de mostrarse ahí.\n\nEsta acción no se puede deshacer.'
-    )
-    if (!ok) return
-    try {
-      await api.deleteUpload(url)
-    } catch (e: any) {
-      alert(e?.message ?? 'No se pudo eliminar la imagen.')
-      return
-    }
-    setImageBank((prev) => {
-      const next = prev.filter((u) => u !== url)
-      try { localStorage.setItem(`imgbank_${id}`, JSON.stringify(next)) } catch {}
-      return next
+  const rememberMediaAssets = useCallback((assets: MediaAsset[]) => {
+    const validAssets = assets.filter((asset) => asset?.id)
+    if (!validAssets.length) return
+    setMediaBankAssets((prev) => {
+      const seen = new Set(prev.map((asset) => asset.id))
+      const nextAssets = validAssets.filter((asset) => !seen.has(asset.id))
+      if (!nextAssets.length) return prev
+      setMediaBankTotal((total) => Math.max(total, prev.length) + nextAssets.length)
+      return [...nextAssets, ...prev]
     })
-  }, [id])
+  }, [])
+
+  const imageBankItems = useMemo(() => {
+    const seen = new Set<string>()
+    const items: Array<{ key: string; url: string; name: string; meta: string }> = []
+    for (const asset of mediaBankAssets) {
+      const url = toCanvasSafeAssetUrl(asset.public_url)
+      if (!url || seen.has(url)) continue
+      seen.add(url)
+      items.push({
+        key: `asset:${asset.id}`,
+        url,
+        name: asset.original_name || 'Imagen',
+        meta: [formatMediaMime(asset.mime_type), formatMediaBytes(asset.size_bytes)].filter(Boolean).join(' · '),
+      })
+    }
+    for (const entry of imageBank) {
+      const url = toCanvasSafeAssetUrl(entry)
+      if (!url || seen.has(url)) continue
+      seen.add(url)
+      const name = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Imagen anterior')
+      items.push({
+        key: `legacy:${url}`,
+        url,
+        name,
+        meta: url.toLowerCase().includes('.svg') ? 'SVG · Anterior' : 'Anterior',
+      })
+    }
+    return items
+  }, [imageBank, mediaBankAssets])
 
   // ── Autoguardado: guarda el canvas actual en segundo plano ──
   // Se llama tras cada cambio (debounce) y al cambiar de página.
@@ -1977,20 +2038,10 @@ export default function EditPublication() {
     }
   }
 
-  // Sube una imagen al banco del proyecto. El usuario la inserta desde el banco.
-  async function addImageElement(file: File) {
-    setUploading(true)
-    try {
-      const up = await api.upload(file)
-      if (!up.success) throw new Error('Upload falló')
-      addToBank(up.data.url)
-      // No insertamos en canvas — el usuario elige desde el banco del proyecto
-    } finally { setUploading(false) }
-  }
-
   // Inserta una imagen ya subida (del banco) como elemento editable, sin re-subir
   function addImageFromUrl(url: string) {
     const c = fabricRef.current; if (!c) return
+    return new Promise<void>((resolve) => {
       fabric.Image.fromURL(url, (img: any) => {
       // Escala la imagen para que no ocupe más del 60 % del ancho del canvas
       const maxW = c.getWidth() * 0.6
@@ -1998,36 +2049,53 @@ export default function EditPublication() {
       img.set({ left: 60, top: 60, data: { kind: 'image', src: url } })
       c.add(img); c.setActiveObject(img); c.requestRenderAll()
       scheduleAutosave()
+      resolve()
+    })
     })
   }
-  async function handleImgInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? [])
-    e.target.value = ''
-    for (const file of files) await addImageElement(file)
+
+  function insertSvgTextAsElements(svgText: string) {
+    if (!svgText || !fabricRef.current) return
+    fabric.loadSVGFromString(svgText, (objects: any[], options: any) => {
+      if (!objects.length) return
+      const group = fabric.util.groupSVGElements(objects, options)
+      const c = fabricRef.current!
+      const maxW = c.getWidth() * 0.7
+      if ((group.width ?? 0) > maxW) group.scaleToWidth(maxW)
+      group.set({ left: 50, top: 50, data: { kind: 'svg_group' } })
+      c.add(group); c.setActiveObject(group); c.requestRenderAll()
+      scheduleAutosave()
+    })
   }
 
-  function insertSvgAsElements(file: File) {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const svgText = e.target?.result as string
-      if (!svgText || !fabricRef.current) return
-      fabric.loadSVGFromString(svgText, (objects: any[], options: any) => {
-        if (!objects.length) return
-        const group = fabric.util.groupSVGElements(objects, options)
-        const c = fabricRef.current!
-        const maxW = c.getWidth() * 0.7
-        if ((group.width ?? 0) > maxW) group.scaleToWidth(maxW)
-        group.set({ left: 50, top: 50, data: { kind: 'svg_group' } })
-        c.add(group); c.setActiveObject(group); c.requestRenderAll()
-        scheduleAutosave()
-      })
+  async function insertSvgFromUrl(url: string) {
+    const res = await fetch(toCanvasSafeAssetUrl(url))
+    if (!res.ok) throw new Error(`No se pudo cargar el SVG (${res.status})`)
+    insertSvgTextAsElements(await res.text())
+  }
+
+  async function insertSvgUrls(urls: string[]) {
+    if (!urls.length) return
+    setUploading(true)
+    try {
+      for (const url of urls) await insertSvgFromUrl(url)
+    } catch (err: any) {
+      alert(err?.message ?? 'No se pudo insertar el SVG')
+    } finally {
+      setUploading(false)
     }
-    reader.readAsText(file)
   }
 
-  async function importPdfPages(file: File) {
+  async function importPdfPages(file: File, onProgress?: (message: string) => void) {
+    if (!file) return
+    if (file.type && file.type !== 'application/pdf') {
+      throw new Error('Selecciona un archivo PDF válido.')
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      throw new Error('El PDF supera el tamaño máximo permitido de 50 MB.')
+    }
     const pdfjsLib = (window as any).pdfjsLib
-    if (!pdfjsLib) { alert('pdf.js no está disponible. Recargá la página.'); return }
+    if (!pdfjsLib) throw new Error('pdf.js no está disponible. Recargá la página.')
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
     setUploading(true)
@@ -2035,31 +2103,51 @@ export default function EditPublication() {
       const arrayBuffer = await file.arrayBuffer()
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
       const total = pdf.numPages
+      if (!total) throw new Error('El PDF no contiene páginas.')
+      const renderedPages: Array<{ file: File; width: number; height: number }> = []
+      const pdfBaseName = file.name || 'PDF'
       for (let pageNum = 1; pageNum <= total; pageNum++) {
+        onProgress?.(`Renderizando página ${pageNum} de ${total}`)
         const page = await pdf.getPage(pageNum)
         const viewport = page.getViewport({ scale: 1.5 })
         const canvas = document.createElement('canvas')
-        canvas.width = viewport.width
-        canvas.height = viewport.height
-        const ctx = canvas.getContext('2d')!
+        canvas.width = Math.round(viewport.width)
+        canvas.height = Math.round(viewport.height)
+        const ctx = canvas.getContext('2d')
+        if (!ctx) throw new Error(`No se pudo renderizar la página ${pageNum}`)
         await page.render({ canvasContext: ctx, viewport }).promise
         const blob = await new Promise<Blob>((res) =>
           canvas.toBlob((b) => res(b!), 'image/jpeg', 0.82),
         )
-        const pngFile = new File([blob], `pdf-page-${pageNum}.jpg`, { type: 'image/jpeg' })
-        const up = await api.upload(pngFile)
-        if (!up.success) throw new Error(`Error al subir página ${pageNum}`)
-        const res = await api.pages.add(id!, { image_url: up.data.url })
-        setPages((prev) => {
-          const next = [...prev, res.data]
-          pagesRef.current = next
-          if (pageNum === total) setActivePage(res.data)
-          return next
+        if (!blob) throw new Error(`No se pudo renderizar la página ${pageNum}`)
+        renderedPages.push({
+          file: new File([blob], pdfPageAssetName(pdfBaseName, pageNum), { type: 'image/jpeg' }),
+          width: canvas.width,
+          height: canvas.height,
         })
-        requestThumbnailUpdate(res.data.id, 'persisted', { immediate: true, priority: pageNum === total })
+        canvas.width = 0
+        canvas.height = 0
       }
+      const uploaded = await uploadPdfRenderedPagesAsAssets<MediaAsset>({
+        publicationId: id!,
+        pages: renderedPages,
+        uploadAsset: api.mediaAssets.upload,
+        onProgress,
+      })
+      rememberMediaAssets(uploaded.assets)
+      const used = new Set(pagesRef.current.map((page) => toCanvasSafeAssetUrl(page.image_url || '').trim()).filter(Boolean))
+      const duplicateCount = uploaded.urls.filter((url) => used.has(toCanvasSafeAssetUrl(url).trim())).length
+      if (duplicateCount > 0) {
+        const ok = window.confirm(duplicateCount === 1
+          ? 'Esta imagen ya se agregó como página. ¿Deseas agregarla nuevamente?'
+          : `${duplicateCount} de las imágenes renderizadas del PDF ya están utilizadas como páginas. ¿Deseas agregarlas nuevamente?`)
+        if (!ok) throw new Error('No se agregaron páginas del PDF porque la importación fue cancelada.')
+      }
+      const result = await addPagesFromUrls(uploaded.urls, onProgress)
+      void refreshMediaBank()
+      return result
     } catch (err: any) {
-      alert(err.message ?? 'Error al importar el PDF')
+      throw new Error(err.message ?? 'Error al importar el PDF')
     } finally {
       setUploading(false)
     }
@@ -2169,22 +2257,74 @@ export default function EditPublication() {
   }
 
   // ── Imágenes / páginas ──
-  async function handleUpload(file: File) {
-    setUploading(true)
-    try {
-      const up = await api.upload(file)
-      if (!up.success) throw new Error('Upload falló')
-      addToBank(up.data.url)
-      const res = await api.pages.add(id!, { image_url: up.data.url })
-      setPages((prev) => { const next = [...prev, res.data]; pagesRef.current = next; setActivePage(res.data); return next })
-      requestThumbnailUpdate(res.data.id, 'persisted', { immediate: true, priority: true })
-    } finally { setUploading(false) }
+  async function refetchPublicationPages() {
+    const res = await api.publications.get(id!)
+    const serverPages = res.data.pages ?? []
+    setPub(res.data)
+    return serverPages
   }
-  async function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? [])
-    if (!files.length) return
-    e.target.value = ''
-    for (const file of files) await handleUpload(file)
+
+  async function addPageFromUrl(url: string, makeActive = true) {
+    const result = await addPagesFromUrls([url])
+    const page = result?.confirmedPages[0]
+    if (page && makeActive) setActivePage(page)
+    return page
+  }
+
+  async function addPagesFromUrls(urls: string[], onProgress?: (message: string) => void) {
+    if (!urls.length) return null
+    setUploading(true)
+    setMediaPickerProgress('')
+    try {
+      return await processPageBatch<any>({
+        urls,
+        createPages: async (selectedUrls) => {
+          for (const url of selectedUrls) addToBank(url)
+          const res = await api.pages.addBatch(id!, {
+            pages: selectedUrls.map((url) => ({
+              image_url: toCanvasSafeAssetUrl(url),
+              canvas_json: emptyFabricJson(),
+            })),
+          })
+          return res.pages ?? res.data?.pages ?? []
+        },
+        refetchPages: refetchPublicationPages,
+        commitPages: (nextPages) => {
+          pagesRef.current = nextPages
+          setPages(nextPages)
+        },
+        requestThumbnail: (page, opts) => {
+          requestThumbnailUpdate(page.id, 'persisted', { immediate: true, priority: opts.isLast })
+        },
+        setActivePage,
+        onProgress: (message) => {
+          setMediaPickerProgress(message)
+          onProgress?.(message)
+        },
+      })
+    } catch (err: any) {
+      if (err instanceof PageBatchConfirmationError) {
+        const confirmed = err.confirmation.confirmedPages.length
+        const total = err.confirmation.requestedCount
+        if (err.confirmation.serverPages.length) {
+          pagesRef.current = err.confirmation.serverPages
+          setPages(err.confirmation.serverPages)
+        }
+        throw new Error(confirmed
+          ? `Se agregaron ${confirmed} de ${total} páginas. ${total - confirmed} páginas no pudieron agregarse.`
+          : 'No se pudo agregar ninguna página.')
+      }
+      throw err
+    } finally {
+      setMediaPickerProgress('')
+      setUploading(false)
+    }
+  }
+
+  async function handleUpload(file: File) {
+    const res = await api.mediaAssets.upload({ publication_id: id!, file })
+    if (!res.success) throw new Error('Upload falló')
+    await addPageFromUrl(res.data.url)
   }
   async function handleDeletePage(pageId: string) {
     if (deletingPageIdsRef.current.has(pageId)) return
@@ -2381,8 +2521,16 @@ export default function EditPublication() {
   function onFileDragLeave() { setFileDrag(false) }
   async function onFileDrop(e: React.DragEvent) {
     e.preventDefault(); setFileDrag(false)
-    const files = Array.from(e.dataTransfer.files).filter((f) => ['image/jpeg', 'image/png', 'image/webp'].includes(f.type))
-    for (const file of files) await handleUpload(file)
+    const files = Array.from(e.dataTransfer.files).filter((f) => ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'].includes(f.type))
+    if (!files.length) return
+    setUploading(true)
+    try {
+      for (const file of files) await handleUpload(file)
+    } catch (err: any) {
+      alert(err?.message ?? 'No se pudieron agregar las páginas')
+    } finally {
+      setUploading(false)
+    }
   }
 
   function applyBgColor(color: string, all = false) {
@@ -2642,8 +2790,8 @@ export default function EditPublication() {
     const c = fabricRef.current; const o = c?.getActiveObject()
     if (!o) return
     const kind = o.data?.kind
-    // Imágenes → modal del banco de imágenes
-    if (kind === 'image' || o.type === 'image') { setReplaceModal(true); return }
+    // Imágenes → selector del banco de imágenes
+    if (kind === 'image' || o.type === 'image') { setMediaPickerMode('replace'); return }
     // Marca el objeto a reemplazar y abre el panel de origen correspondiente.
     replaceTargetRef.current = o
     // Iconos → panel Elementos
@@ -2660,7 +2808,7 @@ export default function EditPublication() {
     if (o.type === 'i-text' || o.type === 'textbox') { selectTool('text'); return }
     // Tipo no reconocido: cancelamos el reemplazo in-situ y abrimos el modal de imagen
     replaceTargetRef.current = null
-    setReplaceModal(true)
+    setMediaPickerMode('replace')
   }
 
   // Reemplaza la imagen activa por una URL nueva, conservando el MISMO recuadro
@@ -2711,20 +2859,33 @@ export default function EditPublication() {
       alert(message)
     })
     addToBank(url)
-    setReplaceModal(false)
+    setMediaPickerMode(null)
   }
 
-  async function handleReplaceFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]; e.target.value = ''
-    if (!file) return
-    setUploading(true)
-    try {
-      const up = await api.upload(file)
-      if (!up.success) throw new Error('Upload falló')
-      doReplaceWithUrl(up.data.url)
-    } catch (err: any) { alert(err?.message ?? 'No se pudo reemplazar la imagen') }
-    finally { setUploading(false) }
-  }
+  const handleMediaPickerSelect = useCallback(async (urls: string[], assets?: MediaAsset[]) => {
+    const selectedUrls = urls.filter(Boolean)
+    if (!selectedUrls.length) return
+    if (assets?.length) {
+      rememberMediaAssets(assets)
+    }
+    if (mediaPickerMode === 'replace') {
+      addToBank(selectedUrls[0])
+      doReplaceWithUrl(selectedUrls[0])
+    } else if (mediaPickerMode === 'pages') {
+      const result = await addPagesFromUrls(selectedUrls)
+      void refreshMediaBank()
+      return { confirmedCount: result?.confirmedPages.length ?? 0 }
+    } else if (mediaPickerMode === 'svg') {
+      await insertSvgUrls(selectedUrls)
+    } else {
+      for (const url of selectedUrls) {
+        addToBank(url)
+        await addImageFromUrl(url)
+      }
+    }
+    void refreshMediaBank()
+    setMediaPickerMode(null)
+  }, [mediaPickerMode, addToBank, refreshMediaBank, rememberMediaAssets])
 
   // Activar/desactivar sincronización multi-página de un SVG seleccionado.
   // Al activar: marca el objeto con un syncGroupId y crea una copia en cada
@@ -2901,7 +3062,6 @@ export default function EditPublication() {
               handleDeletePage={handleDeletePage}
               duplicatePage={duplicatePage}
               addBlankPage={addBlankPage}
-              fileInputRef={fileInputRef}
               uploading={uploading}
               fileDrag={fileDrag}
               onFileDragOver={onFileDragOver}
@@ -2915,8 +3075,9 @@ export default function EditPublication() {
               addShape={addShape}
               addButton={addButton}
               addLinkZone={addLinkZone}
-              imgInputRef={imgInputRef}
-              uploadingImg={uploading}
+              openImagePicker={() => setMediaPickerMode('add')}
+              openPagePicker={() => setMediaPickerMode('pages')}
+              openSvgPicker={() => setMediaPickerMode('svg')}
               addIcon={addIcon}
               addHotspot={addHotspot}
               addWidget={addWidget}
@@ -2933,10 +3094,9 @@ export default function EditPublication() {
               defaultFont={defaultFont}
               setDefaultFont={setDefaultFont}
               imageBank={imageBank}
-              addImageFromUrl={addImageFromUrl}
-              deleteFromBank={deleteFromBank}
-              svgInputRef={svgInputRef}
-              pdfPagesInputRef={pdfPagesInputRef}
+              imageBankItems={imageBankItems}
+              imageBankTotal={mediaBankTotal || imageBankItems.length}
+              insertImageFromBank={(url: string) => void addImageFromUrl(url)}
               onShowAllHidden={showAllHiddenInEditor}
             />
           </aside>
@@ -3031,7 +3191,7 @@ export default function EditPublication() {
               <div
                 style={{ ...s.canvasEmpty, ...(fileDrag ? { background: 'rgba(79,70,229,0.08)' } : {}) }}
                 onDragOver={onFileDragOver} onDragLeave={onFileDragLeave} onDrop={onFileDrop}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => setMediaPickerMode('pages')}
               >
                 <div style={{ marginBottom: 16, opacity: 0.35, color: '#374151' }}><Icon name="image" size={52} /></div>
                 <p style={{ color: '#374151', fontSize: 15, fontWeight: 600, textAlign: 'center', maxWidth: 280 }}>
@@ -3123,94 +3283,35 @@ export default function EditPublication() {
         </aside>
       </div>
 
-      {/* Input para insertar imagen como elemento editable del canvas */}
-      <input
-        ref={imgInputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        multiple
-        style={{ display: 'none' }}
-        onChange={handleImgInputChange}
-      />
-      {/* Input para agregar páginas nuevas al flipbook */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        multiple
-        style={{ display: 'none' }}
-        onChange={handleFileInputChange}
-      />
-      <input
-        ref={svgInputRef}
-        type="file"
-        accept=".svg,image/svg+xml"
-        style={{ display: 'none' }}
-        onChange={(e) => {
-          const f = e.target.files?.[0]
-          e.target.value = ''
-          if (f) insertSvgAsElements(f)
+      <MediaPicker
+        open={!!mediaPickerMode}
+        publicationId={id ?? ''}
+        mode={mediaPickerMode === 'pages' ? 'pages' : mediaPickerMode === 'svg' ? 'svg' : 'image'}
+        multiple={mediaPickerMode === 'add' || mediaPickerMode === 'pages' || mediaPickerMode === 'svg'}
+        title={
+          mediaPickerMode === 'replace'
+            ? 'Reemplazar imagen'
+            : mediaPickerMode === 'pages'
+              ? 'Agregar páginas'
+              : mediaPickerMode === 'svg'
+                ? 'Insertar SVG editable'
+                : 'Agregar imagen'
+        }
+        legacyUrls={imageBank}
+        busyMessage={mediaPickerProgress}
+        usedPageUrls={pages.map((page) => page.image_url).filter(Boolean)}
+        onClose={() => setMediaPickerMode(null)}
+        onSelect={handleMediaPickerSelect}
+        onPdfSelect={async (file, onProgress) => {
+          const result = await importPdfPages(file, onProgress)
+          return { confirmedCount: result?.confirmedPages.length ?? 0 }
+        }}
+        onGoToPages={() => {
+          setMediaPickerMode(null)
+          setActiveTool('pages')
+          setPanelOpen(true)
         }}
       />
-      <input
-        ref={pdfPagesInputRef}
-        type="file"
-        accept=".pdf,application/pdf"
-        style={{ display: 'none' }}
-        onChange={(e) => {
-          const f = e.target.files?.[0]
-          e.target.value = ''
-          if (f) importPdfPages(f)
-        }}
-      />
-      <input
-        ref={replaceInputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif"
-        style={{ display: 'none' }}
-        onChange={handleReplaceFile}
-      />
-
-      {/* ── Modal de reemplazo de imagen ── */}
-      {replaceModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setReplaceModal(false)}>
-          <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: 540, maxHeight: '80vh', display: 'flex', flexDirection: 'column', gap: 14, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Reemplazar imagen</h3>
-              <button style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6b7280' }} onClick={() => setReplaceModal(false)}>✕</button>
-            </div>
-            <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>La imagen sustituida conservará la misma posición y tamaño exactos.</p>
-            <button
-              style={{ background: '#4F46E5', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-start' }}
-              onClick={() => replaceInputRef.current?.click()}
-              disabled={uploading}
-            >
-              {uploading ? 'Subiendo…' : '📤 Subir nueva imagen'}
-            </button>
-            <div style={{ fontWeight: 700, fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', borderTop: '1px solid #f3f4f6', paddingTop: 12 }}>
-              Banco del proyecto ({imageBank.length} imágenes)
-            </div>
-            <div style={{ overflowY: 'auto', flex: 1 }}>
-              {imageBank.length === 0 ? (
-                <p style={{ color: '#9ca3af', fontSize: 13 }}>Aún no hay imágenes en el banco. Subí algunas desde el panel Imagen.</p>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-                  {imageBank.map((url) => (
-                    <button
-                      key={url}
-                      title="Usar esta imagen"
-                      style={{ padding: 0, border: '2px solid transparent', borderRadius: 8, overflow: 'hidden', cursor: 'pointer', background: '#f9fafb', aspectRatio: '1' }}
-                      onClick={() => doReplaceWithUrl(url)}
-                    >
-                      <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} loading="lazy" />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Vista previa de la hoja activa ── */}
       {sheetPreview && <SheetPreviewModal data={sheetPreview} onClose={() => setSheetPreview(null)} />}
@@ -3295,11 +3396,13 @@ function SheetPreviewModal({ data, onClose }: { data: { imageUrl: string; cover:
   useEffect(() => {
     if (!canvasRef.current) return
     const sc = new fabric.StaticCanvas(canvasRef.current, { width: PW, height: PH, backgroundColor: 'transparent' })
+    let disposed = false
+    const isCanvasAlive = () => !disposed && !!(sc as any).lowerCanvasEl && !!(sc as any).contextContainer
     // Sin fondo en el canvas: el fondo lo pinta el <img> de abajo (igual que el viewer)
     const objectsOnly = stripBackgroundImage(normalizeFabricAssetJson(Object.assign({}, data.json, { background: '', backgroundImage: null })))
     sc.setZoom(PW / CANVAS_W)
-    sc.loadFromJSON(objectsOnly, () => sc.renderAll())
-    return () => { sc.dispose() }
+    sc.loadFromJSON(objectsOnly, () => { if (isCanvasAlive()) sc.renderAll() })
+    return () => { disposed = true; sc.dispose() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -3347,6 +3450,28 @@ function ToolbarBtn({ icon, title, onClick, disabled, active }: { icon: string; 
   )
 }
 
+function BankImageButton({ item, onClick }: { item: { url: string; name: string; meta: string }; onClick: () => void }) {
+  const [failed, setFailed] = useState(false)
+  return (
+    <button type="button" style={cp.bankItem} title={`${item.name}${item.meta ? ` · ${item.meta}` : ''}`} onClick={onClick}>
+      {!failed ? (
+        <img
+          src={item.url}
+          alt={item.name}
+          style={cp.bankImg}
+          loading="lazy"
+          onError={() => {
+            console.warn('[image-bank] thumbnail failed', item.url)
+            setFailed(true)
+          }}
+        />
+      ) : (
+        <span style={cp.bankFallback}>{item.meta?.split(' · ')[0] || 'IMG'}</span>
+      )}
+    </button>
+  )
+}
+
 // ─── Panel contextual según herramienta ──────────────────────────────────────
 function ContextPanel(p: any) {
   switch (p.tool) {
@@ -3371,7 +3496,7 @@ function ContextPanel(p: any) {
                 {/* La <img> de fondo define la altura del thumbItem (aspectRatio en <img> es fiable).
                     El overlay PNG de elementos se posiciona encima como absolute. */}
                 <img
-                  src={page.image_url || BLANK_PAGE_URL}
+                  src={toCanvasSafeAssetUrl(page.image_url || BLANK_PAGE_URL)}
                   alt={`p${i + 1}`}
                   style={cp.thumbImg}
                 />
@@ -3404,13 +3529,13 @@ function ContextPanel(p: any) {
               </div>
             ))}
           </div>
-          <button style={cp.primaryBtn} onClick={() => p.fileInputRef.current?.click()} disabled={p.uploading}>
+          <button style={cp.primaryBtn} onClick={p.openPagePicker} disabled={p.uploading}>
             {p.uploading ? 'Subiendo...' : '+ Agregar páginas (imagen)'}
           </button>
           <button style={cp.secondaryBtn} onClick={p.addBlankPage} disabled={p.uploading}>
             + Página en blanco
           </button>
-          <button style={cp.secondaryBtn} onClick={() => p.pdfPagesInputRef?.current?.click()} disabled={p.uploading}>
+          <button style={cp.secondaryBtn} onClick={p.openPagePicker} disabled={p.uploading}>
             📄 Importar PDF como páginas
           </button>
           <button
@@ -3495,48 +3620,39 @@ function ContextPanel(p: any) {
       return (
         <>
           <PanelTitle title={p.tool === 'image' ? 'Imagen' : 'Cargas'} />
-          {/* Subir imagen al banco del proyecto */}
-          <button style={cp.primaryBtn} onClick={() => p.imgInputRef.current?.click()} disabled={p.uploadingImg}>
-            {p.uploadingImg ? 'Subiendo al banco…' : '📤 Subir imagen al banco'}
+          <button style={cp.primaryBtn} onClick={p.openImagePicker} disabled={!p.activePage}>
+            Seleccionar imagen
           </button>
-          <p style={{ fontSize: 11, color: '#9ca3af', margin: '-4px 0 6px' }}>La imagen se guarda en "Mis imágenes". Luego hacé clic en ella para insertarla en la página.</p>
+          <p style={{ fontSize: 11, color: '#9ca3af', margin: '-4px 0 6px' }}>Elegí una imagen del banco del proyecto o subila desde el equipo.</p>
           <p style={cp.hint}>La imagen se agrega como elemento editable sobre la página actual. Podés moverla, escalarla y asignarle una acción.</p>
           <div style={{ height: 1, background: '#f3f4f6', margin: '14px 0' }} />
-          <button style={cp.primaryBtn} onClick={() => p.svgInputRef?.current?.click()} disabled={p.uploadingImg}>
+          <button style={cp.primaryBtn} onClick={p.openSvgPicker} disabled={p.uploading}>
             🎨 Insertar SVG editable
           </button>
           <p style={cp.hint}>Importá un archivo .svg — cada forma se convierte en un elemento independiente que podés mover, colorear y escalar.</p>
           <div style={{ height: 1, background: '#f3f4f6', margin: '14px 0' }} />
           {/* Agregar como nueva página del flipbook */}
-          <button style={{ ...cp.primaryBtn, background: '#64748b' }} onClick={() => p.fileInputRef.current?.click()} disabled={p.uploading}>
+          <button style={{ ...cp.primaryBtn, background: '#64748b' }} onClick={p.openPagePicker} disabled={p.uploading}>
             {p.uploading ? 'Subiendo...' : '+ Agregar como nueva página'}
           </button>
           <p style={cp.hint}>Agrega la imagen como página nueva del flipbook (igual que en el panel Páginas).</p>
 
-          {/* Banco de imágenes del proyecto: reutilizar sin volver a subir */}
-          <div style={cp.sectionLabel}>Mis imágenes ({p.imageBank?.length ?? 0})</div>
-          {(!p.imageBank || p.imageBank.length === 0) ? (
-            <p style={cp.empty}>Las imágenes que subas en este catálogo aparecerán aquí para reutilizarlas.</p>
-          ) : (
+          <div style={cp.sectionLabel}>Mis imágenes ({p.imageBankTotal ?? p.imageBankItems?.length ?? 0})</div>
+          {p.imageBankItems?.length ? (
             <>
-              <p style={cp.hint}>Hacé clic en una imagen para insertarla en la página actual sin volver a subirla.</p>
               <div style={cp.bankGrid}>
-                {p.imageBank.map((url: string) => (
-                  <div key={url} style={cp.bankItemWrap}>
-                    <button style={cp.bankItem} title="Insertar en la página" onClick={() => p.addImageFromUrl(url)}>
-                      <img src={url} alt="" style={cp.bankImg} loading="lazy" />
-                    </button>
-                    <button
-                      style={cp.bankDelBtn}
-                      title="Eliminar imagen"
-                      onClick={(e) => { e.stopPropagation(); p.deleteFromBank(url) }}
-                    >
-                      ✕
-                    </button>
+                {p.imageBankItems.slice(0, 12).map((item: any) => (
+                  <div key={item.key} style={cp.bankItemWrap}>
+                    <BankImageButton item={item} onClick={() => p.insertImageFromBank(item.url)} />
                   </div>
                 ))}
               </div>
+              <button type="button" style={cp.bankMoreBtn} onClick={p.openImagePicker}>
+                Ver más en el banco
+              </button>
             </>
+          ) : (
+            <p style={cp.hint}>Todavía no hay imágenes en el banco del proyecto.</p>
           )}
         </>
       )
@@ -6411,6 +6527,8 @@ const cp: Record<string, React.CSSProperties> = {
   bankItemWrap: { position: 'relative' as const, aspectRatio: '1' },
   bankItem:   { padding: 0, border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden', cursor: 'pointer', background: '#fff', width: '100%', height: '100%', display: 'block' },
   bankImg:    { width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block' },
+  bankFallback: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f3f4f6', color: '#64748b', fontSize: 11, fontWeight: 800 },
+  bankMoreBtn: { width: '100%', marginTop: 8, background: '#fff', color: '#4F46E5', border: '1px solid #c7d2fe', borderRadius: 7, padding: '8px', cursor: 'pointer', fontSize: 12, fontWeight: 700 },
   bankDelBtn: { position: 'absolute' as const, top: 3, right: 3, width: 20, height: 20, padding: 0, border: 'none', borderRadius: '50%', background: 'rgba(220,38,38,.92)', color: '#fff', fontSize: 11, lineHeight: '20px', textAlign: 'center' as const, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,.3)' },
 }
 

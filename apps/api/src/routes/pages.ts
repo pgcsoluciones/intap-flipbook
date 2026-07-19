@@ -14,6 +14,135 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
+function normalizeCanvasJson(value: unknown) {
+  const fallback = { version: '5.3.0', objects: [] }
+  const source = value == null ? fallback : value
+  if (typeof source === 'string') {
+    try {
+      const parsed = JSON.parse(source)
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as any).objects)) return null
+      return JSON.stringify(parsed)
+    } catch {
+      return null
+    }
+  }
+  if (!source || typeof source !== 'object' || !Array.isArray((source as any).objects)) return null
+  return JSON.stringify(source)
+}
+
+// POST /api/publications/:pubId/pages/batch
+pages.post('/publications/:pubId/pages/batch', async (c) => {
+  const userId = c.get('user').sub
+  const pubId = c.req.param('pubId')
+  const reqId = c.req.header('CF-Ray') ?? crypto.randomUUID()
+
+  const pub = await c.env.DB.prepare('SELECT id FROM publications WHERE id = ? AND user_id = ?')
+    .bind(pubId, userId)
+    .first<{ id: string }>()
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  const body = await c.req.json<{
+    pages?: Array<{
+      image_url?: string
+      canvas_json?: unknown
+      size_bytes?: number
+      title?: string
+      description?: string
+      price?: string
+    }>
+  }>()
+
+  const requestedPages = Array.isArray(body.pages) ? body.pages : []
+  if (!requestedPages.length) {
+    return c.json({ success: false, error: 'pages debe contener al menos una página' }, 400)
+  }
+
+  const normalized = requestedPages.map((page, index) => {
+    const imageUrl = String(page?.image_url ?? '').trim()
+    const canvasJson = normalizeCanvasJson(page?.canvas_json)
+    if (!imageUrl) return { index, error: 'image_url es requerido' }
+    if (!canvasJson) return { index, error: 'canvas_json inválido' }
+    return {
+      index,
+      image_url: imageUrl,
+      canvas_json: canvasJson,
+      size_bytes: Number.isFinite(page.size_bytes ?? 0) ? page.size_bytes ?? 0 : 0,
+      title: page.title ?? null,
+      description: page.description ?? null,
+      price: page.price ?? null,
+    }
+  })
+
+  const invalid = normalized.find((page) => 'error' in page)
+  if (invalid && 'error' in invalid) {
+    return c.json({ success: false, error: `Página ${invalid.index + 1}: ${invalid.error}` }, 400)
+  }
+
+  const { plan, customLimits } = await getUserPlan(c.env.DB, userId)
+  const effectiveMaxPages = customLimits.max_pages ?? plan.max_pages_per_pub
+  const currentCountRow = await c.env.DB.prepare(
+    'SELECT COUNT(*) as count FROM pages WHERE publication_id = ?',
+  ).bind(pubId).first<{ count: number }>()
+  const currentCount = currentCountRow?.count ?? 0
+  if (effectiveMaxPages !== null && currentCount + normalized.length > effectiveMaxPages) {
+    return c.json({
+      success: false,
+      error: `Tu plan ${plan.name} permite máximo ${effectiveMaxPages} páginas por publicación. Actualiza tu plan para agregar más.`,
+    }, 403)
+  }
+
+  const ids = normalized.map(() => crypto.randomUUID())
+  try {
+    await c.env.DB.batch([
+      ...normalized.map((page, index) => {
+        if ('error' in page) throw new Error(page.error)
+        return c.env.DB.prepare(
+          `INSERT INTO pages (
+             id, publication_id, page_number, image_url, size_bytes, title, description, price, canvas_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          ids[index],
+          pubId,
+          currentCount + index + 1,
+          page.image_url,
+          page.size_bytes,
+          page.title,
+          page.description,
+          page.price,
+          page.canvas_json,
+        )
+      }),
+      c.env.DB.prepare(`UPDATE publications SET updated_at = datetime('now') WHERE id = ?`).bind(pubId),
+    ])
+
+    const placeholders = ids.map(() => '?').join(',')
+    const { results } = await c.env.DB.prepare(
+      `SELECT *
+       FROM pages
+       WHERE publication_id = ?
+         AND id IN (${placeholders})
+       ORDER BY page_number ASC, created_at ASC, id ASC`,
+    ).bind(pubId, ...ids).all()
+
+    const byId = new Map((results ?? []).map((page: any) => [page.id, page]))
+    const createdPages = ids.map((id) => byId.get(id)).filter(Boolean)
+    return c.json({ success: true, pages: createdPages, data: { pages: createdPages } }, 201)
+  } catch (error) {
+    console.error('[pages.batchCreate] failed', {
+      request_id: reqId,
+      user_id: userId,
+      publication_id: pubId,
+      requested_pages: requestedPages.length,
+      error: errorMessage(error),
+    })
+    return c.json({
+      success: false,
+      code: 'PAGES_BATCH_CREATE_FAILED',
+      error: 'No se pudieron crear las páginas.',
+    }, 500)
+  }
+})
+
 // POST /api/publications/:pubId/pages
 pages.post('/publications/:pubId/pages', async (c) => {
   const userId = c.get('user').sub

@@ -60,14 +60,30 @@ function isPagesDevOrigin(origin: string): boolean {
   }
 }
 
+function isDashboardPreviewOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin)
+    if (url.protocol !== 'https:') return false
+    const host = url.hostname
+    return host === 'intap-flipbook-dashboard.pages.dev'
+      || host.endsWith('.intap-flipbook-dashboard.pages.dev')
+  } catch {
+    return false
+  }
+}
+
+function isAllowedOrigin(origin: string, env: Env, value?: string): boolean {
+  if (parseOrigins(value).includes(origin)) return true
+  return env.APP_ENV === 'preview' && isDashboardPreviewOrigin(origin)
+}
+
 function isViewerWritePath(path: string): boolean {
   return /^\/view\/[^/]+\/(track|event|response)$/.test(path) || /^\/view\/[^/]+\/markers\/[^/]+\/booking$/.test(path)
 }
 
 app.use('*', async (c, next) => {
-  const allowedOrigins = parseOrigins(c.env.CORS_ORIGIN)
   const corsMiddleware = cors({
-    origin: (origin) => (allowedOrigins.includes(origin) ? origin : null),
+    origin: (origin) => (isAllowedOrigin(origin, c.env, c.env.CORS_ORIGIN) ? origin : null),
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     // navigator.sendBeacon() (analítica del viewer) siempre envía la petición en modo
@@ -84,7 +100,6 @@ app.use('*', async (c, next) => {
 
   const origin = c.req.header('Origin') ?? ''
   const appEnv = c.env.APP_ENV ?? 'production'
-  const allowedWriteOrigins = parseOrigins(c.env.ALLOWED_WRITE_ORIGINS)
   const isProduction = appEnv === 'production'
 
   if (!origin) {
@@ -95,7 +110,7 @@ app.use('*', async (c, next) => {
     return c.json({ success: false, error: 'Origen preview no autorizado en producción' }, 403)
   }
 
-  if (!allowedWriteOrigins.includes(origin)) {
+  if (!isAllowedOrigin(origin, c.env, c.env.ALLOWED_WRITE_ORIGINS)) {
     return c.json({ success: false, error: 'Origen no autorizado para operaciones de escritura' }, 403)
   }
 
