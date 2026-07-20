@@ -46,7 +46,7 @@ export type UploadedPdfAsset<Asset = unknown> = {
 export type UploadPdfRenderedPagesOptions<Asset = unknown> = {
   publicationId: string
   pages: Array<{ file: File; width?: number | null; height?: number | null }>
-  uploadAsset: (input: { publication_id: string; file: File; width?: number | null; height?: number | null }) => Promise<{ success: true; data: UploadedPdfAsset<Asset> }>
+  uploadAsset: (input: { publication_id: string; file: File; width?: number | null; height?: number | null }, index: number) => Promise<{ success: true; data: UploadedPdfAsset<Asset> }>
   onProgress?: (message: string, index: number, total: number) => void
 }
 
@@ -130,7 +130,7 @@ export async function uploadPdfRenderedPagesAsAssets<Asset = unknown>({
       file: page.file,
       width: page.width ?? null,
       height: page.height ?? null,
-    })
+    }, index)
     results.push(res.data)
   }
   return {

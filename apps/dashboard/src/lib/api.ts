@@ -383,6 +383,19 @@ export type MediaAsset = {
   sha256: string
   width: number | null
   height: number | null
+  original_mime_type?: string | null
+  original_size_bytes?: number | null
+  original_width?: number | null
+  original_height?: number | null
+  thumbnail_storage_key?: string | null
+  thumbnail_url?: string | null
+  thumbnail_mime_type?: string | null
+  thumbnail_size_bytes?: number | null
+  thumbnail_width?: number | null
+  thumbnail_height?: number | null
+  optimization_status?: string | null
+  optimization_version?: string | null
+  optimized_at?: string | null
   is_hidden?: number | null
   deleted_at?: string | null
   created_at: string
@@ -811,13 +824,14 @@ export const api = {
   },
 
   mediaAssets: {
-    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number }) => {
+    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number; needs_thumbnail?: boolean }) => {
       const qs = new URLSearchParams()
       qs.set('publication_id', params.publication_id)
       if (params.q) qs.set('q', params.q)
       if (params.limit != null) qs.set('limit', String(params.limit))
       if (params.cursor) qs.set('cursor', params.cursor)
       if (params.page != null) qs.set('page', String(params.page))
+      if (params.needs_thumbnail) qs.set('needs_thumbnail', 'true')
       return request<{
         success: true
         data: MediaAsset[]
@@ -834,13 +848,26 @@ export const api = {
         if (data?.data?.url) data.data.url = toCanvasSafeAssetUrl(data.data.url)
         return data
       }),
-    upload: (input: { publication_id: string; file: File; width?: number | null; height?: number | null }) => {
+    upload: (input: {
+      publication_id: string
+      file: File
+      thumbnail?: File | null
+      width?: number | null
+      height?: number | null
+      optimization?: Record<string, unknown>
+    }) => {
       const token = getToken()
       const form = new FormData()
       form.append('publication_id', input.publication_id)
       form.append('file', input.file)
+      if (input.thumbnail) form.append('thumbnail', input.thumbnail)
       if (input.width != null) form.append('width', String(input.width))
       if (input.height != null) form.append('height', String(input.height))
+      if (input.optimization) {
+        for (const [key, value] of Object.entries(input.optimization)) {
+          if (value != null) form.append(key, String(value))
+        }
+      }
       return fetch(`${API_BASE}/api/upload/media-assets`, {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -849,9 +876,32 @@ export const api = {
         const data = await r.json().catch(() => null)
         if (!r.ok || !data?.success) throw new Error(data?.error ?? `Error ${r.status} al subir imagen`)
         if (data?.data?.asset?.public_url) data.data.asset.public_url = toCanvasSafeAssetUrl(data.data.asset.public_url)
+        if (data?.data?.asset?.thumbnail_url) data.data.asset.thumbnail_url = toCanvasSafeAssetUrl(data.data.asset.thumbnail_url)
         if (data?.data?.url) data.data.url = toCanvasSafeAssetUrl(data.data.url)
         return data
       }) as Promise<{ success: true; data: { asset: MediaAsset; url: string; reused: boolean } }>
+    },
+    uploadThumbnail: (assetId: string, input: { publication_id: string; thumbnail: File; metadata?: Record<string, unknown> }) => {
+      const token = getToken()
+      const form = new FormData()
+      form.append('publication_id', input.publication_id)
+      form.append('thumbnail', input.thumbnail)
+      if (input.metadata) {
+        for (const [key, value] of Object.entries(input.metadata)) {
+          if (value != null) form.append(key, String(value))
+        }
+      }
+      return fetch(`${API_BASE}/api/upload/media-assets/${encodeURIComponent(assetId)}/thumbnail`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      }).then(async (r) => {
+        const data = await r.json().catch(() => null)
+        if (!r.ok || !data?.success) throw new Error(data?.error ?? `Error ${r.status} al subir miniatura`)
+        if (data?.data?.asset?.public_url) data.data.asset.public_url = toCanvasSafeAssetUrl(data.data.asset.public_url)
+        if (data?.data?.asset?.thumbnail_url) data.data.asset.thumbnail_url = toCanvasSafeAssetUrl(data.data.asset.thumbnail_url)
+        return data
+      }) as Promise<{ success: true; data: { asset: MediaAsset } }>
     },
     usage: (assetId: string, publicationId: string) => {
       const qs = new URLSearchParams({ publication_id: publicationId })

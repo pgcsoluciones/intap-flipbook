@@ -240,6 +240,75 @@ test('PDF de 4 paginas produce 4 media_assets antes de crear paginas y conserva 
   }
 })
 
+test('PDF de 4 paginas sube 4 displays y 4 thumbnails en orden', async () => {
+  const batch = await loadBatch()
+  try {
+    const thumbnails = Array.from({ length: 4 }, (_, index) => new File([`thumb-${index + 1}`], `thumb-${index + 1}.webp`, { type: 'image/webp' }))
+    const uploadCalls = []
+    const pages = Array.from({ length: 4 }, (_, index) => ({
+      file: new File([`display-${index + 1}`], batch.pdfPageAssetName('catalogo.pdf', index + 1), { type: 'image/webp' }),
+      width: 900,
+      height: 1200,
+    }))
+    const uploaded = await batch.uploadPdfRenderedPagesAsAssets({
+      publicationId: 'pub-1',
+      pages,
+      uploadAsset: async (input, index) => {
+        uploadCalls.push({ input, thumbnail: thumbnails[index] })
+        return {
+          success: true,
+          data: {
+            asset: { id: `asset-${index + 1}`, original_name: input.file.name },
+            url: `https://media.example.test/uploads/user-1/pdf-${index + 1}.webp`,
+            reused: false,
+          },
+        }
+      },
+    })
+
+    assert.equal(uploaded.assets.length, 4)
+    assert.deepEqual(uploadCalls.map((call) => call.input.file.name), [
+      'catalogo — página 001.jpg',
+      'catalogo — página 002.jpg',
+      'catalogo — página 003.jpg',
+      'catalogo — página 004.jpg',
+    ])
+    assert.deepEqual(uploadCalls.map((call) => call.thumbnail.name), ['thumb-1.webp', 'thumb-2.webp', 'thumb-3.webp', 'thumb-4.webp'])
+  } finally {
+    await batch.cleanup()
+  }
+})
+
+test('PDF importado en dos publicaciones usa el publicationId de cada llamada', async () => {
+  const batch = await loadBatch()
+  try {
+    const pages = [1, 2].map((page) => ({
+      file: new File([`display-${page}`], batch.pdfPageAssetName('documento.pdf', page), { type: 'image/webp' }),
+      width: 900,
+      height: 1200,
+    }))
+    const calls = []
+    const uploadAsset = async (input) => {
+      calls.push(input)
+      return {
+        success: true,
+        data: {
+          asset: { id: `${input.publication_id}:${input.file.name}` },
+          url: `https://media.example.test/uploads/user-1/${input.publication_id}-${input.file.name}`,
+          reused: false,
+        },
+      }
+    }
+
+    await batch.uploadPdfRenderedPagesAsAssets({ publicationId: 'publication-a', pages, uploadAsset })
+    await batch.uploadPdfRenderedPagesAsAssets({ publicationId: 'publication-b', pages, uploadAsset })
+
+    assert.deepEqual(calls.map((call) => call.publication_id), ['publication-a', 'publication-a', 'publication-b', 'publication-b'])
+  } finally {
+    await batch.cleanup()
+  }
+})
+
 test('reimportar el mismo PDF devuelve assets reused y no aumenta el total del banco', async () => {
   const batch = await loadBatch()
   try {
@@ -509,6 +578,33 @@ test('deduplicacion evita repetir una URL como asset y legacy', async () => {
     const page = picker.getCombinedMediaPage({ assets, legacyItems, assetTotal: 1, page: 1, keyForAsset: (item) => item.url, keyForLegacy: (item) => item.url })
 
     assert.deepEqual(page.items.map((item) => item.key), ['asset:1', 'legacy:other'])
+  } finally {
+    await picker.cleanup()
+  }
+})
+
+test('MIS IMAGENES usa thumbnail_url y cae a public_url si no existe', async () => {
+  const picker = await loadMediaPicker()
+  try {
+    const withThumb = picker.mediaAssetToPickerItem({
+      id: 'a1',
+      public_url: 'https://media.example.test/uploads/user-1/full.webp',
+      thumbnail_url: 'https://media.example.test/uploads/user-1/full-thumb.webp',
+      original_name: 'full.webp',
+      mime_type: 'image/webp',
+      size_bytes: 1000,
+    })
+    const withoutThumb = picker.mediaAssetToPickerItem({
+      id: 'a2',
+      public_url: 'https://media.example.test/uploads/user-1/only.webp',
+      thumbnail_url: null,
+      original_name: 'only.webp',
+      mime_type: 'image/webp',
+      size_bytes: 1000,
+    })
+
+    assert.equal(withThumb.thumbUrl, 'https://media.example.test/uploads/user-1/full-thumb.webp')
+    assert.equal(withoutThumb.thumbUrl, 'https://media.example.test/uploads/user-1/only.webp')
   } finally {
     await picker.cleanup()
   }

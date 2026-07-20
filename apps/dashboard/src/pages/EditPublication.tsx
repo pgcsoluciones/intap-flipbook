@@ -4,6 +4,7 @@ import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { fabric } from 'fabric'
 import { ApiRequestError, api, toCanvasSafeAssetUrl, type MediaAsset } from '../lib/api'
 import { PageBatchConfirmationError, pdfPageAssetName, processPageBatch, uploadPdfRenderedPagesAsAssets } from '../lib/pageBatch'
+import { optimizeImageFile, type OptimizedImageResult } from '../lib/imageOptimization'
 import FileField from '../components/FileField'
 import MediaPicker from '../components/MediaPicker'
 import WidgetPreview from '../components/WidgetPreview'
@@ -1036,6 +1037,8 @@ export default function EditPublication() {
   const [imageBank, setImageBank] = useState<string[]>([]) // banco de imágenes subidas en este proyecto
   const [mediaBankAssets, setMediaBankAssets] = useState<MediaAsset[]>([])
   const [mediaBankTotal, setMediaBankTotal] = useState(0)
+  const [oldImagesPendingCount, setOldImagesPendingCount] = useState(0)
+  const [legacyOptimization, setLegacyOptimization] = useState({ running: false, cancelled: false, done: 0, total: 0, failed: 0, message: '' })
   const [selectVersion, setSelectVersion] = useState(0) // fuerza refresco del panel de props
   // Miniaturas reales por página: conserva solo el último dataURL válido por page.id.
   const [thumbnailByPageId, setThumbnailByPageId] = useState<Record<string, string>>({})
@@ -1072,9 +1075,13 @@ export default function EditPublication() {
   const refreshMediaBank = useCallback(async () => {
     if (!id) return
     try {
-      const res = await api.mediaAssets.list({ publication_id: id, limit: 48 })
-      setMediaBankAssets(res.data ?? [])
-      setMediaBankTotal(res.page?.total ?? (res.data ?? []).length)
+      const [assetsRes, pendingRes] = await Promise.all([
+        api.mediaAssets.list({ publication_id: id, limit: 12, page: 1 }),
+        api.mediaAssets.list({ publication_id: id, limit: 1, page: 1, needs_thumbnail: true }),
+      ])
+      setMediaBankAssets(assetsRes.data ?? [])
+      setMediaBankTotal(assetsRes.page?.total ?? (assetsRes.data ?? []).length)
+      setOldImagesPendingCount(pendingRes.page?.total ?? 0)
     } catch (err) {
       console.warn('[media-bank] failed to load assets', err)
     }
@@ -1095,6 +1102,7 @@ export default function EditPublication() {
   const duplicateInFlightRef = useRef(false)
   const deletingPageIdsRef = useRef(new Set<string>())
   const deletedPageIdsRef = useRef(new Set<string>())
+  const legacyOptimizationCancelRef = useRef(false)
   // Fuente estable para resolver trabajos persisted sin closures viejos.
   const pagesRef = useRef<any[]>([])
   // Solo para priorización/verificación de página activa; no reconstruye snapshots live.
@@ -1445,9 +1453,97 @@ export default function EditPublication() {
     })
   }, [])
 
+  const cancelLegacyOptimization = useCallback(() => {
+    legacyOptimizationCancelRef.current = true
+    setLegacyOptimization((prev) => ({ ...prev, cancelled: true, running: false, message: 'Cancelado. Podés continuar luego.' }))
+  }, [])
+
+  const optimizeLegacyImages = useCallback(async () => {
+    if (!id || legacyOptimization.running) return
+    const firstBatch = await api.mediaAssets.list({ publication_id: id, limit: 12, page: 1, needs_thumbnail: true })
+    const total = firstBatch.page?.total ?? (firstBatch.data ?? []).length
+    if (!total) return
+    legacyOptimizationCancelRef.current = false
+    let done = 0
+    let failed = 0
+    const failedThisRun = new Set<string>()
+    setLegacyOptimization({ running: true, cancelled: false, done: 0, total, failed: 0, message: `Optimizando 0 de ${total}` })
+
+    const runAsset = async (asset: MediaAsset) => {
+      try {
+        const res = await fetch(toCanvasSafeAssetUrl(asset.public_url), { mode: 'cors' })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const blob = await res.blob()
+        const file = new File([blob], asset.original_name || 'imagen', { type: blob.type || asset.mime_type })
+        const optimized = await optimizeImageFile(file)
+        const thumbnailRes = await api.mediaAssets.uploadThumbnail(asset.id, {
+          publication_id: id,
+          thumbnail: optimized.thumbnailFile,
+          metadata: {
+            thumbnail_width: optimized.metadata.thumbnail_width,
+            thumbnail_height: optimized.metadata.thumbnail_height,
+            optimization_status: optimized.metadata.optimization_status === 'optimized' ? 'thumbnail_only' : optimized.metadata.optimization_status,
+            optimization_version: optimized.metadata.optimization_version,
+          },
+        })
+        const updatedAsset = thumbnailRes.data.asset
+        setMediaBankAssets((prev) => prev.map((item) =>
+          item.id === asset.id
+            ? { ...item, ...updatedAsset }
+            : item,
+        ))
+      } catch (error: any) {
+        failed += 1
+        failedThisRun.add(asset.id)
+        console.warn('[media-bank] legacy optimization failed', asset.public_url, error)
+      } finally {
+        done += 1
+        setLegacyOptimization({
+          running: !legacyOptimizationCancelRef.current && done < total,
+          cancelled: legacyOptimizationCancelRef.current,
+          done,
+          total,
+          failed,
+          message: legacyOptimizationCancelRef.current
+            ? 'Cancelado. Podés continuar luego.'
+            : `Optimizando ${done} de ${total}${failed ? ` · ${failed} fallidas por CORS/formato` : ''}`,
+        })
+      }
+    }
+
+    const runBatch = async (queue: MediaAsset[]) => {
+      while (!legacyOptimizationCancelRef.current) {
+        const asset = queue.shift()
+        if (!asset) return
+        await runAsset(asset)
+      }
+    }
+
+    let batch = firstBatch.data ?? []
+    while (!legacyOptimizationCancelRef.current && batch.length) {
+      const candidates = batch.filter((asset) => !failedThisRun.has(asset.id))
+      if (!candidates.length) break
+      const queue = [...candidates]
+      await Promise.all(Array.from({ length: Math.min(2, queue.length) }, () => runBatch(queue)))
+      if (legacyOptimizationCancelRef.current) break
+      const nextBatch = await api.mediaAssets.list({ publication_id: id, limit: 12, page: 1, needs_thumbnail: true })
+      batch = (nextBatch.data ?? []).filter((asset) => !failedThisRun.has(asset.id))
+      setOldImagesPendingCount(nextBatch.page?.total ?? batch.length)
+    }
+    await refreshMediaBank()
+    setLegacyOptimization((prev) => ({
+      ...prev,
+      running: false,
+      cancelled: legacyOptimizationCancelRef.current,
+      message: legacyOptimizationCancelRef.current
+        ? 'Cancelado. Podés continuar luego.'
+        : `Optimización completada: ${prev.done} de ${prev.total}${prev.failed ? ` · ${prev.failed} fallidas por CORS/formato` : ''}`,
+    }))
+  }, [id, legacyOptimization.running, refreshMediaBank])
+
   const imageBankItems = useMemo(() => {
     const seen = new Set<string>()
-    const items: Array<{ key: string; url: string; name: string; meta: string }> = []
+    const items: Array<{ key: string; url: string; thumbUrl?: string; name: string; meta: string }> = []
     for (const asset of mediaBankAssets) {
       const url = toCanvasSafeAssetUrl(asset.public_url)
       if (!url || seen.has(url)) continue
@@ -1455,6 +1551,7 @@ export default function EditPublication() {
       items.push({
         key: `asset:${asset.id}`,
         url,
+        thumbUrl: asset.thumbnail_url ? toCanvasSafeAssetUrl(asset.thumbnail_url) : url,
         name: asset.original_name || 'Imagen',
         meta: [formatMediaMime(asset.mime_type), formatMediaBytes(asset.size_bytes)].filter(Boolean).join(' · '),
       })
@@ -2128,10 +2225,29 @@ export default function EditPublication() {
         canvas.width = 0
         canvas.height = 0
       }
+      const optimizedPages: Array<{ file: File; width: number | null; height: number | null }> = []
+      const optimizedResults: OptimizedImageResult[] = []
+      for (let index = 0; index < renderedPages.length; index += 1) {
+        onProgress?.(`Optimizando página ${index + 1} de ${total}`)
+        const optimized = await optimizeImageFile(renderedPages[index].file)
+        optimizedResults[index] = optimized
+        optimizedPages.push({
+          file: optimized.displayFile,
+          width: optimized.metadata.optimized_width,
+          height: optimized.metadata.optimized_height,
+        })
+      }
       const uploaded = await uploadPdfRenderedPagesAsAssets<MediaAsset>({
         publicationId: id!,
-        pages: renderedPages,
-        uploadAsset: api.mediaAssets.upload,
+        pages: optimizedPages,
+        uploadAsset: (input, index) => {
+          const optimized = optimizedResults[index]
+          return api.mediaAssets.upload({
+            ...input,
+            thumbnail: optimized?.thumbnailFile ?? null,
+            optimization: optimized?.metadata,
+          })
+        },
         onProgress,
       })
       rememberMediaAssets(uploaded.assets)
@@ -2322,7 +2438,15 @@ export default function EditPublication() {
   }
 
   async function handleUpload(file: File) {
-    const res = await api.mediaAssets.upload({ publication_id: id!, file })
+    const optimized = await optimizeImageFile(file)
+    const res = await api.mediaAssets.upload({
+      publication_id: id!,
+      file: optimized.displayFile,
+      thumbnail: optimized.thumbnailFile,
+      width: optimized.metadata.optimized_width,
+      height: optimized.metadata.optimized_height,
+      optimization: optimized.metadata,
+    })
     if (!res.success) throw new Error('Upload falló')
     await addPageFromUrl(res.data.url)
   }
@@ -3096,6 +3220,10 @@ export default function EditPublication() {
               imageBank={imageBank}
               imageBankItems={imageBankItems}
               imageBankTotal={mediaBankTotal || imageBankItems.length}
+              oldImagesPendingOptimization={oldImagesPendingCount}
+              legacyOptimization={legacyOptimization}
+              optimizeLegacyImages={optimizeLegacyImages}
+              cancelLegacyOptimization={cancelLegacyOptimization}
               insertImageFromBank={(url: string) => void addImageFromUrl(url)}
               onShowAllHidden={showAllHiddenInEditor}
             />
@@ -3450,18 +3578,19 @@ function ToolbarBtn({ icon, title, onClick, disabled, active }: { icon: string; 
   )
 }
 
-function BankImageButton({ item, onClick }: { item: { url: string; name: string; meta: string }; onClick: () => void }) {
+function BankImageButton({ item, onClick }: { item: { url: string; thumbUrl?: string; name: string; meta: string }; onClick: () => void }) {
   const [failed, setFailed] = useState(false)
   return (
     <button type="button" style={cp.bankItem} title={`${item.name}${item.meta ? ` · ${item.meta}` : ''}`} onClick={onClick}>
       {!failed ? (
         <img
-          src={item.url}
+          src={item.thumbUrl || item.url}
           alt={item.name}
           style={cp.bankImg}
           loading="lazy"
+          decoding="async"
           onError={() => {
-            console.warn('[image-bank] thumbnail failed', item.url)
+            console.warn('[image-bank] thumbnail failed', item.thumbUrl || item.url)
             setFailed(true)
           }}
         />
@@ -3638,6 +3767,23 @@ function ContextPanel(p: any) {
           <p style={cp.hint}>Agrega la imagen como página nueva del flipbook (igual que en el panel Páginas).</p>
 
           <div style={cp.sectionLabel}>Mis imágenes ({p.imageBankTotal ?? p.imageBankItems?.length ?? 0})</div>
+          {p.oldImagesPendingOptimization > 0 && (
+            <div style={cp.legacyOptimizeBox}>
+              <div style={cp.legacyOptimizeTop}>
+                <span>{p.oldImagesPendingOptimization} pendientes sin miniatura ligera</span>
+                {p.legacyOptimization?.running ? (
+                  <button type="button" style={cp.bankMoreBtn} onClick={p.cancelLegacyOptimization}>
+                    Cancelar
+                  </button>
+                ) : (
+                  <button type="button" style={cp.bankMoreBtn} onClick={p.optimizeLegacyImages}>
+                    Optimizar imágenes antiguas
+                  </button>
+                )}
+              </div>
+              {p.legacyOptimization?.message && <p style={cp.hint}>{p.legacyOptimization.message}</p>}
+            </div>
+          )}
           {p.imageBankItems?.length ? (
             <>
               <div style={cp.bankGrid}>
@@ -6529,6 +6675,8 @@ const cp: Record<string, React.CSSProperties> = {
   bankImg:    { width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block' },
   bankFallback: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f3f4f6', color: '#64748b', fontSize: 11, fontWeight: 800 },
   bankMoreBtn: { width: '100%', marginTop: 8, background: '#fff', color: '#4F46E5', border: '1px solid #c7d2fe', borderRadius: 7, padding: '8px', cursor: 'pointer', fontSize: 12, fontWeight: 700 },
+  legacyOptimizeBox: { border: '1px solid #e5e7eb', borderRadius: 8, padding: 8, marginBottom: 8, background: '#f8fafc' },
+  legacyOptimizeTop: { display: 'grid', gridTemplateColumns: '1fr', gap: 6, fontSize: 12, color: '#475569', fontWeight: 700 },
   bankDelBtn: { position: 'absolute' as const, top: 3, right: 3, width: 20, height: 20, padding: 0, border: 'none', borderRadius: '50%', background: 'rgba(220,38,38,.92)', color: '#fff', fontSize: 11, lineHeight: '20px', textAlign: 'center' as const, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,.3)' },
 }
 

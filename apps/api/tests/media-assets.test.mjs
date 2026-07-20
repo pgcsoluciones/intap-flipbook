@@ -153,6 +153,9 @@ class FakeStatement {
         const q = String(this.params[3]).replace(/%/g, '').toLowerCase()
         rows = rows.filter((asset) => asset.original_name.toLowerCase().includes(q))
       }
+      if (this.sql.includes('thumbnail_url IS NULL')) {
+        rows = rows.filter((asset) => !asset.thumbnail_url)
+      }
       return { count: rows.length }
     }
     if (sql.includes('FROM media_assets') && sql.includes('sha256 = ?')) {
@@ -190,6 +193,10 @@ class FakeStatement {
         const q = String(this.params[index++]).replace(/%/g, '').toLowerCase()
         rows = rows.filter((asset) => asset.original_name.toLowerCase().includes(q))
       }
+      if (this.sql.includes('thumbnail_url IS NULL')) {
+        index += 1
+        rows = rows.filter((asset) => !asset.thumbnail_url)
+      }
       if (this.sql.includes('created_at < ?')) {
         const [createdAt, sameCreatedAt, id] = this.params.slice(index, index + 3)
         index += 3
@@ -221,6 +228,7 @@ class FakeStatement {
 
   async run() {
     if (this.sql.startsWith('INSERT INTO media_assets')) {
+      const base = this.params.slice(0, 12)
       const [
         id,
         tenant_id,
@@ -234,9 +242,30 @@ class FakeStatement {
         sha256,
         width,
         height,
-        created_at,
-        updated_at,
-      ] = this.params
+      ] = base
+      const hasOptimizationColumns = this.params.length > 14
+      const optimization = hasOptimizationColumns
+        ? {
+            original_mime_type: this.params[12],
+            original_size_bytes: this.params[13],
+            original_width: this.params[14],
+            original_height: this.params[15],
+            thumbnail_storage_key: this.params[16],
+            thumbnail_url: this.params[17],
+            thumbnail_mime_type: this.params[18],
+            thumbnail_size_bytes: this.params[19],
+            thumbnail_width: this.params[20],
+            thumbnail_height: this.params[21],
+            optimization_status: this.params[22],
+            optimization_version: this.params[23],
+            optimized_at: this.params[24],
+            created_at: this.params[25],
+            updated_at: this.params[26],
+          }
+        : {
+            created_at: this.params[12],
+            updated_at: this.params[13],
+          }
       if (this.db.mediaAssets.some((asset) =>
         asset.tenant_id === tenant_id
         && asset.publication_id === publication_id
@@ -258,9 +287,43 @@ class FakeStatement {
         sha256,
         width,
         height,
-        created_at,
-        updated_at,
+        ...optimization,
       })
+      return { success: true }
+    }
+    if (this.sql.startsWith('UPDATE media_assets SET thumbnail_storage_key = ?')) {
+      const [
+        thumbnail_storage_key,
+        thumbnail_url,
+        thumbnail_mime_type,
+        thumbnail_size_bytes,
+        thumbnail_width,
+        thumbnail_height,
+        optimization_status,
+        optimization_version,
+        optimized_at,
+        updated_at,
+        id,
+        tenantId,
+        publicationId,
+      ] = this.params
+      this.db.mediaAssets = this.db.mediaAssets.map((asset) =>
+        asset.id === id && asset.tenant_id === tenantId && (!publicationId || asset.publication_id === publicationId)
+          ? {
+              ...asset,
+              thumbnail_storage_key,
+              thumbnail_url,
+              thumbnail_mime_type,
+              thumbnail_size_bytes,
+              thumbnail_width,
+              thumbnail_height,
+              optimization_status,
+              optimization_version,
+              optimized_at,
+              updated_at,
+            }
+          : asset,
+      )
       return { success: true }
     }
     if (this.sql.startsWith('UPDATE media_assets SET is_hidden = ?, updated_at = ?')) {
@@ -313,6 +376,28 @@ function form(publicationId, file) {
   return data
 }
 
+function optimizedForm(publicationId, file, thumbnail) {
+  const data = form(publicationId, file)
+  data.append('thumbnail', thumbnail)
+  data.append('original_name', 'large-original.jpg')
+  data.append('original_mime_type', 'image/jpeg')
+  data.append('original_size_bytes', '4000000')
+  data.append('original_width', '4000')
+  data.append('original_height', '3000')
+  data.append('optimized_mime_type', file.type)
+  data.append('optimized_size_bytes', String(file.size))
+  data.append('optimized_width', '2400')
+  data.append('optimized_height', '1800')
+  data.append('thumbnail_size_bytes', String(thumbnail.size))
+  data.append('thumbnail_width', '360')
+  data.append('thumbnail_height', '270')
+  data.append('compression_saved_bytes', '3000000')
+  data.append('compression_saved_percent', '75')
+  data.append('optimization_status', 'optimized')
+  data.append('optimization_version', 'phase1b-test')
+  return data
+}
+
 function multiForm(publicationId, files) {
   const data = new FormData()
   data.append('publication_id', publicationId)
@@ -338,6 +423,122 @@ test('first upload creates media_asset, puts once and returns reused false', asy
   assert.equal(db.mediaAssets.length, 1)
   assert.equal(r2.puts.length, 1)
   assert.equal(db.mediaAssets[0].original_name, 'hero.png')
+})
+
+test('optimized upload stores display and thumbnail in separate keys with metadata', async () => {
+  const db = new FakeD1()
+  const r2 = new FakeR2()
+  const result = await requestUpload(db, r2, '/media-assets', {
+    method: 'POST',
+    body: optimizedForm('pub-1', new File(['display'], 'large.webp', { type: 'image/webp' }), new File(['thumb'], 'large-thumb.webp', { type: 'image/webp' })),
+  })
+
+  assert.equal(result.status, 201)
+  assert.equal(r2.puts.length, 2)
+  assert.notEqual(r2.puts[0].key, r2.puts[1].key)
+  assert.equal(result.body.data.asset.thumbnail_url.includes('-thumb.webp'), true)
+  assert.equal(result.body.data.asset.optimization_status, 'optimized')
+  assert.equal(result.body.data.asset.original_width, 4000)
+  assert.equal(result.body.data.asset.original_name, 'large-original.jpg')
+})
+
+test('repeated optimized asset reuses display and completes missing thumbnail only once', async () => {
+  const db = new FakeD1()
+  const r2 = new FakeR2()
+  await requestUpload(db, r2, '/media-assets', {
+    method: 'POST',
+    body: form('pub-1', new File(['same'], 'same.webp', { type: 'image/webp' })),
+  })
+  const result = await requestUpload(db, r2, '/media-assets', {
+    method: 'POST',
+    body: optimizedForm('pub-1', new File(['same'], 'same.webp', { type: 'image/webp' }), new File(['thumb'], 'same-thumb.webp', { type: 'image/webp' })),
+  })
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.data.reused, true)
+  assert.equal(r2.puts.length, 2)
+  assert.equal(db.mediaAssets.length, 1)
+  assert.equal(db.mediaAssets[0].thumbnail_url.includes('-thumb.webp'), true)
+})
+
+test('asset antiguo puede completar thumbnail sin cambiar public_url', async () => {
+  const db = new FakeD1({
+    mediaAssets: [
+      { id: 'old', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/old.png', public_url: 'https://media.example.test/uploads/user-1/old.png', original_name: 'old.png', mime_type: 'image/png', size_bytes: 99, sha256: 'old', width: null, height: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const data = new FormData()
+  data.append('publication_id', 'pub-1')
+  data.append('thumbnail', new File(['thumb'], 'old-thumb.webp', { type: 'image/webp' }))
+  data.append('thumbnail_width', '360')
+  data.append('thumbnail_height', '270')
+  data.append('optimization_status', 'thumbnail_only')
+  data.append('optimization_version', 'phase1b-test')
+
+  const result = await requestUpload(db, r2, '/media-assets/old/thumbnail', { method: 'POST', body: data })
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.data.asset.public_url, 'https://media.example.test/uploads/user-1/old.png')
+  assert.equal(result.body.data.asset.thumbnail_url, 'https://media.example.test/uploads/user-1/old-thumb.webp')
+  assert.equal(r2.puts.length, 1)
+})
+
+test('tenant A no puede completar thumbnail de un asset del tenant B', async () => {
+  const db = new FakeD1({
+    mediaAssets: [
+      { id: 'foreign', tenant_id: 'user-2', publication_id: 'other-pub', storage_bucket: 'MEDIA', storage_key: 'uploads/user-2/foreign.png', public_url: 'https://media.example.test/uploads/user-2/foreign.png', original_name: 'foreign.png', mime_type: 'image/png', size_bytes: 99, sha256: 'foreign', width: null, height: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const data = new FormData()
+  data.append('publication_id', 'other-pub')
+  data.append('thumbnail', new File(['thumb'], 'foreign-thumb.webp', { type: 'image/webp' }))
+
+  const result = await requestUpload(db, r2, '/media-assets/foreign/thumbnail', { method: 'POST', body: data }, 'user-1')
+
+  assert.equal(result.status, 403)
+  assert.equal(r2.puts.length, 0)
+  assert.equal(db.mediaAssets[0].thumbnail_url, undefined)
+})
+
+test('publicacion A no puede modificar asset exclusivo de publicacion B', async () => {
+  const db = new FakeD1({
+    mediaAssets: [
+      { id: 'pub2-asset', tenant_id: 'user-1', publication_id: 'pub-2', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/pub2.png', public_url: 'https://media.example.test/uploads/user-1/pub2.png', original_name: 'pub2.png', mime_type: 'image/png', size_bytes: 99, sha256: 'pub2', width: null, height: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const data = new FormData()
+  data.append('publication_id', 'pub-1')
+  data.append('thumbnail', new File(['thumb'], 'pub2-thumb.webp', { type: 'image/webp' }))
+
+  const result = await requestUpload(db, r2, '/media-assets/pub2-asset/thumbnail', { method: 'POST', body: data })
+
+  assert.equal(result.status, 404)
+  assert.equal(r2.puts.length, 0)
+  assert.equal(db.mediaAssets[0].thumbnail_url, undefined)
+})
+
+test('deduplicacion no mezcla tenants con el mismo archivo', async () => {
+  const db = new FakeD1({
+    users: [{ id: 'user-1', plan_id: 'free' }, { id: 'user-2', plan_id: 'free' }],
+  })
+  const r2 = new FakeR2()
+  const first = await requestUpload(db, r2, '/media-assets', {
+    method: 'POST',
+    body: form('pub-1', pngFile('same.png', 'same-bytes')),
+  }, 'user-1')
+  const second = await requestUpload(db, r2, '/media-assets', {
+    method: 'POST',
+    body: form('other-pub', pngFile('same.png', 'same-bytes')),
+  }, 'user-2')
+
+  assert.equal(first.status, 201)
+  assert.equal(second.status, 201)
+  assert.equal(second.body.data.reused, false)
+  assert.equal(db.mediaAssets.length, 2)
+  assert.deepEqual(new Set(db.mediaAssets.map((asset) => asset.tenant_id)), new Set(['user-1', 'user-2']))
 })
 
 test('same file in same publication reuses asset and does not put again', async () => {
@@ -563,6 +764,23 @@ test('listing paginates 12 assets and reports total pages', async () => {
   assert.equal(result.body.page.has_more, true)
 })
 
+test('listing pending thumbnails is scoped to tenant and publication', async () => {
+  const db = new FakeD1({
+    mediaAssets: [
+      { id: 'pending-1', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/pending-1.png', public_url: 'https://media.example.test/uploads/user-1/pending-1.png', original_name: 'pending-1.png', mime_type: 'image/png', size_bytes: 1, sha256: '1', width: null, height: null, thumbnail_url: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'ready-1', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/ready-1.png', public_url: 'https://media.example.test/uploads/user-1/ready-1.png', original_name: 'ready-1.png', mime_type: 'image/png', size_bytes: 1, sha256: '2', width: null, height: null, thumbnail_url: 'https://media.example.test/uploads/user-1/ready-1-thumb.webp', created_at: '2026-01-02T00:00:00.000Z', updated_at: '2026-01-02T00:00:00.000Z' },
+      { id: 'pending-2', tenant_id: 'user-1', publication_id: 'pub-2', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/pending-2.png', public_url: 'https://media.example.test/uploads/user-1/pending-2.png', original_name: 'pending-2.png', mime_type: 'image/png', size_bytes: 1, sha256: '3', width: null, height: null, thumbnail_url: null, created_at: '2026-01-03T00:00:00.000Z', updated_at: '2026-01-03T00:00:00.000Z' },
+      { id: 'foreign-pending', tenant_id: 'user-2', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-2/foreign.png', public_url: 'https://media.example.test/uploads/user-2/foreign.png', original_name: 'foreign.png', mime_type: 'image/png', size_bytes: 1, sha256: '4', width: null, height: null, thumbnail_url: null, created_at: '2026-01-04T00:00:00.000Z', updated_at: '2026-01-04T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const result = await requestUpload(db, r2, '/media-assets?publication_id=pub-1&needs_thumbnail=true&limit=12&page=1', { method: 'GET' })
+
+  assert.equal(result.status, 200)
+  assert.deepEqual(result.body.data.map((asset) => asset.id), ['pending-1'])
+  assert.equal(result.body.page.total, 1)
+})
+
 test('listing includes known urls so hidden legacy entries do not reappear', async () => {
   const db = new FakeD1({
     mediaAssets: [
@@ -764,8 +982,8 @@ test('asset in use can be hidden without deleting R2 object', async () => {
 test('physical delete is blocked with usages and allowed with zero usages', async () => {
   const db = new FakeD1({
     mediaAssets: [
-      { id: 'used', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/used.png', public_url: 'https://media.example.test/uploads/user-1/used.png', original_name: 'used.png', mime_type: 'image/png', size_bytes: 1, sha256: '1', width: null, height: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
-      { id: 'free', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/free.png', public_url: 'https://media.example.test/uploads/user-1/free.png', original_name: 'free.png', mime_type: 'image/png', size_bytes: 1, sha256: '2', width: null, height: null, created_at: '2026-01-02T00:00:00.000Z', updated_at: '2026-01-02T00:00:00.000Z' },
+      { id: 'used', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/used.png', public_url: 'https://media.example.test/uploads/user-1/used.png', thumbnail_storage_key: 'uploads/user-1/used-thumb.webp', original_name: 'used.png', mime_type: 'image/png', size_bytes: 1, sha256: '1', width: null, height: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'free', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/free.png', public_url: 'https://media.example.test/uploads/user-1/free.png', thumbnail_storage_key: 'uploads/user-1/free-thumb.webp', original_name: 'free.png', mime_type: 'image/png', size_bytes: 1, sha256: '2', width: null, height: null, created_at: '2026-01-02T00:00:00.000Z', updated_at: '2026-01-02T00:00:00.000Z' },
     ],
     pages: [
       { id: 'p1', publication_id: 'pub-1', page_number: 1, image_url: '/api/upload/uploads/user-1/used.png', canvas_json: null, cover_json: null },
@@ -778,7 +996,7 @@ test('physical delete is blocked with usages and allowed with zero usages', asyn
   assert.equal(blocked.status, 409)
   assert.equal(blocked.body.code, 'ASSET_IN_USE')
   assert.equal(deleted.status, 200)
-  assert.deepEqual(r2.deletes, ['uploads/user-1/free.png'])
+  assert.deepEqual(r2.deletes, ['uploads/user-1/free.png', 'uploads/user-1/free-thumb.webp'])
   assert.ok(db.mediaAssets.find((asset) => asset.id === 'free').deleted_at)
 })
 

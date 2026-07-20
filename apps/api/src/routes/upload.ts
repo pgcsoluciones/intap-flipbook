@@ -99,6 +99,19 @@ type MediaAssetRow = {
   sha256: string
   width: number | null
   height: number | null
+  original_mime_type?: string | null
+  original_size_bytes?: number | null
+  original_width?: number | null
+  original_height?: number | null
+  thumbnail_storage_key?: string | null
+  thumbnail_url?: string | null
+  thumbnail_mime_type?: string | null
+  thumbnail_size_bytes?: number | null
+  thumbnail_width?: number | null
+  thumbnail_height?: number | null
+  optimization_status?: string | null
+  optimization_version?: string | null
+  optimized_at?: string | null
   is_hidden?: number | null
   deleted_at?: string | null
   created_at: string
@@ -119,6 +132,19 @@ function mediaAssetResponse(row: MediaAssetRow) {
     sha256: row.sha256,
     width: row.width,
     height: row.height,
+    original_mime_type: row.original_mime_type ?? null,
+    original_size_bytes: row.original_size_bytes ?? null,
+    original_width: row.original_width ?? null,
+    original_height: row.original_height ?? null,
+    thumbnail_storage_key: row.thumbnail_storage_key ?? null,
+    thumbnail_url: row.thumbnail_url ?? null,
+    thumbnail_mime_type: row.thumbnail_mime_type ?? null,
+    thumbnail_size_bytes: row.thumbnail_size_bytes ?? null,
+    thumbnail_width: row.thumbnail_width ?? null,
+    thumbnail_height: row.thumbnail_height ?? null,
+    optimization_status: row.optimization_status ?? null,
+    optimization_version: row.optimization_version ?? null,
+    optimized_at: row.optimized_at ?? null,
     is_hidden: row.is_hidden ?? 0,
     deleted_at: row.deleted_at ?? null,
     created_at: row.created_at,
@@ -170,6 +196,25 @@ function mimeFromAssetUrl(publicUrl: string) {
   if (pathname.endsWith('.webp')) return 'image/webp'
   if (pathname.endsWith('.png')) return 'image/png'
   return 'image/jpeg'
+}
+
+function optionalInt(value: FormDataEntryValue | null) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return null
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function optionalNumber(value: FormDataEntryValue | null) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return null
+  const parsed = Number.parseFloat(raw)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function optionalString(value: FormDataEntryValue | null) {
+  const raw = String(value ?? '').trim()
+  return raw || null
 }
 
 function assetNameFromUrl(publicUrl: string, fallback = 'Imagen anterior') {
@@ -309,7 +354,7 @@ async function countMediaAssetUsage(c: any, asset: MediaAssetRow) {
   }
 }
 
-async function storeMediaAsset(c: any, userId: string, publicationId: string, file: File, width: number | null, height: number | null) {
+async function storeMediaAsset(c: any, userId: string, publicationId: string, file: File, width: number | null, height: number | null, thumbnail: File | null, metadata: Record<string, any>) {
   const ext = MEDIA_IMAGE_EXT_BY_TYPE[file.type]
   if (!ext) {
     throw new Response(JSON.stringify({ success: false, error: 'Tipo de imagen no permitido. Se aceptan JPEG, PNG, WebP, GIF y SVG seguro.' }), {
@@ -341,6 +386,25 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
     body = await file.arrayBuffer()
   }
   const sha256 = await sha256Hex(body)
+  let thumbnailBody: ArrayBuffer | null = null
+  let thumbnailKey: string | null = null
+  let thumbnailUrl: string | null = null
+  if (thumbnail) {
+    const thumbnailExt = MEDIA_IMAGE_EXT_BY_TYPE[thumbnail.type]
+    if (!thumbnailExt) {
+      throw new Response(JSON.stringify({ success: false, error: 'Tipo de miniatura no permitido.' }), {
+        status: 415,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    if (thumbnail.size > IMAGE_MAX_BYTES) {
+      throw new Response(JSON.stringify({ success: false, error: 'La miniatura supera el tamaño máximo permitido.' }), {
+        status: 413,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    thumbnailBody = await thumbnail.arrayBuffer()
+  }
 
   const existing = await c.env.DB.prepare(
     `SELECT *
@@ -353,6 +417,42 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
   ).bind(userId, publicationId, sha256, 'MEDIA').first<MediaAssetRow>()
 
   if (existing) {
+    if (thumbnail && thumbnailBody && !existing.thumbnail_url) {
+      const thumbExt = MEDIA_IMAGE_EXT_BY_TYPE[thumbnail.type]!
+      thumbnailKey = `uploads/${userId}/${existing.id}-thumb.${thumbExt}`
+      thumbnailUrl = `${c.env.R2_PUBLIC_BASE_URL}/${thumbnailKey}`
+      await c.env.MEDIA.put(thumbnailKey, thumbnailBody, {
+        httpMetadata: { contentType: thumbnail.type },
+      })
+      await c.env.DB.prepare(
+        `UPDATE media_assets
+         SET thumbnail_storage_key = ?, thumbnail_url = ?, thumbnail_mime_type = ?, thumbnail_size_bytes = ?,
+             thumbnail_width = ?, thumbnail_height = ?, optimization_status = COALESCE(optimization_status, ?),
+             optimization_version = COALESCE(optimization_version, ?), optimized_at = COALESCE(optimized_at, ?),
+             updated_at = ?
+         WHERE id = ? AND tenant_id = ? AND publication_id = ?`,
+      ).bind(
+        thumbnailKey,
+        thumbnailUrl,
+        thumbnail.type,
+        thumbnail.size,
+        metadata.thumbnail_width ?? null,
+        metadata.thumbnail_height ?? null,
+        metadata.optimization_status ?? 'thumbnail_only',
+        metadata.optimization_version ?? null,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        existing.id,
+        userId,
+        publicationId,
+      ).run()
+      existing.thumbnail_storage_key = thumbnailKey
+      existing.thumbnail_url = thumbnailUrl
+      existing.thumbnail_mime_type = thumbnail.type
+      existing.thumbnail_size_bytes = thumbnail.size
+      existing.thumbnail_width = metadata.thumbnail_width ?? null
+      existing.thumbnail_height = metadata.thumbnail_height ?? null
+    }
     return { asset: mediaAssetResponse(existing), url: existing.public_url, reused: true }
   }
 
@@ -368,6 +468,11 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
   const id = crypto.randomUUID()
   const key = `uploads/${userId}/${id}.${ext}`
   const url = `${c.env.R2_PUBLIC_BASE_URL}/${key}`
+  if (thumbnail && thumbnailBody) {
+    const thumbExt = MEDIA_IMAGE_EXT_BY_TYPE[thumbnail.type]!
+    thumbnailKey = `uploads/${userId}/${id}-thumb.${thumbExt}`
+    thumbnailUrl = `${c.env.R2_PUBLIC_BASE_URL}/${thumbnailKey}`
+  }
   const now = new Date().toISOString()
   const asset: MediaAssetRow = {
     id,
@@ -376,12 +481,25 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
     storage_bucket: 'MEDIA',
     storage_key: key,
     public_url: url,
-    original_name: file.name || `imagen.${ext}`,
+    original_name: (metadata.original_name ?? file.name) || `imagen.${ext}`,
     mime_type: file.type,
     size_bytes: sizeBytes,
     sha256,
     width: Number.isFinite(width) && width !== null ? width : null,
     height: Number.isFinite(height) && height !== null ? height : null,
+    original_mime_type: metadata.original_mime_type ?? file.type,
+    original_size_bytes: metadata.original_size_bytes ?? sizeBytes,
+    original_width: metadata.original_width ?? null,
+    original_height: metadata.original_height ?? null,
+    thumbnail_storage_key: thumbnailKey,
+    thumbnail_url: thumbnailUrl,
+    thumbnail_mime_type: thumbnail?.type ?? null,
+    thumbnail_size_bytes: thumbnail?.size ?? null,
+    thumbnail_width: metadata.thumbnail_width ?? null,
+    thumbnail_height: metadata.thumbnail_height ?? null,
+    optimization_status: metadata.optimization_status ?? null,
+    optimization_version: metadata.optimization_version ?? null,
+    optimized_at: metadata.optimization_status ? now : null,
     created_at: now,
     updated_at: now,
   }
@@ -389,12 +507,21 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
   await c.env.MEDIA.put(key, body, {
     httpMetadata: { contentType: file.type },
   })
+  if (thumbnail && thumbnailBody && thumbnailKey) {
+    await c.env.MEDIA.put(thumbnailKey, thumbnailBody, {
+      httpMetadata: { contentType: thumbnail.type },
+    })
+  }
 
   await c.env.DB.prepare(
     `INSERT INTO media_assets (
        id, tenant_id, publication_id, storage_bucket, storage_key, public_url,
-       original_name, mime_type, size_bytes, sha256, width, height, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       original_name, mime_type, size_bytes, sha256, width, height,
+       original_mime_type, original_size_bytes, original_width, original_height,
+       thumbnail_storage_key, thumbnail_url, thumbnail_mime_type, thumbnail_size_bytes, thumbnail_width, thumbnail_height,
+       optimization_status, optimization_version, optimized_at,
+       created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     asset.id,
     asset.tenant_id,
@@ -408,6 +535,19 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
     asset.sha256,
     asset.width,
     asset.height,
+    asset.original_mime_type,
+    asset.original_size_bytes,
+    asset.original_width,
+    asset.original_height,
+    asset.thumbnail_storage_key,
+    asset.thumbnail_url,
+    asset.thumbnail_mime_type,
+    asset.thumbnail_size_bytes,
+    asset.thumbnail_width,
+    asset.thumbnail_height,
+    asset.optimization_status,
+    asset.optimization_version,
+    asset.optimized_at,
     asset.created_at,
     asset.updated_at,
   ).run()
@@ -424,6 +564,7 @@ upload.get('/media-assets', async (c) => {
   if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
 
   const q = (c.req.query('q') ?? '').trim()
+  const needsThumbnail = c.req.query('needs_thumbnail') === 'true'
   const limit = boundedMediaAssetLimit(c.req.query('limit') ?? null)
   const pageNumber = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1)
   const offset = (pageNumber - 1) * limit
@@ -440,6 +581,10 @@ upload.get('/media-assets', async (c) => {
   if (q) {
     conditions.push('original_name LIKE ?')
     params.push(`%${q}%`)
+  }
+  if (needsThumbnail) {
+    conditions.push('(thumbnail_url IS NULL OR thumbnail_url = ?)')
+    params.push('')
   }
   if (cursor) {
     conditions.push('(created_at < ? OR (created_at = ? AND id < ?))')
@@ -617,10 +762,63 @@ upload.delete('/media-assets/:assetId', async (c) => {
     return c.json({ success: false, code: 'ASSET_IN_USE', error: 'La imagen está en uso y no puede eliminarse físicamente.', data: secondUsage }, 409)
   }
   await c.env.MEDIA.delete(lookup.asset.storage_key)
+  if (
+    lookup.asset.thumbnail_storage_key
+    && lookup.asset.thumbnail_storage_key !== lookup.asset.storage_key
+    && isPublicUploadKey(lookup.asset.thumbnail_storage_key)
+  ) {
+    await c.env.MEDIA.delete(lookup.asset.thumbnail_storage_key)
+  }
   await c.env.DB.prepare('UPDATE media_assets SET deleted_at = ?, is_hidden = 1, updated_at = ? WHERE id = ? AND tenant_id = ?')
     .bind(new Date().toISOString(), new Date().toISOString(), lookup.asset.id, userId)
     .run()
   return c.json({ success: true, data: { deleted: true } })
+})
+
+upload.post('/media-assets/:assetId/thumbnail', async (c) => {
+  const userId = c.get('user').sub
+  const formData = await c.req.formData()
+  const publicationId = String(formData.get('publication_id') ?? '').trim()
+  const thumbnail = formData.get('thumbnail')
+  if (!publicationId) return c.json({ success: false, error: 'publication_id es requerido' }, 400)
+  if (!(thumbnail instanceof File)) return c.json({ success: false, error: 'thumbnail field is required' }, 400)
+  const lookup = await getOwnedMediaAsset(c, userId, c.req.param('assetId'), publicationId)
+  if (lookup.status === 'missing') return c.json({ success: false, error: 'Imagen no encontrada' }, 404)
+  if (lookup.status === 'forbidden') return c.json({ success: false, error: 'No tienes acceso a esta imagen' }, 403)
+  const ext = MEDIA_IMAGE_EXT_BY_TYPE[thumbnail.type]
+  if (!ext) return c.json({ success: false, error: 'Tipo de miniatura no permitido.' }, 415)
+  if (thumbnail.size > IMAGE_MAX_BYTES) return c.json({ success: false, error: 'La miniatura supera el tamaño máximo permitido.' }, 413)
+
+  const key = lookup.asset.thumbnail_storage_key && isPublicUploadKey(lookup.asset.thumbnail_storage_key)
+    ? lookup.asset.thumbnail_storage_key
+    : `uploads/${userId}/${lookup.asset.id}-thumb.${ext}`
+  const url = `${c.env.R2_PUBLIC_BASE_URL}/${key}`
+  await c.env.MEDIA.put(key, await thumbnail.arrayBuffer(), {
+    httpMetadata: { contentType: thumbnail.type },
+  })
+  const now = new Date().toISOString()
+  await c.env.DB.prepare(
+    `UPDATE media_assets
+     SET thumbnail_storage_key = ?, thumbnail_url = ?, thumbnail_mime_type = ?, thumbnail_size_bytes = ?,
+         thumbnail_width = ?, thumbnail_height = ?, optimization_status = ?, optimization_version = ?, optimized_at = ?, updated_at = ?
+     WHERE id = ? AND tenant_id = ? AND publication_id = ?`,
+  ).bind(
+    key,
+    url,
+    thumbnail.type,
+    thumbnail.size,
+    optionalInt(formData.get('thumbnail_width')),
+    optionalInt(formData.get('thumbnail_height')),
+    optionalString(formData.get('optimization_status')) ?? 'thumbnail_only',
+    optionalString(formData.get('optimization_version')),
+    now,
+    now,
+    lookup.asset.id,
+    userId,
+    publicationId,
+  ).run()
+  const updated = await getOwnedMediaAsset(c, userId, lookup.asset.id, publicationId)
+  return c.json({ success: true, data: { asset: updated.status === 'owned' ? mediaAssetResponse(updated.asset) : mediaAssetResponse(lookup.asset) } })
 })
 
 upload.post('/media-assets', async (c) => {
@@ -628,10 +826,29 @@ upload.post('/media-assets', async (c) => {
   const formData = await c.req.formData()
   const publicationId = String(formData.get('publication_id') ?? '').trim()
   const files = formData.getAll('file').filter((item): item is File => item instanceof File)
+  const thumbnail = formData.get('thumbnail')
   const widthRaw = String(formData.get('width') ?? '').trim()
   const heightRaw = String(formData.get('height') ?? '').trim()
   const width = widthRaw ? Number.parseInt(widthRaw, 10) : null
   const height = heightRaw ? Number.parseInt(heightRaw, 10) : null
+  const metadata = {
+    original_name: optionalString(formData.get('original_name')),
+    original_mime_type: optionalString(formData.get('original_mime_type')),
+    original_size_bytes: optionalInt(formData.get('original_size_bytes')),
+    original_width: optionalInt(formData.get('original_width')),
+    original_height: optionalInt(formData.get('original_height')),
+    optimized_mime_type: optionalString(formData.get('optimized_mime_type')),
+    optimized_size_bytes: optionalInt(formData.get('optimized_size_bytes')),
+    optimized_width: optionalInt(formData.get('optimized_width')),
+    optimized_height: optionalInt(formData.get('optimized_height')),
+    thumbnail_size_bytes: optionalInt(formData.get('thumbnail_size_bytes')),
+    thumbnail_width: optionalInt(formData.get('thumbnail_width')),
+    thumbnail_height: optionalInt(formData.get('thumbnail_height')),
+    compression_saved_bytes: optionalInt(formData.get('compression_saved_bytes')),
+    compression_saved_percent: optionalNumber(formData.get('compression_saved_percent')),
+    optimization_status: optionalString(formData.get('optimization_status')),
+    optimization_version: optionalString(formData.get('optimization_version')),
+  }
 
   if (!publicationId) return c.json({ success: false, error: 'publication_id es requerido' }, 400)
   if (!files.length) return c.json({ success: false, error: 'file field is required' }, 400)
@@ -642,7 +859,7 @@ upload.post('/media-assets', async (c) => {
   try {
     const results = []
     for (const file of files) {
-      results.push(await storeMediaAsset(c, userId, publicationId, file, width, height))
+      results.push(await storeMediaAsset(c, userId, publicationId, file, width, height, thumbnail instanceof File ? thumbnail : null, metadata))
     }
     const first = results[0]
     const status = results.some((item) => !item.reused) ? 201 : 200

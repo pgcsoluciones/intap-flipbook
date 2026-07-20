@@ -1,0 +1,13 @@
+ALTER TABLE media_assets ADD COLUMN original_mime_type TEXT;
+ALTER TABLE media_assets ADD COLUMN original_size_bytes INTEGER;
+ALTER TABLE media_assets ADD COLUMN original_width INTEGER;
+ALTER TABLE media_assets ADD COLUMN original_height INTEGER;
+ALTER TABLE media_assets ADD COLUMN thumbnail_storage_key TEXT;
+ALTER TABLE media_assets ADD COLUMN thumbnail_url TEXT;
+ALTER TABLE media_assets ADD COLUMN thumbnail_mime_type TEXT;
+ALTER TABLE media_assets ADD COLUMN thumbnail_size_bytes INTEGER;
+ALTER TABLE media_assets ADD COLUMN thumbnail_width INTEGER;
+ALTER TABLE media_assets ADD COLUMN thumbnail_height INTEGER;
+ALTER TABLE media_assets ADD COLUMN optimization_status TEXT;
+ALTER TABLE media_assets ADD COLUMN optimization_version TEXT;
+ALTER TABLE media_assets ADD COLUMN optimized_at TEXT;

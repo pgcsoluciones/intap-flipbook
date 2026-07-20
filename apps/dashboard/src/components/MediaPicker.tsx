@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, toCanvasSafeAssetUrl, type MediaAsset } from '../lib/api'
+import { optimizeImageFile, type OptimizedImageResult } from '../lib/imageOptimization'
 
 const ACCEPT_IMAGE = 'image/jpeg,image/png,image/webp,image/svg+xml,image/gif'
 const ACCEPT_SVG = '.svg,image/svg+xml'
@@ -26,6 +27,7 @@ type MediaPickerProps = {
 type PickerItem = {
   key: string
   url: string
+  thumbUrl?: string
   name: string
   format: string
   size: string
@@ -34,6 +36,7 @@ type PickerItem = {
 
 type UploadResult = {
   file: File
+  optimized?: OptimizedImageResult
   asset: MediaAsset
   url: string
   reused: boolean
@@ -98,6 +101,21 @@ function formatMime(mime?: string) {
   return mime.replace('image/', '').toUpperCase()
 }
 
+export function mediaAssetToPickerItem(asset: MediaAsset): PickerItem | null {
+  const url = toCanvasSafeAssetUrl(asset.public_url)
+  if (!url) return null
+  const thumbUrl = asset.thumbnail_url ? toCanvasSafeAssetUrl(asset.thumbnail_url) : url
+  return {
+    key: `asset:${asset.id}`,
+    url,
+    thumbUrl,
+    name: asset.original_name,
+    format: formatMime(asset.mime_type),
+    size: formatBytes(asset.size_bytes),
+    asset: { ...asset, public_url: url, thumbnail_url: asset.thumbnail_url ? thumbUrl : asset.thumbnail_url },
+  }
+}
+
 function isSvgUrl(url: string) {
   return /\.svg($|[?#])/i.test(url) || url.startsWith('data:image/svg+xml')
 }
@@ -138,12 +156,13 @@ function Thumb({ item, selected }: { item: PickerItem; selected: boolean }) {
     <span style={{ ...styles.thumbWrap, ...(selected ? styles.thumbSelected : {}) }}>
       {!failed ? (
         <img
-          src={item.url}
+          src={item.thumbUrl || item.url}
           alt=""
           style={styles.thumb}
           loading="lazy"
+          decoding="async"
           onError={() => {
-            console.warn('[MediaPicker] thumbnail failed', item.url)
+            console.warn('[MediaPicker] thumbnail failed', item.thumbUrl || item.url)
             setFailed(true)
           }}
         />
@@ -181,6 +200,8 @@ export default function MediaPicker({
   const [files, setFiles] = useState<File[]>([])
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({})
   const [uploading, setUploading] = useState(false)
+  const [optimizing, setOptimizing] = useState(false)
+  const [optimizationStatus, setOptimizationStatus] = useState('')
   const [uploadResults, setUploadResults] = useState<UploadResult[]>([])
   const [selectedItems, setSelectedItems] = useState<PickerItem[]>([])
   const [selectedUploads, setSelectedUploads] = useState<string[]>([])
@@ -215,6 +236,8 @@ export default function MediaPicker({
       return {}
     })
     setUploadResults([])
+    setOptimizing(false)
+    setOptimizationStatus('')
     setSelectedUploads([])
     setSelectedItems([])
     setPdfFile(null)
@@ -294,16 +317,9 @@ export default function MediaPicker({
     const assetItems: PickerItem[] = []
     for (const asset of assets) {
       if (!isAllowedAsset(asset, mode)) continue
-      const url = toCanvasSafeAssetUrl(asset.public_url)
-      if (!url || assetItems.some((item) => item.url === url)) continue
-      assetItems.push({
-        key: `asset:${asset.id}`,
-        url,
-        name: asset.original_name,
-        format: formatMime(asset.mime_type),
-        size: formatBytes(asset.size_bytes),
-        asset: { ...asset, public_url: url },
-      })
+      const item = mediaAssetToPickerItem(asset)
+      if (!item || assetItems.some((existing) => existing.url === item.url)) continue
+      assetItems.push(item)
     }
     return getCombinedMediaPage({
       assets: assetItems,
@@ -472,21 +488,29 @@ export default function MediaPicker({
 
   const uploadFiles = async () => {
     if (!files.length || uploading || processingSelection) return
+    setOptimizing(true)
+    setOptimizationStatus(`Optimizando 1 de ${files.length}`)
     setUploading(true)
     setError('')
     const results: UploadResult[] = []
     try {
-      for (const file of files) {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index]
         try {
-          const size = await readImageSize(file)
+          setOptimizationStatus(`Optimizando ${index + 1} de ${files.length}`)
+          const optimized = await optimizeImageFile(file)
+          setOptimizing(false)
+          setOptimizationStatus(`Subiendo ${index + 1} de ${files.length}`)
           const res = await api.mediaAssets.upload({
             publication_id: publicationId,
-            file,
-            width: size.width,
-            height: size.height,
+            file: optimized.displayFile,
+            thumbnail: optimized.thumbnailFile,
+            width: optimized.metadata.optimized_width,
+            height: optimized.metadata.optimized_height,
+            optimization: optimized.metadata,
           })
           const asset = res.data.asset
-          results.push({ file, asset, url: toCanvasSafeAssetUrl(res.data.url), reused: res.data.reused })
+          results.push({ file, optimized, asset, url: toCanvasSafeAssetUrl(res.data.url), reused: res.data.reused })
           setAssets((prev) => {
             if (prev.some((item) => item.id === asset.id)) return prev
             return [asset, ...prev]
@@ -498,6 +522,8 @@ export default function MediaPicker({
       setUploadResults(results)
       setSelectedUploads(results.filter((item) => !item.error).map((item) => fileKey(item.file)))
     } finally {
+      setOptimizing(false)
+      setOptimizationStatus('')
       setUploading(false)
     }
   }
@@ -821,7 +847,12 @@ export default function MediaPicker({
                       )}
                       <span style={{ flex: 1 }}>
                         <b>{result.file.name}</b>
-                        <span style={styles.meta}> {ok ? (result.reused ? 'Reutilizada' : 'Nueva') : result.error}</span>
+                        <span style={styles.meta}>
+                          {' '}
+                          {ok
+                            ? `${result.reused ? 'Reutilizada' : 'Nueva'} · ${formatBytes(result.optimized?.metadata.original_size_bytes ?? result.file.size)} -> ${formatBytes(result.optimized?.metadata.optimized_size_bytes ?? result.asset?.size_bytes ?? result.file.size)}${result.optimized ? ` · Ahorro ${result.optimized.metadata.compression_saved_percent}%` : ''}`
+                            : result.error}
+                        </span>
                       </span>
                     </label>
                   )
@@ -830,10 +861,11 @@ export default function MediaPicker({
             )}
 
             {error && <div style={styles.error}>{error}</div>}
+            {optimizationStatus && <div style={styles.empty}>{optimizationStatus}</div>}
             {(busyMessage || selectionStatus) && <div style={styles.empty}>{busyMessage || selectionStatus}</div>}
             <div style={styles.actions}>
-              <button type="button" style={styles.secondary} disabled={uploading || processingSelection} onClick={onClose}>Cancelar</button>
-              <button type="button" style={styles.secondary} disabled={!selectedUploads.length || uploading || processingSelection} onClick={clearSelection}>Limpiar selección</button>
+              <button type="button" style={styles.secondary} disabled={uploading || optimizing || processingSelection} onClick={onClose}>Cancelar</button>
+              <button type="button" style={styles.secondary} disabled={!selectedUploads.length || uploading || optimizing || processingSelection} onClick={clearSelection}>Limpiar selección</button>
               {uploadResults.length ? (
                 <button
                   type="button"
@@ -848,8 +880,8 @@ export default function MediaPicker({
                     : `Usar subidas (${isMulti ? selectedUploads.length : uploadResults.filter((item) => !item.error).length})`}
                 </button>
               ) : (
-                <button type="button" style={styles.primary} disabled={!files.length || uploading || processingSelection} onClick={() => void uploadFiles()}>
-                  {uploading ? 'Subiendo...' : mode === 'pages' ? `Subir y crear páginas (${files.length})` : `Subir ${files.length || ''}`.trim()}
+                <button type="button" style={styles.primary} disabled={!files.length || uploading || optimizing || processingSelection} onClick={() => void uploadFiles()}>
+                  {uploading || optimizing ? (optimizationStatus || 'Subiendo...') : mode === 'pages' ? `Subir y crear páginas (${files.length})` : `Subir ${files.length || ''}`.trim()}
                 </button>
               )}
             </div>
