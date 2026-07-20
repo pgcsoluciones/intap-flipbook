@@ -178,6 +178,17 @@ class FakeStatement {
         && asset.publication_id === publicationId
       ).map((asset) => ({ public_url: asset.public_url })) }
     }
+    if (this.sql.startsWith('SELECT * FROM media_assets WHERE') && this.sql.includes('public_url IN')) {
+      const [tenantId, publicationId, ...urls] = this.params
+      const allowed = new Set(urls)
+      return { results: this.db.mediaAssets.filter((asset) =>
+        asset.tenant_id === tenantId
+        && asset.publication_id === publicationId
+        && allowed.has(asset.public_url)
+        && !asset.is_hidden
+        && !asset.deleted_at
+      ) }
+    }
     if (this.sql.includes('FROM media_assets')) {
       const [tenantId, publicationId, storageBucket] = this.params
       let index = 3
@@ -779,6 +790,37 @@ test('listing pending thumbnails is scoped to tenant and publication', async () 
   assert.equal(result.status, 200)
   assert.deepEqual(result.body.data.map((asset) => asset.id), ['pending-1'])
   assert.equal(result.body.page.total, 1)
+})
+
+test('resolve thumbnails returns visible current publication assets without R2 reads', async () => {
+  const db = new FakeD1({
+    mediaAssets: [
+      { id: 'ready-1', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/ready-1.png', public_url: 'https://media.example.test/uploads/user-1/ready-1.png', original_name: 'ready-1.png', mime_type: 'image/png', size_bytes: 1, sha256: '1', width: null, height: null, thumbnail_url: 'https://media.example.test/uploads/user-1/ready-1-thumb.webp', created_at: '2026-01-02T00:00:00.000Z', updated_at: '2026-01-02T00:00:00.000Z' },
+      { id: 'pending-1', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/pending-1.png', public_url: 'https://media.example.test/uploads/user-1/pending-1.png', original_name: 'pending-1.png', mime_type: 'image/png', size_bytes: 1, sha256: '2', width: null, height: null, thumbnail_url: null, created_at: '2026-01-03T00:00:00.000Z', updated_at: '2026-01-03T00:00:00.000Z' },
+      { id: 'foreign-pub', tenant_id: 'user-1', publication_id: 'pub-2', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/foreign-pub.png', public_url: 'https://media.example.test/uploads/user-1/foreign-pub.png', original_name: 'foreign-pub.png', mime_type: 'image/png', size_bytes: 1, sha256: '3', width: null, height: null, thumbnail_url: 'https://media.example.test/uploads/user-1/foreign-pub-thumb.webp', created_at: '2026-01-04T00:00:00.000Z', updated_at: '2026-01-04T00:00:00.000Z' },
+      { id: 'hidden', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/hidden.png', public_url: 'https://media.example.test/uploads/user-1/hidden.png', original_name: 'hidden.png', mime_type: 'image/png', size_bytes: 1, sha256: '4', width: null, height: null, thumbnail_url: 'https://media.example.test/uploads/user-1/hidden-thumb.webp', is_hidden: 1, created_at: '2026-01-05T00:00:00.000Z', updated_at: '2026-01-05T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const result = await requestUpload(db, r2, '/media-assets/resolve-thumbnails', {
+    method: 'POST',
+    body: JSON.stringify({
+      publication_id: 'pub-1',
+      public_urls: [
+        'https://media.example.test/uploads/user-1/ready-1.png',
+        'https://media.example.test/uploads/user-1/pending-1.png',
+        'https://media.example.test/uploads/user-1/foreign-pub.png',
+        'https://media.example.test/uploads/user-1/hidden.png',
+      ],
+    }),
+  })
+
+  assert.equal(result.status, 200)
+  assert.deepEqual(result.body.data.thumbnails, {
+    'https://media.example.test/uploads/user-1/ready-1.png': 'https://media.example.test/uploads/user-1/ready-1-thumb.webp',
+  })
+  assert.deepEqual(result.body.data.assets.map((asset) => asset.id).sort(), ['pending-1', 'ready-1'])
+  assert.equal(r2.puts.length, 0)
 })
 
 test('listing includes known urls so hidden legacy entries do not reappear', async () => {

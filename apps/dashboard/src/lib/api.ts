@@ -909,6 +909,23 @@ export const api = {
         `/api/upload/media-assets/${encodeURIComponent(assetId)}/usage?${qs}`,
       )
     },
+    resolveThumbnails: (input: { publication_id: string; public_urls: string[] }) =>
+      request<{ success: true; data: { thumbnails: Record<string, string>; assets: MediaAsset[] } }>('/api/upload/media-assets/resolve-thumbnails', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }).then((data) => {
+        const thumbnails: Record<string, string> = {}
+        for (const [url, thumbnailUrl] of Object.entries(data.data.thumbnails ?? {})) {
+          thumbnails[toCanvasSafeAssetUrl(url)] = toCanvasSafeAssetUrl(thumbnailUrl)
+        }
+        data.data.thumbnails = thumbnails
+        data.data.assets = (data.data.assets ?? []).map((asset) => ({
+          ...asset,
+          public_url: toCanvasSafeAssetUrl(asset.public_url),
+          thumbnail_url: asset.thumbnail_url ? toCanvasSafeAssetUrl(asset.thumbnail_url) : asset.thumbnail_url,
+        }))
+        return data
+      }),
     hide: (assetId: string, isHidden = true) =>
       request<{ success: true; data: MediaAsset }>(`/api/upload/media-assets/${encodeURIComponent(assetId)}`, {
         method: 'PATCH',

@@ -711,6 +711,39 @@ upload.post('/media-assets/adopt', async (c) => {
   }
 })
 
+upload.post('/media-assets/resolve-thumbnails', async (c) => {
+  const userId = c.get('user').sub
+  const body = await c.req.json<{ publication_id?: string; public_urls?: string[] }>().catch(() => ({}))
+  const publicationId = String(body.publication_id ?? '').trim()
+  const urls = Array.from(new Set((body.public_urls ?? [])
+    .map((url) => normalizeStoredAssetUrl(String(url ?? '')))
+    .filter(Boolean)))
+    .slice(0, 200)
+
+  if (!publicationId) return c.json({ success: false, error: 'publication_id es requerido' }, 400)
+  const publication = await getOwnedPublication(c, publicationId, userId)
+  if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+  if (!urls.length) return c.json({ success: true, data: { thumbnails: {}, assets: [] } })
+
+  const placeholders = urls.map(() => '?').join(',')
+  const result = await c.env.DB.prepare(
+    `SELECT *
+     FROM media_assets
+     WHERE tenant_id = ?
+       AND publication_id = ?
+       AND public_url IN (${placeholders})
+       AND (is_hidden IS NULL OR is_hidden = 0)
+       AND deleted_at IS NULL`,
+  ).bind(userId, publicationId, ...urls).all<MediaAssetRow>()
+
+  const assets = (result.results ?? []).map(mediaAssetResponse)
+  const thumbnails: Record<string, string> = {}
+  for (const asset of assets) {
+    if (asset.public_url && asset.thumbnail_url) thumbnails[asset.public_url] = asset.thumbnail_url
+  }
+  return c.json({ success: true, data: { thumbnails, assets } })
+})
+
 upload.get('/media-assets/:assetId/usage', async (c) => {
   const userId = c.get('user').sub
   const reqId = c.req.header('CF-Ray') ?? crypto.randomUUID()

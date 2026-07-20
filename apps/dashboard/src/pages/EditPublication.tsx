@@ -5,6 +5,15 @@ import { fabric } from 'fabric'
 import { ApiRequestError, api, toCanvasSafeAssetUrl, type MediaAsset } from '../lib/api'
 import { PageBatchConfirmationError, pdfPageAssetName, processPageBatch, uploadPdfRenderedPagesAsAssets } from '../lib/pageBatch'
 import { optimizeImageFile, type OptimizedImageResult } from '../lib/imageOptimization'
+import {
+  buildThumbnailLookup,
+  firstVisibleIndexes,
+  mergeThumbnailLookup,
+  pageThumbnailCacheKey,
+  resolvePageImageThumbnailUrl,
+  shouldLoadPageThumbnail,
+  upsertPageById,
+} from '../lib/editorPerformance'
 import FileField from '../components/FileField'
 import MediaPicker from '../components/MediaPicker'
 import WidgetPreview from '../components/WidgetPreview'
@@ -399,6 +408,7 @@ type ThumbJob = {
   pageId: string
   token: number
   mode: 'live' | 'persisted'
+  cacheKey: string
   snapshot?: {
     image_url: string
     canvas_json: any
@@ -410,6 +420,11 @@ type ThumbJob = {
 type ThumbnailPumpHandle =
   | { kind: 'idle'; handle: number }
   | { kind: 'timeout'; handle: number }
+
+type PageThumbnailCacheEntry = {
+  key: string
+  url: string
+}
 
 // ─── Iconos SVG monocromáticos (estilo línea, 20px, stroke uniforme) ──────────
 // "stroke" = trazo. Todos comparten grosor 1.6 y currentColor para mantener
@@ -1040,8 +1055,9 @@ export default function EditPublication() {
   const [oldImagesPendingCount, setOldImagesPendingCount] = useState(0)
   const [legacyOptimization, setLegacyOptimization] = useState({ running: false, cancelled: false, done: 0, total: 0, failed: 0, message: '' })
   const [selectVersion, setSelectVersion] = useState(0) // fuerza refresco del panel de props
-  // Miniaturas reales por página: conserva solo el último dataURL válido por page.id.
-  const [thumbnailByPageId, setThumbnailByPageId] = useState<Record<string, string>>({})
+  // Miniaturas reales por página: conserva solo el último dataURL válido para page.id + versión.
+  const [thumbnailByPageId, setThumbnailByPageId] = useState<Record<string, PageThumbnailCacheEntry>>({})
+  const [thumbnailUrlByPublicUrl, setThumbnailUrlByPublicUrl] = useState<Record<string, string>>({})
   // Debounce por página para agrupar cambios reales antes de pedir un snapshot.
   const thumbnailTimersRef = useRef<Record<string, any>>({})
   // Tokens por página: invalidan resultados viejos cuando entra un trabajo nuevo.
@@ -1079,9 +1095,11 @@ export default function EditPublication() {
         api.mediaAssets.list({ publication_id: id, limit: 12, page: 1 }),
         api.mediaAssets.list({ publication_id: id, limit: 1, page: 1, needs_thumbnail: true }),
       ])
-      setMediaBankAssets(assetsRes.data ?? [])
-      setMediaBankTotal(assetsRes.page?.total ?? (assetsRes.data ?? []).length)
+      const assets = assetsRes.data ?? []
+      setMediaBankAssets(assets)
+      setMediaBankTotal(assetsRes.page?.total ?? assets.length)
       setOldImagesPendingCount(pendingRes.page?.total ?? 0)
+      setThumbnailUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, buildThumbnailLookup(assets, toCanvasSafeAssetUrl)))
     } catch (err) {
       console.warn('[media-bank] failed to load assets', err)
     }
@@ -1331,13 +1349,14 @@ export default function EditPublication() {
       const dataUrl = snapshot ? await renderPageThumbnailSnapshot(snapshot) : null
       if (!thumbnailMountedRef.current) return
       if ((thumbnailTokensRef.current[job.pageId] ?? 0) !== job.token) return
-      if (!pagesRef.current.some((page) => page.id === job.pageId)) return
+      const currentPage = pagesRef.current.find((page) => page.id === job.pageId)
+      if (!currentPage || pageThumbnailCacheKey(currentPage) !== job.cacheKey) return
       if (!dataUrl) return
 
       setThumbnailByPageId((prev) => {
         if (!thumbnailMountedRef.current) return prev
-        if (prev[job.pageId] === dataUrl) return prev
-        return { ...prev, [job.pageId]: dataUrl }
+        if (prev[job.pageId]?.key === job.cacheKey && prev[job.pageId]?.url === dataUrl) return prev
+        return { ...prev, [job.pageId]: { key: job.cacheKey, url: dataUrl } }
       })
     } finally {
       thumbnailProcessingRef.current = false
@@ -1357,6 +1376,8 @@ export default function EditPublication() {
     priority?: boolean
   }) => {
     if (!pageId) return
+    const page = pagesRef.current.find((item) => item.id === pageId)
+    if (!page) return
     const immediate = !!opts?.immediate
     const priority = opts?.priority ?? pageId === activePageRef.current
 
@@ -1365,6 +1386,7 @@ export default function EditPublication() {
       pageId,
       token,
       mode,
+      cacheKey: pageThumbnailCacheKey(page),
       priority,
     }
 
@@ -1387,6 +1409,32 @@ export default function EditPublication() {
     if (!pageId) return
     requestThumbnailUpdate(pageId, 'live', { immediate, priority: true })
   }, [requestThumbnailUpdate])
+
+  const rememberMediaAssets = useCallback((assets: MediaAsset[]) => {
+    const validAssets = assets.filter((asset) => asset?.id)
+    if (!validAssets.length) return
+    setThumbnailUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, buildThumbnailLookup(validAssets, toCanvasSafeAssetUrl)))
+    setMediaBankAssets((prev) => {
+      const seen = new Set(prev.map((asset) => asset.id))
+      const nextAssets = validAssets.filter((asset) => !seen.has(asset.id))
+      if (!nextAssets.length) return prev
+      setMediaBankTotal((total) => Math.max(total, prev.length) + nextAssets.length)
+      return [...nextAssets, ...prev]
+    })
+  }, [])
+
+  const resolvePublicationThumbnails = useCallback(async (pageList: any[]) => {
+    if (!id || !pageList.length) return
+    const urls = collectBankFromPages(pageList).map((url) => toCanvasSafeAssetUrl(url)).filter(Boolean)
+    if (!urls.length) return
+    try {
+      const res = await api.mediaAssets.resolveThumbnails({ publication_id: id, public_urls: urls })
+      setThumbnailUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, res.data.thumbnails ?? {}))
+      rememberMediaAssets(res.data.assets ?? [])
+    } catch (error) {
+      console.warn('[page-thumbnails] metadata lookup failed', error)
+    }
+  }, [id, rememberMediaAssets])
 
   useEffect(() => {
     if (!id) return
@@ -1411,15 +1459,11 @@ export default function EditPublication() {
       const merged = Array.from(new Set([...collectBankFromPages(ps), ...stored]))
       setImageBank(merged)
       void refreshMediaBank()
+      void resolvePublicationThumbnails(ps)
       bootstrapTimer = setTimeout(() => {
         if (cancelled || !thumbnailMountedRef.current) return
-        const currentPages = pagesRef.current
         const firstPageId = (requestedPage ?? ps[0])?.id
-        for (const page of currentPages) {
-          if (!page?.id) continue
-          if (!pagesRef.current.some((current) => current.id === page.id)) continue
-          requestThumbnailUpdate(page.id, 'persisted', { immediate: true, priority: page.id === firstPageId })
-        }
+        if (firstPageId) requestThumbnailUpdate(firstPageId, 'persisted', { immediate: true, priority: true })
       }, 0)
     })
     api.templates.list().then((r) => setTemplates(r.data ?? [])).catch(() => {})
@@ -1427,7 +1471,7 @@ export default function EditPublication() {
       cancelled = true
       if (bootstrapTimer) clearTimeout(bootstrapTimer)
     }
-  }, [id, refreshMediaBank])
+  }, [id, refreshMediaBank, resolvePublicationThumbnails])
 
   // Agrega una URL al banco de imágenes del proyecto (sin duplicar) y lo persiste
   const addToBank = useCallback((url: string) => {
@@ -1441,18 +1485,6 @@ export default function EditPublication() {
     })
   }, [id])
 
-  const rememberMediaAssets = useCallback((assets: MediaAsset[]) => {
-    const validAssets = assets.filter((asset) => asset?.id)
-    if (!validAssets.length) return
-    setMediaBankAssets((prev) => {
-      const seen = new Set(prev.map((asset) => asset.id))
-      const nextAssets = validAssets.filter((asset) => !seen.has(asset.id))
-      if (!nextAssets.length) return prev
-      setMediaBankTotal((total) => Math.max(total, prev.length) + nextAssets.length)
-      return [...nextAssets, ...prev]
-    })
-  }, [])
-
   const cancelLegacyOptimization = useCallback(() => {
     legacyOptimizationCancelRef.current = true
     setLegacyOptimization((prev) => ({ ...prev, cancelled: true, running: false, message: 'Cancelado. Podés continuar luego.' }))
@@ -1460,10 +1492,32 @@ export default function EditPublication() {
 
   const optimizeLegacyImages = useCallback(async () => {
     if (!id || legacyOptimization.running) return
+    legacyOptimizationCancelRef.current = false
+    const knownUrls = new Set(mediaBankAssets.map((asset) => toCanvasSafeAssetUrl(asset.public_url)).filter(Boolean))
+    const legacyCandidates = Array.from(new Set([
+      ...collectBankFromPages(pagesRef.current),
+      ...imageBank,
+    ].map((url) => toCanvasSafeAssetUrl(url)).filter(Boolean)))
+      .filter((url) => !knownUrls.has(url))
+      .slice(0, 100)
+
+    for (const url of legacyCandidates) {
+      if (legacyOptimizationCancelRef.current) break
+      try {
+        const res = await api.mediaAssets.adopt({ publication_id: id, public_url: url })
+        rememberMediaAssets([res.data.asset])
+      } catch (error) {
+        console.warn('[media-bank] legacy adopt skipped', url, error)
+      }
+    }
+
     const firstBatch = await api.mediaAssets.list({ publication_id: id, limit: 12, page: 1, needs_thumbnail: true })
     const total = firstBatch.page?.total ?? (firstBatch.data ?? []).length
-    if (!total) return
-    legacyOptimizationCancelRef.current = false
+    if (!total) {
+      setOldImagesPendingCount(0)
+      setLegacyOptimization({ running: false, cancelled: false, done: 0, total: 0, failed: 0, message: 'No quedan imágenes pendientes.' })
+      return
+    }
     let done = 0
     let failed = 0
     const failedThisRun = new Set<string>()
@@ -1487,6 +1541,7 @@ export default function EditPublication() {
           },
         })
         const updatedAsset = thumbnailRes.data.asset
+        setThumbnailUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, buildThumbnailLookup([updatedAsset], toCanvasSafeAssetUrl)))
         setMediaBankAssets((prev) => prev.map((item) =>
           item.id === asset.id
             ? { ...item, ...updatedAsset }
@@ -1539,7 +1594,7 @@ export default function EditPublication() {
         ? 'Cancelado. Podés continuar luego.'
         : `Optimización completada: ${prev.done} de ${prev.total}${prev.failed ? ` · ${prev.failed} fallidas por CORS/formato` : ''}`,
     }))
-  }, [id, legacyOptimization.running, refreshMediaBank])
+  }, [id, legacyOptimization.running, refreshMediaBank, imageBank, mediaBankAssets, rememberMediaAssets])
 
   const imageBankItems = useMemo(() => {
     const seen = new Set<string>()
@@ -1564,12 +1619,13 @@ export default function EditPublication() {
       items.push({
         key: `legacy:${url}`,
         url,
+        thumbUrl: thumbnailUrlByPublicUrl[url] || undefined,
         name,
         meta: url.toLowerCase().includes('.svg') ? 'SVG · Anterior' : 'Anterior',
       })
     }
     return items
-  }, [imageBank, mediaBankAssets])
+  }, [imageBank, mediaBankAssets, thumbnailUrlByPublicUrl])
 
   // ── Autoguardado: guarda el canvas actual en segundo plano ──
   // Se llama tras cada cambio (debounce) y al cambiar de página.
@@ -1599,7 +1655,7 @@ export default function EditPublication() {
       await api.pages.saveCanvas(pageId, json)
       if (saveSeqRef.current[pageId] !== seq) return
       setPages((prev) => {
-        const next = prev.map((p) => (p.id === pageId ? { ...p, canvas_json: json } : p))
+        const next = upsertPageById(prev, pageId, { canvas_json: json })
         pagesRef.current = next
         return next
       })
@@ -1632,7 +1688,7 @@ export default function EditPublication() {
                 if (deletingPageIdsRef.current.has(page.id) || deletedPageIdsRef.current.has(page.id)) continue
                 await api.pages.saveCanvas(page.id, newJson)
                 setPages((prev) => {
-                  const next = prev.map((p) => (p.id === page.id ? { ...p, canvas_json: newJson } : p))
+                  const next = upsertPageById(prev, page.id, { canvas_json: newJson })
                   pagesRef.current = next
                   return next
                 })
@@ -2615,11 +2671,9 @@ export default function EditPublication() {
       pagesRef.current = ps
       setPages(ps)
       if (ps.length > 0) setActivePage(ps[ps.length - (r.data.pages_added || 1)] ?? ps[0])
-      const firstPageId = ps[0]?.id
-      for (const page of ps) {
-        if (!page?.id) continue
-        requestThumbnailUpdate(page.id, 'persisted', { immediate: true, priority: page.id === firstPageId })
-      }
+      void resolvePublicationThumbnails(ps)
+      const activeTemplatePageId = (ps[ps.length - (r.data.pages_added || 1)] ?? ps[0])?.id
+      if (activeTemplatePageId) requestThumbnailUpdate(activeTemplatePageId, 'persisted', { immediate: true, priority: true })
     } catch (e: any) {
       alert(e.message ?? 'No se pudo aplicar la plantilla')
     }
@@ -2893,7 +2947,11 @@ export default function EditPublication() {
     const json = JSON.stringify(coverRef.current)
     try {
       await api.pages.update(pid, { cover_json: json })
-      setPages((prev) => prev.map((p) => (p.id === pid ? { ...p, cover_json: json } : p)))
+      setPages((prev) => {
+        const next = upsertPageById(prev, pid, { cover_json: json })
+        pagesRef.current = next
+        return next
+      })
     } catch { /* si falla, el encuadre queda solo en pantalla hasta el próximo guardado */ }
   }
 
@@ -3178,6 +3236,7 @@ export default function EditPublication() {
               tool={activeTool}
               pages={pages}
               thumbnailByPageId={thumbnailByPageId}
+              thumbnailUrlByPublicUrl={thumbnailUrlByPublicUrl}
               activePage={activePage}
               requestThumbnailUpdate={requestThumbnailUpdate}
               setActivePage={setActivePage}
@@ -3601,81 +3660,243 @@ function BankImageButton({ item, onClick }: { item: { url: string; thumbUrl?: st
   )
 }
 
+type PageThumbCardProps = {
+  page: any
+  index: number
+  active: boolean
+  shouldLoad: boolean
+  backgroundUrl: string
+  overlayUrl?: string
+  onVisible: (pageId: string, index: number) => void
+  onSelect: (index: number) => void
+  onDragStart: (index: number) => void
+  onDrop: (index: number) => void
+  onDuplicate: (index: number) => void
+  onRefresh: (index: number) => void
+  onDelete: (pageId: string) => void
+}
+
+const PageThumbCard = React.memo(function PageThumbCard({
+  page,
+  index,
+  active,
+  shouldLoad,
+  backgroundUrl,
+  overlayUrl,
+  onVisible,
+  onSelect,
+  onDragStart,
+  onDrop,
+  onDuplicate,
+  onRefresh,
+  onDelete,
+}: PageThumbCardProps) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [bgFailed, setBgFailed] = useState(false)
+  const [overlayFailed, setOverlayFailed] = useState(false)
+  const [bgLoaded, setBgLoaded] = useState(false)
+
+  useEffect(() => {
+    setBgFailed(false)
+    setOverlayFailed(false)
+    setBgLoaded(false)
+  }, [backgroundUrl, overlayUrl])
+
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+    if (typeof IntersectionObserver !== 'function') {
+      onVisible(page.id, index)
+      return
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) onVisible(page.id, index)
+    }, { rootMargin: '320px 0px' })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [index, onVisible, page.id])
+
+  const canShowBackground = shouldLoad && !!backgroundUrl && !bgFailed
+  const canShowOverlay = shouldLoad && !!overlayUrl && !overlayFailed
+
+  return (
+    <div
+      ref={ref}
+      draggable
+      onDragStart={() => onDragStart(index)}
+      onDragOver={(e: React.DragEvent) => e.preventDefault()}
+      onDrop={() => onDrop(index)}
+      onClick={() => onSelect(index)}
+      style={{ ...cp.thumbItem, borderColor: active ? '#4F46E5' : 'transparent' }}
+    >
+      <div style={cp.thumbSkeleton}>
+        {!bgLoaded && <span style={cp.thumbSkeletonText}>Cargando</span>}
+      </div>
+      {canShowBackground && (
+        <img
+          src={backgroundUrl}
+          alt={`p${index + 1}`}
+          style={cp.thumbImg}
+          loading="lazy"
+          decoding="async"
+          onLoad={() => setBgLoaded(true)}
+          onError={() => {
+            setBgFailed(true)
+            setBgLoaded(true)
+          }}
+        />
+      )}
+      {canShowOverlay && (
+        <img
+          src={overlayUrl}
+          alt=""
+          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'fill', display: 'block', pointerEvents: 'none' }}
+          loading="lazy"
+          decoding="async"
+          onError={() => setOverlayFailed(true)}
+        />
+      )}
+      <div style={cp.thumbNum}>{index + 1}</div>
+      <button
+        title="Duplicar página (copia con todo el contenido)"
+        style={{ ...cp.thumbDel, right: 22, background: 'rgba(79,70,229,0.82)', color: '#fff', fontSize: 11 }}
+        onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDuplicate(index) }}
+      >⧉</button>
+      <button
+        title="Actualizar miniatura"
+        aria-label="Actualizar miniatura"
+        style={{ ...cp.thumbDel, right: 44, background: 'rgba(17,24,39,0.85)', color: '#fff', fontSize: 11 }}
+        onClick={(e: React.MouseEvent) => { e.stopPropagation(); onRefresh(index) }}
+      >
+        <Icon name="refresh" size={11} />
+      </button>
+      <button style={cp.thumbDel} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDelete(page.id) }}>x</button>
+    </div>
+  )
+}, (prev, next) => (
+  prev.page === next.page &&
+  prev.index === next.index &&
+  prev.active === next.active &&
+  prev.shouldLoad === next.shouldLoad &&
+  prev.backgroundUrl === next.backgroundUrl &&
+  prev.overlayUrl === next.overlayUrl
+))
+
+function PagesPanel(p: any) {
+  const propsRef = useRef(p)
+  const initialVisible = useMemo(() => firstVisibleIndexes(p.pages.length), [p.pages.length])
+  const [visibleIndexes, setVisibleIndexes] = useState<Set<number>>(initialVisible)
+
+  useEffect(() => {
+    propsRef.current = p
+  }, [p])
+
+  useEffect(() => {
+    setVisibleIndexes((prev) => {
+      const next = new Set(prev)
+      let changed = false
+      for (const index of firstVisibleIndexes(p.pages.length)) {
+        if (!next.has(index)) {
+          next.add(index)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [p.pages.length])
+
+  const markVisible = useCallback((pageId: string, index: number) => {
+    setVisibleIndexes((prev) => {
+      if (prev.has(index)) return prev
+      const next = new Set(prev)
+      next.add(index)
+      return next
+    })
+    const props = propsRef.current
+    const page = props.pages[index]
+    const cached = props.thumbnailByPageId?.[pageId]
+    if (page?.id === pageId && !cached) {
+      const isActive = props.activePage?.id === pageId
+      props.requestThumbnailUpdate?.(pageId, isActive ? 'live' : 'persisted', { immediate: false, priority: isActive })
+    }
+  }, [])
+
+  const selectPage = useCallback((index: number) => {
+    const page = propsRef.current.pages[index]
+    if (page) propsRef.current.setActivePage(page)
+  }, [])
+  const dragStart = useCallback((index: number) => propsRef.current.onDragStart(index), [])
+  const dropPage = useCallback((index: number) => propsRef.current.onDropReorder(index), [])
+  const duplicate = useCallback((index: number) => {
+    const page = propsRef.current.pages[index]
+    if (page) propsRef.current.duplicatePage(page)
+  }, [])
+  const refresh = useCallback((index: number) => {
+    const props = propsRef.current
+    const page = props.pages[index]
+    if (!page) return
+    const isActive = props.activePage?.id === page.id
+    props.requestThumbnailUpdate?.(page.id, isActive ? 'live' : 'persisted', { immediate: true, priority: isActive })
+  }, [])
+  const deletePage = useCallback((pageId: string) => propsRef.current.handleDeletePage(pageId), [])
+
+  return (
+    <>
+      <PanelTitle title="Páginas" count={p.pages.length} />
+      <div
+        style={{ ...cp.thumbList, ...(p.fileDrag ? { outline: '2px dashed #818cf8' } : {}) }}
+        onDragOver={p.onFileDragOver} onDragLeave={p.onFileDragLeave} onDrop={p.onFileDrop}
+      >
+        {p.pages.map((page: any, i: number) => {
+          const cacheKey = pageThumbnailCacheKey(page)
+          const cached = p.thumbnailByPageId[page.id]
+          const overlayUrl = cached?.key === cacheKey ? cached.url : undefined
+          const shouldLoad = shouldLoadPageThumbnail(i, visibleIndexes)
+          return (
+            <PageThumbCard
+              key={page.id}
+              page={page}
+              index={i}
+              active={p.activePage?.id === page.id}
+              shouldLoad={shouldLoad}
+              backgroundUrl={resolvePageImageThumbnailUrl(page, p.thumbnailUrlByPublicUrl ?? {}, toCanvasSafeAssetUrl) || BLANK_PAGE_URL}
+              overlayUrl={overlayUrl}
+              onVisible={markVisible}
+              onSelect={selectPage}
+              onDragStart={dragStart}
+              onDrop={dropPage}
+              onDuplicate={duplicate}
+              onRefresh={refresh}
+              onDelete={deletePage}
+            />
+          )
+        })}
+      </div>
+      <button style={cp.primaryBtn} onClick={p.openPagePicker} disabled={p.uploading}>
+        {p.uploading ? 'Subiendo...' : '+ Agregar páginas (imagen)'}
+      </button>
+      <button style={cp.secondaryBtn} onClick={p.addBlankPage} disabled={p.uploading}>
+        + Página en blanco
+      </button>
+      <button style={cp.secondaryBtn} onClick={p.openPagePicker} disabled={p.uploading}>
+        📄 Importar PDF como páginas
+      </button>
+      <button
+        style={{ ...cp.secondaryBtn, background: '#fef3c7', color: '#92400e', borderColor: '#fde68a', marginTop: 4 }}
+        onClick={p.onShowAllHidden}
+        title="Muestra todos los elementos marcados como ocultos en este lienzo"
+      >
+        👁 Mostrar todos los ocultos
+      </button>
+    </>
+  )
+}
+
 // ─── Panel contextual según herramienta ──────────────────────────────────────
 function ContextPanel(p: any) {
   switch (p.tool) {
     case 'pages':
-      return (
-        <>
-          <PanelTitle title="Páginas" count={p.pages.length} />
-          <div
-            style={{ ...cp.thumbList, ...(p.fileDrag ? { outline: '2px dashed #818cf8' } : {}) }}
-            onDragOver={p.onFileDragOver} onDragLeave={p.onFileDragLeave} onDrop={p.onFileDrop}
-          >
-            {p.pages.map((page: any, i: number) => (
-              <div
-                key={page.id}
-                draggable
-                onDragStart={() => p.onDragStart(i)}
-                onDragOver={(e: React.DragEvent) => e.preventDefault()}
-                onDrop={() => p.onDropReorder(i)}
-                onClick={() => p.setActivePage(page)}
-                style={{ ...cp.thumbItem, borderColor: p.activePage?.id === page.id ? '#4F46E5' : 'transparent' }}
-              >
-                {/* La <img> de fondo define la altura del thumbItem (aspectRatio en <img> es fiable).
-                    El overlay PNG de elementos se posiciona encima como absolute. */}
-                <img
-                  src={toCanvasSafeAssetUrl(page.image_url || BLANK_PAGE_URL)}
-                  alt={`p${i + 1}`}
-                  style={cp.thumbImg}
-                />
-                {p.thumbnailByPageId[page.id] && (
-                  <img
-                    src={p.thumbnailByPageId[page.id]}
-                    alt=""
-                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'fill', display: 'block', pointerEvents: 'none' }}
-                  />
-                )}
-                <div style={cp.thumbNum}>{i + 1}</div>
-                <button
-                  title="Duplicar página (copia con todo el contenido)"
-                  style={{ ...cp.thumbDel, right: 22, background: 'rgba(79,70,229,0.82)', color: '#fff', fontSize: 11 }}
-                  onClick={(e: React.MouseEvent) => { e.stopPropagation(); p.duplicatePage(page) }}
-                >⧉</button>
-                <button
-                  title="Actualizar miniatura"
-                  aria-label="Actualizar miniatura"
-                  style={{ ...cp.thumbDel, right: 44, background: 'rgba(17,24,39,0.85)', color: '#fff', fontSize: 11 }}
-                  onClick={(e: React.MouseEvent) => {
-                    e.stopPropagation()
-                    const isActive = p.activePage?.id === page.id
-                    p.requestThumbnailUpdate?.(page.id, isActive ? 'live' : 'persisted', { immediate: true, priority: isActive })
-                  }}
-                >
-                  <Icon name="refresh" size={11} />
-                </button>
-                <button style={cp.thumbDel} onClick={(e: React.MouseEvent) => { e.stopPropagation(); p.handleDeletePage(page.id) }}>✕</button>
-              </div>
-            ))}
-          </div>
-          <button style={cp.primaryBtn} onClick={p.openPagePicker} disabled={p.uploading}>
-            {p.uploading ? 'Subiendo...' : '+ Agregar páginas (imagen)'}
-          </button>
-          <button style={cp.secondaryBtn} onClick={p.addBlankPage} disabled={p.uploading}>
-            + Página en blanco
-          </button>
-          <button style={cp.secondaryBtn} onClick={p.openPagePicker} disabled={p.uploading}>
-            📄 Importar PDF como páginas
-          </button>
-          <button
-            style={{ ...cp.secondaryBtn, background: '#fef3c7', color: '#92400e', borderColor: '#fde68a', marginTop: 4 }}
-            onClick={p.onShowAllHidden}
-            title="Muestra todos los elementos marcados como ocultos en este lienzo"
-          >
-            👁 Mostrar todos los ocultos
-          </button>
-        </>
-      )
+      return <PagesPanel {...p} />
 
     case 'templates':
       return (
@@ -6635,8 +6856,10 @@ const cp: Record<string, React.CSSProperties> = {
   title:      { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, color: '#111827', marginBottom: 12 },
   titleCount: { fontSize: 11, color: '#6b7280', background: '#f3f4f6', borderRadius: 10, padding: '1px 7px' },
   thumbList:  { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12, borderRadius: 8 },
-  thumbItem:  { position: 'relative', cursor: 'pointer', borderRadius: 6, overflow: 'hidden', border: '2px solid transparent', transition: 'border-color .15s' },
-  thumbImg:   { width: '100%', aspectRatio: '0.707', objectFit: 'cover' as const, display: 'block' },
+  thumbItem:  { position: 'relative', cursor: 'pointer', borderRadius: 6, overflow: 'hidden', border: '2px solid transparent', transition: 'border-color .15s', background: '#f8fafc', aspectRatio: '0.707' },
+  thumbImg:   { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block' },
+  thumbSkeleton: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%)', color: '#94a3b8', fontSize: 10, fontWeight: 700 },
+  thumbSkeletonText: { background: 'rgba(255,255,255,0.78)', border: '1px solid #e5e7eb', borderRadius: 4, padding: '3px 7px' },
   thumbNum:   { position: 'absolute', bottom: 4, left: 6, background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 3 },
   thumbDel:   { position: 'absolute', top: 4, right: 4, background: 'rgba(239,68,68,0.9)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 11, width: 20, height: 20, cursor: 'pointer', padding: 0 },
   primaryBtn: { width: '100%', background: '#4F46E5', color: '#fff', border: 'none', borderRadius: 8, padding: '10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
