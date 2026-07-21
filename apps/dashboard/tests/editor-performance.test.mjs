@@ -283,7 +283,7 @@ test('pagesRef y pages pueden sincronizarse con el mismo patch por page.id', asy
   }
 })
 
-test('misma version reutiliza overlay y nueva version cambia el src sin refresh', async () => {
+test('nueva version conserva la ultima miniatura hasta que el reemplazo esté listo', async () => {
   const perf = await loadPerf()
   try {
     const [page] = pages(1)
@@ -292,7 +292,10 @@ test('misma version reutiliza overlay y nueva version cambia el src sin refresh'
     assert.deepEqual(perf.resolvePageThumbnailOverlay(current, entry), { url: 'blob:thumb-local-1', status: 'local' })
 
     const newer = { ...current, thumbnail_version: 'local:2' }
-    assert.deepEqual(perf.resolvePageThumbnailOverlay(newer, entry), { url: undefined, status: undefined })
+    assert.deepEqual(
+      perf.resolvePageThumbnailOverlay(newer, entry),
+      { url: 'blob:thumb-local-1', status: 'local' },
+    )
   } finally {
     await perf.cleanup()
   }
@@ -323,7 +326,10 @@ test('fallo de generacion conserva overlay local existente y marca error solo pa
     assert.deepEqual(overlay, { url: 'blob:last-good', status: 'error' })
 
     const next = { ...current, thumbnail_version: 'local:5' }
-    assert.deepEqual(perf.resolvePageThumbnailOverlay(next, { ...entry, status: 'error' }), { url: undefined, status: undefined })
+    assert.deepEqual(
+      perf.resolvePageThumbnailOverlay(next, { ...entry, status: 'error' }),
+      { url: 'blob:last-good', status: 'error' },
+    )
   } finally {
     await perf.cleanup()
   }
