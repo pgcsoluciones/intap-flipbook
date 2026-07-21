@@ -12,6 +12,7 @@ import {
   firstVisibleIndexes,
   mergeThumbnailLookup,
   mergeSavedPagePreservingThumbnailVersion,
+  normalizeCanvasTextBaseline,
   pageThumbCardPropsEqual,
   pageThumbnailCacheKey,
   patchPageThumbnailContent,
@@ -124,6 +125,13 @@ function normalizeFabricAssetJson(json: any, resolveUrl: (url: string) => string
     if (!node || typeof node !== 'object') return node
     if (Array.isArray(node)) return node.map((item) => visit(item))
     const next = { ...node }
+
+    // Corrige canvas_json antiguos que contienen un valor inválido para
+    // CanvasTextBaseline. Se aplica también dentro de grupos y clipPaths.
+    if ('textBaseline' in next) {
+      next.textBaseline = normalizeCanvasTextBaseline(next.textBaseline)
+    }
+
     if (typeof next.src === 'string' && isHttpUrl(next.src)) {
       next.src = resolveUrl(toCanvasSafeAssetUrl(next.src))
       next.crossOrigin = 'anonymous'
@@ -505,7 +513,30 @@ async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas
     return null
   } finally {
     disposed = true
-    sc.dispose()
+
+    // Fabric puede dejar operaciones internas de imágenes/filtros terminando
+    // después del snapshot. Cancelamos renders pendientes y damos un breve margen
+    // antes de destruir el canvas para evitar clearRect sobre un contexto nulo.
+    try {
+      ;(sc as any).cancelRequestedRender?.()
+    } catch {}
+
+    const disposeWhenIdle = () => {
+      try {
+        const target = sc as any
+        if (!target.lowerCanvasEl || !target.contextContainer) return
+        target.cancelRequestedRender?.()
+        target.dispose()
+      } catch (error) {
+        console.warn('[thumbnail] canvas dispose skipped', error)
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      window.setTimeout(disposeWhenIdle, 250)
+    } else {
+      disposeWhenIdle()
+    }
   }
 }
 

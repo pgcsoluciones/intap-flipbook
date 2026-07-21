@@ -20,6 +20,10 @@ export function stableString(value: unknown) {
   }
 }
 
+export function normalizeCanvasTextBaseline(value: unknown) {
+  return value === 'alphabetical' ? 'alphabetic' : value
+}
+
 export function pageThumbnailCacheKey(page: PageLike) {
   return [
     page.id,
