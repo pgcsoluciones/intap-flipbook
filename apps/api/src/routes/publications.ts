@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
+import { signJwt } from '../lib/jwt'
 import { getUserPlan, checkPublicationLimit, checkSoundAllowed } from '../lib/plans'
 import { slugify, uniqueSlug } from './auth'
 import type { Env } from '../index'
@@ -174,6 +175,53 @@ publications.post('/', async (c) => {
     data: pub,
     ...(wantsSound && !soundAllowed ? { warning: checkSoundAllowed(plan) } : {}),
   }, 201)
+})
+
+// GET /api/publications/:id/preview-access
+// Preview-only: issues a short-lived, read-only viewer token for draft QA without publishing.
+publications.get('/:id/preview-access', async (c) => {
+  if ((c.env.APP_ENV ?? 'production') !== 'preview') {
+    return c.json({ success: false, error: 'Preview access is only available in preview' }, 404)
+  }
+
+  const userId = c.get('user').sub
+  const pub = await c.env.DB.prepare(
+    `SELECT id, user_id, public_slug
+     FROM publications
+     WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+  )
+    .bind(c.req.param('id'), userId)
+    .first<{ id: string; user_id: string; public_slug: string | null }>()
+
+  if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+  if (!pub.public_slug) return c.json({ success: false, error: 'La publicación no tiene slug público' }, 400)
+
+  const { count } = await c.env.DB.prepare(
+    'SELECT COUNT(*) as count FROM pages WHERE publication_id = ?',
+  )
+    .bind(pub.id)
+    .first<{ count: number }>() ?? { count: 0 }
+
+  if (count < 1) {
+    return c.json({ success: false, error: 'La publicación debe tener al menos una página para vista previa' }, 400)
+  }
+
+  const token = await signJwt({
+    sub: userId,
+    email: 'preview@intap.local',
+    kind: 'publication_preview',
+    publication_id: pub.id,
+    public_slug: pub.public_slug,
+  } as any, c.env.JWT_SECRET, 1 / 24)
+
+  return c.json({
+    success: true,
+    data: {
+      token,
+      public_slug: pub.public_slug,
+      expires_in_seconds: 3600,
+    },
+  })
 })
 
 // GET /api/publications/:id

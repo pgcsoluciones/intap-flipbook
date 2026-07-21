@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { api } from '../lib/api'
+import { api, API_BASE } from '../lib/api'
+import { buildPublicationViewerUrl, canOpenPublicationPreview } from '../lib/previewUrl'
 
 type Device = 'desktop' | 'tablet' | 'mobile'
 
@@ -30,8 +31,11 @@ export default function Preview() {
   const [copied, setCopied]   = useState(false)
   const [toggling, setToggling] = useState(false)
   const [msg, setMsg]         = useState('')
+  const [previewToken, setPreviewToken] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState('')
 
   const VIEWER_BASE = import.meta.env.VITE_VIEWER_BASE_URL ?? 'https://flip.intaprd.com'
+  const VIEWER_PREVIEW_ENABLED = import.meta.env.VITE_VIEWER_PREVIEW === '1'
   const [tenantSlug, setTenantSlug] = useState<string | null>(null)
 
   useEffect(() => {
@@ -39,13 +43,32 @@ export default function Preview() {
     api.auth.me().then((r) => setTenantSlug(r.data.slug ?? null)).catch(() => {})
   }, [id])
 
+  useEffect(() => {
+    let cancelled = false
+    setPreviewToken(null)
+    setPreviewError('')
+    if (!VIEWER_PREVIEW_ENABLED || !id || !pub || !canOpenPublicationPreview(pub)) return
+    api.publications.previewAccess(id)
+      .then((r) => {
+        if (!cancelled) setPreviewToken(r.data.token)
+      })
+      .catch((e) => {
+        if (!cancelled) setPreviewError(e.message ?? 'No se pudo preparar la vista previa')
+      })
+    return () => { cancelled = true }
+  }, [VIEWER_PREVIEW_ENABLED, id, pub?.id, pub?.public_slug, pub?.pages?.length])
+
   if (!pub) return <div style={{ textAlign: 'center', padding: '4rem', color: '#666' }}>Cargando...</div>
 
-  // URL pública: flip.intaprd.com/{slug-tenant}/{slug-flipbook}.
-  // Si el usuario aún no tiene slug de tenant, usamos solo el del flipbook.
-  const viewerUrl = pub.public_slug
-    ? `${VIEWER_BASE}/${tenantSlug ? tenantSlug + '/' : ''}${pub.public_slug}`
-    : null
+  const previewReady = VIEWER_PREVIEW_ENABLED ? !!previewToken : true
+  const viewerUrl = buildPublicationViewerUrl({
+    viewerBase: VIEWER_BASE,
+    tenantSlug,
+    publicationSlug: pub.public_slug,
+    apiBase: API_BASE,
+    previewToken,
+    previewMode: VIEWER_PREVIEW_ENABLED,
+  })
   const isPublished = pub.status === 'published'
   const dev = DEVICES.find((d) => d.key === device)!
 
@@ -113,7 +136,7 @@ export default function Preview() {
         </div>
 
         <div style={styles.headerRight}>
-          {viewerUrl && (
+          {viewerUrl && previewReady && (
             <>
               <button style={styles.iconBtn} title="Código QR" onClick={() => setShowQR(!showQR)}>
                 QR
@@ -125,6 +148,11 @@ export default function Preview() {
                 {copied ? '✓' : '⎘'}
               </button>
             </>
+          )}
+          {VIEWER_PREVIEW_ENABLED && !previewReady && canOpenPublicationPreview(pub) && (
+            <button style={{ ...styles.iconBtn, opacity: 0.6, cursor: 'wait' }} disabled title="Preparando vista previa">
+              ...
+            </button>
           )}
           <button
             onClick={handleTogglePublish}
@@ -140,9 +168,10 @@ export default function Preview() {
       </header>
 
       {msg && <div style={styles.toast}>{msg}</div>}
+      {previewError && <div style={styles.toast}>{previewError}</div>}
 
       {/* URL bar */}
-      {viewerUrl && (
+      {viewerUrl && previewReady && (
         <div style={styles.urlBar}>
           <span style={styles.urlText}>{viewerUrl}</span>
           <button style={styles.copySmall} onClick={handleCopy}>{copied ? '✓ Copiado' : 'Copiar link'}</button>
@@ -150,7 +179,7 @@ export default function Preview() {
       )}
 
       {/* QR panel */}
-      {showQR && viewerUrl && (
+      {showQR && viewerUrl && previewReady && (
         <div style={styles.qrOverlay} onClick={() => setShowQR(false)}>
           <div style={styles.qrModal} onClick={(e) => e.stopPropagation()}>
             <QRCode url={viewerUrl} />
@@ -161,10 +190,14 @@ export default function Preview() {
 
       {/* Preview area */}
       <main style={styles.main}>
-        {!viewerUrl ? (
+        {!canOpenPublicationPreview(pub) ? (
           <div style={styles.noUrl}>
-            <p style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Sin slug público</p>
-            <p style={{ color: '#999', fontSize: '0.875rem' }}>Publica la publicación para generar el link del viewer.</p>
+            <p style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Vista previa no disponible</p>
+            <p style={{ color: '#999', fontSize: '0.875rem' }}>La publicación necesita slug y al menos una página.</p>
+          </div>
+        ) : !viewerUrl || !previewReady ? (
+          <div style={styles.noUrl}>
+            <p style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Preparando vista previa...</p>
           </div>
         ) : (
           <div style={{ maxWidth: containerMaxW, margin: '0 auto' }}>

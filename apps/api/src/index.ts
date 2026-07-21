@@ -14,6 +14,7 @@ import appointmentRoutes from './routes/appointmentCalendars'
 import leadIntakeRoutes from './routes/leadIntakes'
 import leadIntakeCustomerMessageRoutes from './routes/leadIntakeCustomerMessages'
 import { jwtMiddleware } from './middleware/jwt'
+import { verifyJwt } from './lib/jwt'
 import { getUserPlan, getPlanUsage } from './lib/plans'
 import type { AuthVariables } from './middleware/jwt'
 
@@ -72,13 +73,29 @@ function isDashboardPreviewOrigin(origin: string): boolean {
   }
 }
 
+function isViewerPreviewOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin)
+    if (url.protocol !== 'https:') return false
+    const host = url.hostname
+    return host === 'intap-flipbook-viewer.pages.dev'
+      || host.endsWith('.intap-flipbook-viewer.pages.dev')
+  } catch {
+    return false
+  }
+}
+
 function isAllowedOrigin(origin: string, env: Env, value?: string): boolean {
   if (parseOrigins(value).includes(origin)) return true
-  return env.APP_ENV === 'preview' && isDashboardPreviewOrigin(origin)
+  return env.APP_ENV === 'preview' && (isDashboardPreviewOrigin(origin) || isViewerPreviewOrigin(origin))
 }
 
 function isViewerWritePath(path: string): boolean {
   return /^\/view\/[^/]+\/(track|event|response)$/.test(path) || /^\/view\/[^/]+\/markers\/[^/]+\/booking$/.test(path)
+}
+
+function isViewerOrigin(origin: string, env: Env): boolean {
+  return origin === 'https://flip.intaprd.com' || (env.APP_ENV === 'preview' && isViewerPreviewOrigin(origin))
 }
 
 app.use('*', async (c, next) => {
@@ -114,7 +131,7 @@ app.use('*', async (c, next) => {
     return c.json({ success: false, error: 'Origen no autorizado para operaciones de escritura' }, 403)
   }
 
-  if (origin === 'https://flip.intaprd.com' && !isViewerWritePath(c.req.path)) {
+  if (isViewerOrigin(origin, c.env) && !isViewerWritePath(c.req.path)) {
     return c.json({ success: false, error: 'Origen viewer no autorizado para esta operación' }, 403)
   }
 
@@ -446,44 +463,38 @@ app.get('/view/meta/:tenantSlug/:publicationSlug', async (c) => {
 // Public viewer endpoint — no auth required
 app.route('/view/:slug/dynamic-markers', publicDynamicMarkerRoutes)
 
-app.get('/view/:slug', async (c) => {
-  const slug = c.req.param('slug')
-  const pub = await c.env.DB.prepare(
-    `SELECT p.id, p.title, p.description, p.cover_image_url, p.sound_enabled,
-            p.project_phone, p.project_whatsapp, p.project_location,
-            p.project_address, p.project_developer, p.project_website,
-            u.plan_id, u.watermark_override, u.watermark_tenant
-     FROM publications p
-     JOIN users u ON u.id = p.user_id
-     WHERE p.public_slug = ? AND p.status = 'published'`,
-  )
-    .bind(slug)
-    .first<{
-      id: string
-      title: string
-      description: string | null
-      cover_image_url: string | null
-      sound_enabled: number
-      project_phone: string | null
-      project_whatsapp: string | null
-      project_location: string | null
-      project_address: string | null
-      project_developer: string | null
-      project_website: string | null
-      plan_id: string
-      watermark_override: string
-      watermark_tenant: string | null
-    }>()
+type ViewerPublicationRow = {
+  id: string
+  title: string
+  description: string | null
+  cover_image_url: string | null
+  sound_enabled: number
+  project_phone: string | null
+  project_whatsapp: string | null
+  project_location: string | null
+  project_address: string | null
+  project_developer: string | null
+  project_website: string | null
+  plan_id: string
+  watermark_override: string
+  watermark_tenant: string | null
+}
 
-  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
-
+async function viewerPayload(db: D1Database, pub: ViewerPublicationRow) {
   const [{ results: pages }, dynamicMarkers, wmConfig] = await Promise.all([
-    c.env.DB.prepare(
-      `SELECT id, page_number, image_url, title, description, price, canvas_json, cover_json
-       FROM pages WHERE publication_id = ? ORDER BY page_number ASC`,
+    db.prepare(
+      `SELECT pg.id, pg.page_number, pg.image_url, ma.optimized_url, ma.optimized_width, ma.optimized_height,
+              pg.title, pg.description, pg.price, pg.canvas_json, pg.cover_json
+       FROM pages pg
+       LEFT JOIN media_assets ma
+         ON ma.publication_id = pg.publication_id
+        AND ma.public_url = pg.image_url
+        AND ma.deleted_at IS NULL
+       WHERE pg.publication_id = ?
+       ORDER BY pg.page_number ASC`,
     ).bind(pub.id).all(),
-    publicMarkersForPublication(c.env.DB, pub.id),
-    c.env.DB.prepare('SELECT text, link_url, position, opacity FROM watermark_config WHERE id = 1').first<{
+    publicMarkersForPublication(db, pub.id),
+    db.prepare('SELECT text, link_url, position, opacity FROM watermark_config WHERE id = 1').first<{
       text: string; link_url: string; position: string; opacity: number
     }>(),
   ])
@@ -501,7 +512,7 @@ app.get('/view/:slug', async (c) => {
     adminOverride === 'force_hide' ? false :
     planDefault
 
-  return c.json({
+  return {
     success: true,
     data: {
       id: pub.id,
@@ -520,7 +531,57 @@ app.get('/view/:slug', async (c) => {
       pages,
       dynamic_markers: dynamicMarkers,
     },
-  })
+  }
+}
+
+app.get('/view/preview/:token', async (c) => {
+  if ((c.env.APP_ENV ?? 'production') !== 'preview') {
+    return c.json({ success: false, error: 'Preview not found' }, 404)
+  }
+
+  let payload: any
+  try {
+    payload = await verifyJwt(c.req.param('token'), c.env.JWT_SECRET)
+  } catch {
+    return c.json({ success: false, error: 'Invalid or expired preview token' }, 401)
+  }
+
+  if (payload.kind !== 'publication_preview' || !payload.publication_id || !payload.sub) {
+    return c.json({ success: false, error: 'Invalid preview token' }, 401)
+  }
+
+  const pub = await c.env.DB.prepare(
+    `SELECT p.id, p.title, p.description, p.cover_image_url, p.sound_enabled,
+            p.project_phone, p.project_whatsapp, p.project_location,
+            p.project_address, p.project_developer, p.project_website,
+            u.plan_id, u.watermark_override, u.watermark_tenant
+     FROM publications p
+     JOIN users u ON u.id = p.user_id
+     WHERE p.id = ? AND p.user_id = ? AND p.deleted_at IS NULL`,
+  )
+    .bind(payload.publication_id, payload.sub)
+    .first<ViewerPublicationRow>()
+
+  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+  return c.json(await viewerPayload(c.env.DB, pub))
+})
+
+app.get('/view/:slug', async (c) => {
+  const slug = c.req.param('slug')
+  const pub = await c.env.DB.prepare(
+    `SELECT p.id, p.title, p.description, p.cover_image_url, p.sound_enabled,
+            p.project_phone, p.project_whatsapp, p.project_location,
+            p.project_address, p.project_developer, p.project_website,
+            u.plan_id, u.watermark_override, u.watermark_tenant
+     FROM publications p
+     JOIN users u ON u.id = p.user_id
+     WHERE p.public_slug = ? AND p.status = 'published'`,
+  )
+    .bind(slug)
+    .first<ViewerPublicationRow>()
+
+  if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
+  return c.json(await viewerPayload(c.env.DB, pub))
 })
 
 // Tenant: listar sus notificaciones (con auth)

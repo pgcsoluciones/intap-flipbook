@@ -71,6 +71,15 @@ test('preview allows unique deployment origin', async () => {
   assert.match(response.headers.get('access-control-allow-headers') ?? '', /Authorization/)
 })
 
+test('preview allows viewer branch alias origin', async () => {
+  const origin = 'https://media-optimization-phase1b.intap-flipbook-viewer.pages.dev'
+  const response = await options(origin, '/view/preview/token')
+
+  assert.equal(response.status, 204)
+  assert.equal(response.headers.get('access-control-allow-origin'), origin)
+  assert.equal(response.headers.get('access-control-allow-credentials'), 'true')
+})
+
 test('preview rejects other pages.dev project origin', async () => {
   const response = await options('https://d7e3a306.other-dashboard.pages.dev')
 

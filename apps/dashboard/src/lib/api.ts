@@ -444,6 +444,8 @@ export const api = {
       request<{ success: true; data: any }>(`/api/publications/${id}`, { method: 'DELETE' }),
     publish: (id: string) =>
       request<{ success: true; data: any }>(`/api/publications/${id}/publish`, { method: 'POST' }),
+    previewAccess: (id: string) =>
+      request<{ success: true; data: { token: string; public_slug: string; expires_in_seconds: number } }>(`/api/publications/${id}/preview-access`),
   },
 
   pages: {

@@ -51,11 +51,18 @@ const queryPublication = params.get('publication')?.trim()
 const API_BASE = isPreview
   ? (cleanApiBase(params.get('api_base')) ?? cleanApiBase(window.__FLIPBOOK_CONFIG__?.apiBase) ?? PUBLIC_API_BASE)
   : (cleanApiBase(window.__FLIPBOOK_CONFIG__?.apiBase) ?? PUBLIC_API_BASE)
+const previewToken = isPreview ? params.get('preview_token')?.trim() : ''
 const slug = queryPublication || location.pathname.split('/').filter(Boolean).pop()
 if (!slug) {
   showViewerError('No se especificó una publicación para mostrar.')
   throw new Error('No slug')
 }
+const viewerRuntime = window.IntapViewerRuntime || {
+  selectPageImageUrl: (page) => page?.optimized_url || page?.display_url || page?.image_url || '',
+  nearbyRealPageNumbers: (currentRealPage, totalPages) => [currentRealPage - 1, currentRealPage, currentRealPage + 1].filter((pageNumber) => pageNumber >= 1 && pageNumber <= totalPages),
+  createImagePreloader: () => ({ preload: () => null, has: () => false, size: () => 0 }),
+}
+const imagePreloader = viewerRuntime.createImagePreloader(Image)
 
 let soundEnabled = true
 
@@ -116,6 +123,7 @@ function makeBlank(w, h) {
 
 // Envía una respuesta (formulario o cuestionario) al repositorio del tenant.
 function saveResponse(kind, payload, widgetKey) {
+  if (isPreview) return
   try {
     fetch(`${API_BASE}/view/${slug}/response`, {
       method: 'POST',
@@ -128,7 +136,10 @@ function saveResponse(kind, payload, widgetKey) {
 async function init() {
   let res
   try {
-    res = await fetch(`${API_BASE}/view/${slug}`)
+    const endpoint = isPreview && previewToken
+      ? `${API_BASE}/view/preview/${encodeURIComponent(previewToken)}`
+      : `${API_BASE}/view/${slug}`
+    res = await fetch(endpoint)
   } catch (e) {
     showViewerError('No pudimos conectar con el visor. Revisa tu conexión e inténtalo nuevamente.')
     throw e
@@ -1987,12 +1998,13 @@ async function init() {
   }
 
   // Registrar vista (fire-and-forget — no bloqueamos la carga del flipbook)
-  fetch(`${API_BASE}/view/${slug}/track`, { method: 'POST' }).catch(() => {})
+  if (!isPreview) fetch(`${API_BASE}/view/${slug}/track`, { method: 'POST' }).catch(() => {})
 
   // ── Analítica avanzada (Fase 14): envío fire-and-forget vía sendBeacon ──
   // sendBeacon entrega los datos aunque el usuario cierre la pestaña.
   const EVENT_URL = `${API_BASE}/view/${slug}/event`
   function sendEvent(payload) {
+    if (isPreview) return
     try {
       const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' })
       if (navigator.sendBeacon && navigator.sendBeacon(EVENT_URL, blob)) return
@@ -3896,19 +3908,20 @@ async function init() {
     if (!div || div.__pageBackgroundLoaded) return
     const page = div.__pageData
     const sheet = div.__pageSheet
-    if (!page?.image_url || !sheet) {
+    const pageImageUrl = viewerRuntime.selectPageImageUrl(page)
+    if (!pageImageUrl || !sheet) {
       div.__pageBackgroundLoaded = true
       return
     }
-    sheet.style.backgroundImage = `url("${page.image_url}")`
-    applyCoverStyle(sheet, page.cover_json, page.image_url, pageWidth / pageHeight)
+    imagePreloader.preload(pageImageUrl)
+    sheet.style.backgroundImage = `url("${pageImageUrl}")`
+    applyCoverStyle(sheet, page.cover_json, pageImageUrl, pageWidth / pageHeight)
     div.__pageBackgroundLoaded = true
   }
 
   function ensureNearbyPageBackgrounds(pageIndex) {
     const realPage = pageNumOf(pageIndex)
-    ;[realPage - 1, realPage, realPage + 1].forEach((pageNumber) => {
-      if (pageNumber < 1 || pageNumber > realCount) return
+    viewerRuntime.nearbyRealPageNumbers(realPage, realCount).forEach((pageNumber) => {
       ensurePageBackgroundLoaded(lead + pageNumber - 1)
     })
   }
@@ -4574,7 +4587,7 @@ async function init() {
     const item = document.createElement('div')
     item.className = 'thumb-item' + (i === 0 ? ' active' : '')
     const img = document.createElement('img')
-    img.src = page.image_url
+    img.src = viewerRuntime.selectPageImageUrl(page)
     img.alt = `Pág ${i + 1}`
     img.loading = 'lazy'
     const label = document.createElement('span')
