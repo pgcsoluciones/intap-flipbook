@@ -103,6 +103,12 @@ type MediaAssetRow = {
   original_size_bytes?: number | null
   original_width?: number | null
   original_height?: number | null
+  optimized_storage_key?: string | null
+  optimized_url?: string | null
+  optimized_mime_type?: string | null
+  optimized_size_bytes?: number | null
+  optimized_width?: number | null
+  optimized_height?: number | null
   thumbnail_storage_key?: string | null
   thumbnail_url?: string | null
   thumbnail_mime_type?: string | null
@@ -126,6 +132,14 @@ function mediaAssetResponse(row: MediaAssetRow) {
     storage_bucket: row.storage_bucket,
     storage_key: row.storage_key,
     public_url: row.public_url,
+    original_url: row.public_url,
+    optimized_storage_key: row.optimized_storage_key ?? null,
+    optimized_url: row.optimized_url ?? null,
+    optimized_mime_type: row.optimized_mime_type ?? null,
+    optimized_size_bytes: row.optimized_size_bytes ?? null,
+    optimized_width: row.optimized_width ?? null,
+    optimized_height: row.optimized_height ?? null,
+    display_url: row.optimized_url || row.public_url,
     original_name: row.original_name,
     mime_type: row.mime_type,
     size_bytes: row.size_bytes,
@@ -491,6 +505,12 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
     original_size_bytes: metadata.original_size_bytes ?? sizeBytes,
     original_width: metadata.original_width ?? null,
     original_height: metadata.original_height ?? null,
+    optimized_storage_key: key,
+    optimized_url: url,
+    optimized_mime_type: file.type,
+    optimized_size_bytes: sizeBytes,
+    optimized_width: Number.isFinite(width) && width !== null ? width : null,
+    optimized_height: Number.isFinite(height) && height !== null ? height : null,
     thumbnail_storage_key: thumbnailKey,
     thumbnail_url: thumbnailUrl,
     thumbnail_mime_type: thumbnail?.type ?? null,
@@ -518,10 +538,11 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
        id, tenant_id, publication_id, storage_bucket, storage_key, public_url,
        original_name, mime_type, size_bytes, sha256, width, height,
        original_mime_type, original_size_bytes, original_width, original_height,
+       optimized_storage_key, optimized_url, optimized_mime_type, optimized_size_bytes, optimized_width, optimized_height,
        thumbnail_storage_key, thumbnail_url, thumbnail_mime_type, thumbnail_size_bytes, thumbnail_width, thumbnail_height,
        optimization_status, optimization_version, optimized_at,
        created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     asset.id,
     asset.tenant_id,
@@ -539,6 +560,12 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
     asset.original_size_bytes,
     asset.original_width,
     asset.original_height,
+    asset.optimized_storage_key,
+    asset.optimized_url,
+    asset.optimized_mime_type,
+    asset.optimized_size_bytes,
+    asset.optimized_width,
+    asset.optimized_height,
     asset.thumbnail_storage_key,
     asset.thumbnail_url,
     asset.thumbnail_mime_type,
@@ -565,6 +592,7 @@ upload.get('/media-assets', async (c) => {
 
   const q = (c.req.query('q') ?? '').trim()
   const needsThumbnail = c.req.query('needs_thumbnail') === 'true'
+  const needsOptimization = c.req.query('needs_optimization') === 'true'
   const limit = boundedMediaAssetLimit(c.req.query('limit') ?? null)
   const pageNumber = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1)
   const offset = (pageNumber - 1) * limit
@@ -585,6 +613,10 @@ upload.get('/media-assets', async (c) => {
   if (needsThumbnail) {
     conditions.push('(thumbnail_url IS NULL OR thumbnail_url = ?)')
     params.push('')
+  }
+  if (needsOptimization) {
+    conditions.push('((thumbnail_url IS NULL OR thumbnail_url = ?) OR (optimized_url IS NULL OR optimized_url = ?))')
+    params.push('', '')
   }
   if (cursor) {
     conditions.push('(created_at < ? OR (created_at = ? AND id < ?))')
@@ -723,7 +755,7 @@ upload.post('/media-assets/resolve-thumbnails', async (c) => {
   if (!publicationId) return c.json({ success: false, error: 'publication_id es requerido' }, 400)
   const publication = await getOwnedPublication(c, publicationId, userId)
   if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
-  if (!urls.length) return c.json({ success: true, data: { thumbnails: {}, assets: [] } })
+  if (!urls.length) return c.json({ success: true, data: { thumbnails: {}, displays: {}, variants: {}, assets: [] } })
 
   const placeholders = urls.map(() => '?').join(',')
   const result = await c.env.DB.prepare(
@@ -738,10 +770,104 @@ upload.post('/media-assets/resolve-thumbnails', async (c) => {
 
   const assets = (result.results ?? []).map(mediaAssetResponse)
   const thumbnails: Record<string, string> = {}
+  const displays: Record<string, string> = {}
+  const variants: Record<string, { original_url: string; display_url: string; thumbnail_url: string | null; optimized_url: string | null }> = {}
   for (const asset of assets) {
     if (asset.public_url && asset.thumbnail_url) thumbnails[asset.public_url] = asset.thumbnail_url
+    if (asset.public_url && asset.display_url) displays[asset.public_url] = asset.display_url
+    if (asset.public_url) {
+      variants[asset.public_url] = {
+        original_url: asset.original_url,
+        display_url: asset.display_url,
+        thumbnail_url: asset.thumbnail_url,
+        optimized_url: asset.optimized_url,
+      }
+    }
   }
-  return c.json({ success: true, data: { thumbnails, assets } })
+  return c.json({ success: true, data: { thumbnails, displays, variants, assets } })
+})
+
+upload.post('/media-assets/:assetId/variants', async (c) => {
+  const userId = c.get('user').sub
+  const assetId = c.req.param('assetId')
+  const form = await c.req.formData()
+  const publicationId = String(form.get('publication_id') ?? '').trim()
+  const display = form.get('display')
+  const thumbnail = form.get('thumbnail')
+  const metadata = Object.fromEntries(form.entries())
+
+  if (!publicationId) return c.json({ success: false, error: 'publication_id es requerido' }, 400)
+  const lookup = await getOwnedMediaAsset(c, userId, assetId, publicationId)
+  if (lookup.status === 'missing') return c.json({ success: false, error: 'Imagen no encontrada' }, 404)
+  if (lookup.status === 'forbidden') return c.json({ success: false, error: 'No tienes acceso a esta imagen' }, 403)
+
+  const asset = lookup.asset
+  const updates: string[] = []
+  const values: unknown[] = []
+  const now = new Date().toISOString()
+
+  if (display instanceof File && !asset.optimized_url) {
+    const ext = MEDIA_IMAGE_EXT_BY_TYPE[display.type]
+    if (!ext) return c.json({ success: false, error: 'Tipo de display no permitido.' }, 415)
+    if (display.size > IMAGE_MAX_BYTES) return c.json({ success: false, error: 'El display supera el tamaño máximo permitido.' }, 413)
+    const key = `uploads/${userId}/${asset.id}-display.${ext}`
+    const url = `${c.env.R2_PUBLIC_BASE_URL}/${key}`
+    await c.env.MEDIA.put(key, await display.arrayBuffer(), {
+      httpMetadata: { contentType: display.type },
+    })
+    updates.push('optimized_storage_key = ?', 'optimized_url = ?', 'optimized_mime_type = ?', 'optimized_size_bytes = ?', 'optimized_width = ?', 'optimized_height = ?')
+    values.push(
+      key,
+      url,
+      display.type,
+      display.size,
+      optionalInt(metadata.optimized_width as any),
+      optionalInt(metadata.optimized_height as any),
+    )
+    asset.optimized_storage_key = key
+    asset.optimized_url = url
+    asset.optimized_mime_type = display.type
+    asset.optimized_size_bytes = display.size
+    asset.optimized_width = optionalInt(metadata.optimized_width as any)
+    asset.optimized_height = optionalInt(metadata.optimized_height as any)
+  }
+
+  if (thumbnail instanceof File && !asset.thumbnail_url) {
+    const ext = MEDIA_IMAGE_EXT_BY_TYPE[thumbnail.type]
+    if (!ext) return c.json({ success: false, error: 'Tipo de miniatura no permitido.' }, 415)
+    if (thumbnail.size > IMAGE_MAX_BYTES) return c.json({ success: false, error: 'La miniatura supera el tamaño máximo permitido.' }, 413)
+    const key = `uploads/${userId}/${asset.id}-thumb.${ext}`
+    const url = `${c.env.R2_PUBLIC_BASE_URL}/${key}`
+    await c.env.MEDIA.put(key, await thumbnail.arrayBuffer(), {
+      httpMetadata: { contentType: thumbnail.type },
+    })
+    updates.push('thumbnail_storage_key = ?', 'thumbnail_url = ?', 'thumbnail_mime_type = ?', 'thumbnail_size_bytes = ?', 'thumbnail_width = ?', 'thumbnail_height = ?')
+    values.push(
+      key,
+      url,
+      thumbnail.type,
+      thumbnail.size,
+      optionalInt(metadata.thumbnail_width as any),
+      optionalInt(metadata.thumbnail_height as any),
+    )
+    asset.thumbnail_storage_key = key
+    asset.thumbnail_url = url
+    asset.thumbnail_mime_type = thumbnail.type
+    asset.thumbnail_size_bytes = thumbnail.size
+    asset.thumbnail_width = optionalInt(metadata.thumbnail_width as any)
+    asset.thumbnail_height = optionalInt(metadata.thumbnail_height as any)
+  }
+
+  if (updates.length) {
+    updates.push('optimization_status = COALESCE(optimization_status, ?)', 'optimization_version = COALESCE(optimization_version, ?)', 'optimized_at = COALESCE(optimized_at, ?)', 'updated_at = ?')
+    values.push(optionalString(metadata.optimization_status as any) ?? 'optimized', optionalString(metadata.optimization_version as any), now, now)
+    await c.env.DB.prepare(
+      `UPDATE media_assets SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ? AND publication_id = ?`,
+    ).bind(...values, asset.id, userId, publicationId).run()
+  }
+
+  const updated = await getOwnedMediaAsset(c, userId, asset.id, publicationId)
+  return c.json({ success: true, data: { asset: mediaAssetResponse(updated.status === 'owned' ? updated.asset : asset) } })
 })
 
 upload.get('/media-assets/:assetId/usage', async (c) => {

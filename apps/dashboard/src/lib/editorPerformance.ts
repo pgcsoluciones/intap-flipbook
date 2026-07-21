@@ -59,6 +59,23 @@ export function resolvePageImageThumbnailUrl(page: PageLike, thumbnailByUrl: Rec
   return thumbnailByUrl[imageUrl] || imageUrl
 }
 
+export function resolveDisplayUrl(url: string | null | undefined, displayByUrl: Record<string, string>, normalize: (value: string) => string = (value) => value) {
+  const safeUrl = normalizeUrlForLookup(url, normalize)
+  if (!safeUrl) return ''
+  return displayByUrl[safeUrl] || safeUrl
+}
+
+export function resolvePageCardBackgroundUrl(
+  page: PageLike,
+  thumbnailByUrl: Record<string, string>,
+  displayByUrl: Record<string, string>,
+  normalize: (value: string) => string = (value) => value,
+) {
+  const originalUrl = normalizeUrlForLookup(page.image_url, normalize)
+  if (!originalUrl) return ''
+  return thumbnailByUrl[originalUrl] || displayByUrl[originalUrl] || originalUrl
+}
+
 export function upsertPageById<T extends { id: string }>(pages: T[], pageId: string, patch: Partial<T>) {
   let changed = false
   const next = pages.map((page) => {
@@ -78,6 +95,19 @@ export function buildThumbnailLookup<T extends { public_url?: string | null; thu
     const publicUrl = normalizeUrlForLookup(asset.public_url, normalize)
     const thumbnailUrl = normalizeUrlForLookup(asset.thumbnail_url, normalize)
     if (publicUrl && thumbnailUrl) lookup[publicUrl] = thumbnailUrl
+  }
+  return lookup
+}
+
+export function buildDisplayLookup<T extends { public_url?: string | null; display_url?: string | null; optimized_url?: string | null }>(
+  assets: T[],
+  normalize: (url: string) => string = (value) => value,
+) {
+  const lookup: Record<string, string> = {}
+  for (const asset of assets) {
+    const publicUrl = normalizeUrlForLookup(asset.public_url, normalize)
+    const displayUrl = normalizeUrlForLookup(asset.display_url || asset.optimized_url || asset.public_url, normalize)
+    if (publicUrl && displayUrl) lookup[publicUrl] = displayUrl
   }
   return lookup
 }

@@ -377,6 +377,14 @@ export type MediaAsset = {
   storage_bucket: string
   storage_key: string
   public_url: string
+  original_url?: string
+  optimized_storage_key?: string | null
+  optimized_url?: string | null
+  optimized_mime_type?: string | null
+  optimized_size_bytes?: number | null
+  optimized_width?: number | null
+  optimized_height?: number | null
+  display_url?: string
   original_name: string
   mime_type: string
   size_bytes: number
@@ -824,7 +832,7 @@ export const api = {
   },
 
   mediaAssets: {
-    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number; needs_thumbnail?: boolean }) => {
+    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number; needs_thumbnail?: boolean; needs_optimization?: boolean }) => {
       const qs = new URLSearchParams()
       qs.set('publication_id', params.publication_id)
       if (params.q) qs.set('q', params.q)
@@ -832,6 +840,7 @@ export const api = {
       if (params.cursor) qs.set('cursor', params.cursor)
       if (params.page != null) qs.set('page', String(params.page))
       if (params.needs_thumbnail) qs.set('needs_thumbnail', 'true')
+      if (params.needs_optimization) qs.set('needs_optimization', 'true')
       return request<{
         success: true
         data: MediaAsset[]
@@ -876,8 +885,11 @@ export const api = {
         const data = await r.json().catch(() => null)
         if (!r.ok || !data?.success) throw new Error(data?.error ?? `Error ${r.status} al subir imagen`)
         if (data?.data?.asset?.public_url) data.data.asset.public_url = toCanvasSafeAssetUrl(data.data.asset.public_url)
+        if (data?.data?.asset?.original_url) data.data.asset.original_url = toCanvasSafeAssetUrl(data.data.asset.original_url)
+        if (data?.data?.asset?.optimized_url) data.data.asset.optimized_url = toCanvasSafeAssetUrl(data.data.asset.optimized_url)
+        if (data?.data?.asset?.display_url) data.data.asset.display_url = toCanvasSafeAssetUrl(data.data.asset.display_url)
         if (data?.data?.asset?.thumbnail_url) data.data.asset.thumbnail_url = toCanvasSafeAssetUrl(data.data.asset.thumbnail_url)
-        if (data?.data?.url) data.data.url = toCanvasSafeAssetUrl(data.data.url)
+        if (data?.data?.url) data.data.url = toCanvasSafeAssetUrl(data.data.asset?.display_url || data.data.url)
         return data
       }) as Promise<{ success: true; data: { asset: MediaAsset; url: string; reused: boolean } }>
     },
@@ -903,6 +915,32 @@ export const api = {
         return data
       }) as Promise<{ success: true; data: { asset: MediaAsset } }>
     },
+    uploadVariants: (assetId: string, input: { publication_id: string; display?: File | null; thumbnail?: File | null; metadata?: Record<string, unknown> }) => {
+      const token = getToken()
+      const form = new FormData()
+      form.append('publication_id', input.publication_id)
+      if (input.display) form.append('display', input.display)
+      if (input.thumbnail) form.append('thumbnail', input.thumbnail)
+      if (input.metadata) {
+        for (const [key, value] of Object.entries(input.metadata)) {
+          if (value != null) form.append(key, String(value))
+        }
+      }
+      return fetch(`${API_BASE}/api/upload/media-assets/${encodeURIComponent(assetId)}/variants`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      }).then(async (r) => {
+        const data = await r.json().catch(() => null)
+        if (!r.ok || !data?.success) throw new Error(data?.error ?? `Error ${r.status} al subir variantes`)
+        if (data?.data?.asset?.public_url) data.data.asset.public_url = toCanvasSafeAssetUrl(data.data.asset.public_url)
+        if (data?.data?.asset?.original_url) data.data.asset.original_url = toCanvasSafeAssetUrl(data.data.asset.original_url)
+        if (data?.data?.asset?.optimized_url) data.data.asset.optimized_url = toCanvasSafeAssetUrl(data.data.asset.optimized_url)
+        if (data?.data?.asset?.display_url) data.data.asset.display_url = toCanvasSafeAssetUrl(data.data.asset.display_url)
+        if (data?.data?.asset?.thumbnail_url) data.data.asset.thumbnail_url = toCanvasSafeAssetUrl(data.data.asset.thumbnail_url)
+        return data
+      }) as Promise<{ success: true; data: { asset: MediaAsset } }>
+    },
     usage: (assetId: string, publicationId: string) => {
       const qs = new URLSearchParams({ publication_id: publicationId })
       return request<{ success: true; data: { asset_id: string; usage_count: number; can_delete_physical: boolean; usages: Array<{ type: string; page_id?: string; page_number?: number | null; marker_id?: string; field: string; label: string }> } }>(
@@ -910,18 +948,36 @@ export const api = {
       )
     },
     resolveThumbnails: (input: { publication_id: string; public_urls: string[] }) =>
-      request<{ success: true; data: { thumbnails: Record<string, string>; assets: MediaAsset[] } }>('/api/upload/media-assets/resolve-thumbnails', {
+      request<{ success: true; data: { thumbnails: Record<string, string>; displays?: Record<string, string>; variants?: Record<string, { original_url: string; display_url: string; thumbnail_url: string | null; optimized_url: string | null }>; assets: MediaAsset[] } }>('/api/upload/media-assets/resolve-thumbnails', {
         method: 'POST',
         body: JSON.stringify(input),
       }).then((data) => {
         const thumbnails: Record<string, string> = {}
+        const displays: Record<string, string> = {}
+        const variants: Record<string, { original_url: string; display_url: string; thumbnail_url: string | null; optimized_url: string | null }> = {}
         for (const [url, thumbnailUrl] of Object.entries(data.data.thumbnails ?? {})) {
           thumbnails[toCanvasSafeAssetUrl(url)] = toCanvasSafeAssetUrl(thumbnailUrl)
         }
+        for (const [url, displayUrl] of Object.entries(data.data.displays ?? {})) {
+          displays[toCanvasSafeAssetUrl(url)] = toCanvasSafeAssetUrl(displayUrl)
+        }
+        for (const [url, variant] of Object.entries(data.data.variants ?? {})) {
+          variants[toCanvasSafeAssetUrl(url)] = {
+            original_url: toCanvasSafeAssetUrl(variant.original_url),
+            display_url: toCanvasSafeAssetUrl(variant.display_url),
+            thumbnail_url: variant.thumbnail_url ? toCanvasSafeAssetUrl(variant.thumbnail_url) : null,
+            optimized_url: variant.optimized_url ? toCanvasSafeAssetUrl(variant.optimized_url) : null,
+          }
+        }
         data.data.thumbnails = thumbnails
+        data.data.displays = displays
+        data.data.variants = variants
         data.data.assets = (data.data.assets ?? []).map((asset) => ({
           ...asset,
           public_url: toCanvasSafeAssetUrl(asset.public_url),
+          original_url: asset.original_url ? toCanvasSafeAssetUrl(asset.original_url) : toCanvasSafeAssetUrl(asset.public_url),
+          optimized_url: asset.optimized_url ? toCanvasSafeAssetUrl(asset.optimized_url) : asset.optimized_url,
+          display_url: asset.display_url ? toCanvasSafeAssetUrl(asset.display_url) : toCanvasSafeAssetUrl(asset.optimized_url || asset.public_url),
           thumbnail_url: asset.thumbnail_url ? toCanvasSafeAssetUrl(asset.thumbnail_url) : asset.thumbnail_url,
         }))
         return data

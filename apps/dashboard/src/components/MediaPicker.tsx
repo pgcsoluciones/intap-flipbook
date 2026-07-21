@@ -7,6 +7,30 @@ const ACCEPT_SVG = '.svg,image/svg+xml'
 const MAX_PDF_BYTES = 50 * 1024 * 1024
 const BANK_PAGE_SIZE = 12
 
+function perfEnabled() {
+  return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('perf') === '1'
+}
+
+function perfMark(name: string, detail?: Record<string, unknown>) {
+  if (!perfEnabled()) return
+  try {
+    performance.mark(name)
+    console.debug('[editor-perf]', name, detail ?? {})
+  } catch {}
+}
+
+function perfMeasure(name: string, start: string, detail?: Record<string, unknown>) {
+  if (!perfEnabled()) return
+  try {
+    performance.measure(name, start)
+    const entry = performance.getEntriesByName(name).slice(-1)[0]
+    console.debug('[editor-perf]', name, {
+      duration_ms: entry ? Math.round(entry.duration * 10) / 10 : null,
+      ...detail,
+    })
+  } catch {}
+}
+
 type MediaPickerMode = 'image' | 'pages' | 'svg'
 
 type MediaPickerProps = {
@@ -102,7 +126,8 @@ function formatMime(mime?: string) {
 }
 
 export function mediaAssetToPickerItem(asset: MediaAsset): PickerItem | null {
-  const url = toCanvasSafeAssetUrl(asset.public_url)
+  const originalUrl = toCanvasSafeAssetUrl(asset.public_url)
+  const url = toCanvasSafeAssetUrl(asset.display_url || asset.optimized_url || asset.public_url)
   if (!url) return null
   const thumbUrl = asset.thumbnail_url ? toCanvasSafeAssetUrl(asset.thumbnail_url) : url
   return {
@@ -112,7 +137,14 @@ export function mediaAssetToPickerItem(asset: MediaAsset): PickerItem | null {
     name: asset.original_name,
     format: formatMime(asset.mime_type),
     size: formatBytes(asset.size_bytes),
-    asset: { ...asset, public_url: url, thumbnail_url: asset.thumbnail_url ? thumbUrl : asset.thumbnail_url },
+    asset: {
+      ...asset,
+      public_url: originalUrl || url,
+      original_url: asset.original_url ? toCanvasSafeAssetUrl(asset.original_url) : originalUrl || url,
+      optimized_url: asset.optimized_url ? toCanvasSafeAssetUrl(asset.optimized_url) : asset.optimized_url,
+      display_url: url,
+      thumbnail_url: asset.thumbnail_url ? thumbUrl : asset.thumbnail_url,
+    },
   }
 }
 
@@ -260,6 +292,7 @@ export default function MediaPicker({
     setError('')
     setNotice('')
     try {
+      perfMark('media-picker-list-start', { page: nextPage })
       const res = await api.mediaAssets.list({
         publication_id: publicationId,
         q,
@@ -276,6 +309,7 @@ export default function MediaPicker({
         total_pages: res.page?.total_pages ?? 1,
         has_more: !!res.page?.has_more,
       })
+      perfMeasure('media-picker-list-loaded', 'media-picker-list-start', { count: (res.data ?? []).length, page: nextPage })
     } catch (err: any) {
       if (seq === loadSeqRef.current) setError(err?.message ?? 'No se pudo cargar el banco del proyecto')
     } finally {
@@ -326,7 +360,7 @@ export default function MediaPicker({
       legacyItems,
       assetTotal: pageInfo.total,
       page: pageNumber,
-      keyForAsset: (asset) => normalizeUrlForCompare(asset.url),
+      keyForAsset: (asset) => normalizeUrlForCompare(asset.asset?.public_url || asset.url),
       keyForLegacy: (legacy) => normalizeUrlForCompare(legacy.url),
     }).items
   }, [assets, legacyItems, mode, pageInfo.total, pageNumber])
@@ -421,7 +455,10 @@ export default function MediaPicker({
   const refreshAfterBankRemoval = async (removedAssets: MediaAsset[]) => {
     setSelectedItems((prev) => prev.filter((item) => {
       if (item.asset) return !removedAssets.some((asset) => asset.id === item.asset?.id)
-      return !removedAssets.some((asset) => normalizeUrlForCompare(asset.public_url) === normalizeUrlForCompare(item.url))
+      return !removedAssets.some((asset) =>
+        normalizeUrlForCompare(asset.public_url) === normalizeUrlForCompare(item.url)
+        || normalizeUrlForCompare(asset.display_url || asset.optimized_url || '') === normalizeUrlForCompare(item.url),
+      )
     }))
     setAssets((prev) => prev.filter((asset) => !removedAssets.some((removed) => removed.id === asset.id)))
     setKnownAssetUrls((prev) => Array.from(new Set([...prev, ...removedAssets.map((asset) => asset.public_url)])))
@@ -510,7 +547,7 @@ export default function MediaPicker({
             optimization: optimized.metadata,
           })
           const asset = res.data.asset
-          results.push({ file, optimized, asset, url: toCanvasSafeAssetUrl(res.data.url), reused: res.data.reused })
+          results.push({ file, optimized, asset, url: toCanvasSafeAssetUrl(asset.display_url || asset.optimized_url || res.data.url), reused: res.data.reused })
           setAssets((prev) => {
             if (prev.some((item) => item.id === asset.id)) return prev
             return [asset, ...prev]

@@ -153,7 +153,9 @@ class FakeStatement {
         const q = String(this.params[3]).replace(/%/g, '').toLowerCase()
         rows = rows.filter((asset) => asset.original_name.toLowerCase().includes(q))
       }
-      if (this.sql.includes('thumbnail_url IS NULL')) {
+      if (this.sql.includes('optimized_url IS NULL')) {
+        rows = rows.filter((asset) => !asset.thumbnail_url || !asset.optimized_url)
+      } else if (this.sql.includes('thumbnail_url IS NULL')) {
         rows = rows.filter((asset) => !asset.thumbnail_url)
       }
       return { count: rows.length }
@@ -204,7 +206,10 @@ class FakeStatement {
         const q = String(this.params[index++]).replace(/%/g, '').toLowerCase()
         rows = rows.filter((asset) => asset.original_name.toLowerCase().includes(q))
       }
-      if (this.sql.includes('thumbnail_url IS NULL')) {
+      if (this.sql.includes('optimized_url IS NULL')) {
+        index += 2
+        rows = rows.filter((asset) => !asset.thumbnail_url || !asset.optimized_url)
+      } else if (this.sql.includes('thumbnail_url IS NULL')) {
         index += 1
         rows = rows.filter((asset) => !asset.thumbnail_url)
       }
@@ -254,8 +259,33 @@ class FakeStatement {
         width,
         height,
       ] = base
+      const hasDisplayVariantColumns = this.params.length >= 33
       const hasOptimizationColumns = this.params.length > 14
-      const optimization = hasOptimizationColumns
+      const optimization = hasDisplayVariantColumns
+        ? {
+            original_mime_type: this.params[12],
+            original_size_bytes: this.params[13],
+            original_width: this.params[14],
+            original_height: this.params[15],
+            optimized_storage_key: this.params[16],
+            optimized_url: this.params[17],
+            optimized_mime_type: this.params[18],
+            optimized_size_bytes: this.params[19],
+            optimized_width: this.params[20],
+            optimized_height: this.params[21],
+            thumbnail_storage_key: this.params[22],
+            thumbnail_url: this.params[23],
+            thumbnail_mime_type: this.params[24],
+            thumbnail_size_bytes: this.params[25],
+            thumbnail_width: this.params[26],
+            thumbnail_height: this.params[27],
+            optimization_status: this.params[28],
+            optimization_version: this.params[29],
+            optimized_at: this.params[30],
+            created_at: this.params[31],
+            updated_at: this.params[32],
+          }
+        : hasOptimizationColumns
         ? {
             original_mime_type: this.params[12],
             original_size_bytes: this.params[13],
@@ -300,6 +330,53 @@ class FakeStatement {
         height,
         ...optimization,
       })
+      return { success: true }
+    }
+    if (this.sql.startsWith('UPDATE media_assets SET optimized_storage_key = ?')) {
+      const [
+        optimized_storage_key,
+        optimized_url,
+        optimized_mime_type,
+        optimized_size_bytes,
+        optimized_width,
+        optimized_height,
+        thumbnail_storage_key,
+        thumbnail_url,
+        thumbnail_mime_type,
+        thumbnail_size_bytes,
+        thumbnail_width,
+        thumbnail_height,
+        optimization_status,
+        optimization_version,
+        optimized_at,
+        updated_at,
+        id,
+        tenantId,
+        publicationId,
+      ] = this.params
+      this.db.mediaAssets = this.db.mediaAssets.map((asset) =>
+        asset.id === id && asset.tenant_id === tenantId && asset.publication_id === publicationId
+          ? {
+              ...asset,
+              optimized_storage_key,
+              optimized_url,
+              optimized_mime_type,
+              optimized_size_bytes,
+              optimized_width,
+              optimized_height,
+              thumbnail_storage_key,
+              thumbnail_url,
+              thumbnail_mime_type,
+              thumbnail_size_bytes,
+              thumbnail_width,
+              thumbnail_height,
+              optimization_status: asset.optimization_status ?? optimization_status,
+              optimization_version: asset.optimization_version ?? optimization_version,
+              optimized_at: asset.optimized_at ?? optimized_at,
+              updated_at,
+            }
+          : asset,
+      )
       return { success: true }
     }
     if (this.sql.startsWith('UPDATE media_assets SET thumbnail_storage_key = ?')) {
@@ -404,6 +481,20 @@ function optimizedForm(publicationId, file, thumbnail) {
   data.append('thumbnail_height', '270')
   data.append('compression_saved_bytes', '3000000')
   data.append('compression_saved_percent', '75')
+  data.append('optimization_status', 'optimized')
+  data.append('optimization_version', 'phase1b-test')
+  return data
+}
+
+function variantsForm(publicationId, display, thumbnail) {
+  const data = new FormData()
+  data.append('publication_id', publicationId)
+  if (display) data.append('display', display)
+  if (thumbnail) data.append('thumbnail', thumbnail)
+  data.append('optimized_width', '1800')
+  data.append('optimized_height', '1200')
+  data.append('thumbnail_width', '360')
+  data.append('thumbnail_height', '240')
   data.append('optimization_status', 'optimized')
   data.append('optimization_version', 'phase1b-test')
   return data
@@ -792,6 +883,23 @@ test('listing pending thumbnails is scoped to tenant and publication', async () 
   assert.equal(result.body.page.total, 1)
 })
 
+test('listing pending optimization includes assets missing display or thumbnail only in current publication', async () => {
+  const db = new FakeD1({
+    mediaAssets: [
+      { id: 'missing-display', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/missing-display.png', public_url: 'https://media.example.test/uploads/user-1/missing-display.png', original_name: 'missing-display.png', mime_type: 'image/png', size_bytes: 1, sha256: '1', width: null, height: null, thumbnail_url: 'https://media.example.test/uploads/user-1/missing-display-thumb.webp', optimized_url: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'missing-thumb', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/missing-thumb.png', public_url: 'https://media.example.test/uploads/user-1/missing-thumb.png', original_name: 'missing-thumb.png', mime_type: 'image/png', size_bytes: 1, sha256: '2', width: null, height: null, thumbnail_url: null, optimized_url: 'https://media.example.test/uploads/user-1/missing-thumb-display.webp', created_at: '2026-01-02T00:00:00.000Z', updated_at: '2026-01-02T00:00:00.000Z' },
+      { id: 'ready', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/ready.png', public_url: 'https://media.example.test/uploads/user-1/ready.png', original_name: 'ready.png', mime_type: 'image/png', size_bytes: 1, sha256: '3', width: null, height: null, thumbnail_url: 'https://media.example.test/uploads/user-1/ready-thumb.webp', optimized_url: 'https://media.example.test/uploads/user-1/ready-display.webp', created_at: '2026-01-03T00:00:00.000Z', updated_at: '2026-01-03T00:00:00.000Z' },
+      { id: 'foreign', tenant_id: 'user-2', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-2/foreign.png', public_url: 'https://media.example.test/uploads/user-2/foreign.png', original_name: 'foreign.png', mime_type: 'image/png', size_bytes: 1, sha256: '4', width: null, height: null, thumbnail_url: null, optimized_url: null, created_at: '2026-01-04T00:00:00.000Z', updated_at: '2026-01-04T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const result = await requestUpload(db, r2, '/media-assets?publication_id=pub-1&needs_optimization=true&limit=12&page=1', { method: 'GET' })
+
+  assert.equal(result.status, 200)
+  assert.deepEqual(result.body.data.map((asset) => asset.id), ['missing-thumb', 'missing-display'])
+  assert.equal(result.body.page.total, 2)
+})
+
 test('resolve thumbnails returns visible current publication assets without R2 reads', async () => {
   const db = new FakeD1({
     mediaAssets: [
@@ -819,7 +927,52 @@ test('resolve thumbnails returns visible current publication assets without R2 r
   assert.deepEqual(result.body.data.thumbnails, {
     'https://media.example.test/uploads/user-1/ready-1.png': 'https://media.example.test/uploads/user-1/ready-1-thumb.webp',
   })
+  assert.deepEqual(result.body.data.displays, {
+    'https://media.example.test/uploads/user-1/ready-1.png': 'https://media.example.test/uploads/user-1/ready-1.png',
+    'https://media.example.test/uploads/user-1/pending-1.png': 'https://media.example.test/uploads/user-1/pending-1.png',
+  })
+  assert.equal(result.body.data.variants['https://media.example.test/uploads/user-1/ready-1.png'].display_url, 'https://media.example.test/uploads/user-1/ready-1.png')
   assert.deepEqual(result.body.data.assets.map((asset) => asset.id).sort(), ['pending-1', 'ready-1'])
+  assert.equal(r2.puts.length, 0)
+})
+
+test('legacy asset can store display and thumbnail variants without changing public_url', async () => {
+  const db = new FakeD1({
+    mediaAssets: [
+      { id: 'legacy-1', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/legacy-1.jpg', public_url: 'https://media.example.test/uploads/user-1/legacy-1.jpg', original_name: 'legacy-1.jpg', mime_type: 'image/jpeg', size_bytes: 2400000, sha256: 'legacy-1', width: null, height: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const result = await requestUpload(db, r2, '/media-assets/legacy-1/variants', {
+    method: 'POST',
+    body: variantsForm('pub-1', new File(['display'], 'display.webp', { type: 'image/webp' }), new File(['thumb'], 'thumb.webp', { type: 'image/webp' })),
+  })
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.data.asset.public_url, 'https://media.example.test/uploads/user-1/legacy-1.jpg')
+  assert.equal(result.body.data.asset.original_url, 'https://media.example.test/uploads/user-1/legacy-1.jpg')
+  assert.equal(result.body.data.asset.optimized_url, 'https://media.example.test/uploads/user-1/legacy-1-display.webp')
+  assert.equal(result.body.data.asset.display_url, 'https://media.example.test/uploads/user-1/legacy-1-display.webp')
+  assert.equal(result.body.data.asset.thumbnail_url, 'https://media.example.test/uploads/user-1/legacy-1-thumb.webp')
+  assert.deepEqual(r2.puts.map((put) => put.key), ['uploads/user-1/legacy-1-display.webp', 'uploads/user-1/legacy-1-thumb.webp'])
+})
+
+test('legacy variant upload is idempotent when display and thumbnail already exist', async () => {
+  const db = new FakeD1({
+    mediaAssets: [
+      { id: 'legacy-ready', tenant_id: 'user-1', publication_id: 'pub-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/legacy-ready.jpg', public_url: 'https://media.example.test/uploads/user-1/legacy-ready.jpg', optimized_url: 'https://media.example.test/uploads/user-1/legacy-ready-display.webp', thumbnail_url: 'https://media.example.test/uploads/user-1/legacy-ready-thumb.webp', original_name: 'legacy-ready.jpg', mime_type: 'image/jpeg', size_bytes: 2400000, sha256: 'legacy-ready', width: null, height: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const result = await requestUpload(db, r2, '/media-assets/legacy-ready/variants', {
+    method: 'POST',
+    body: variantsForm('pub-1', new File(['display'], 'display.webp', { type: 'image/webp' }), new File(['thumb'], 'thumb.webp', { type: 'image/webp' })),
+  })
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.data.asset.public_url, 'https://media.example.test/uploads/user-1/legacy-ready.jpg')
+  assert.equal(result.body.data.asset.display_url, 'https://media.example.test/uploads/user-1/legacy-ready-display.webp')
+  assert.equal(result.body.data.asset.thumbnail_url, 'https://media.example.test/uploads/user-1/legacy-ready-thumb.webp')
   assert.equal(r2.puts.length, 0)
 })
 

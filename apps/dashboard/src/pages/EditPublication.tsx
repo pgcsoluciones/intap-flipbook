@@ -6,11 +6,13 @@ import { ApiRequestError, api, toCanvasSafeAssetUrl, type MediaAsset } from '../
 import { PageBatchConfirmationError, pdfPageAssetName, processPageBatch, uploadPdfRenderedPagesAsAssets } from '../lib/pageBatch'
 import { optimizeImageFile, type OptimizedImageResult } from '../lib/imageOptimization'
 import {
+  buildDisplayLookup,
   buildThumbnailLookup,
   firstVisibleIndexes,
   mergeThumbnailLookup,
   pageThumbnailCacheKey,
-  resolvePageImageThumbnailUrl,
+  resolveDisplayUrl,
+  resolvePageCardBackgroundUrl,
   shouldLoadPageThumbnail,
   upsertPageById,
 } from '../lib/editorPerformance'
@@ -105,7 +107,7 @@ function emptyFabricJson() {
 
 // PROTECTED: Rewrites legacy direct R2 image URLs for Fabric-safe thumbnail loading.
 // Removing this causes bank/uploaded raster images to disappear from thumbnails.
-function normalizeFabricAssetJson(json: any): any {
+function normalizeFabricAssetJson(json: any, resolveUrl: (url: string) => string = (url) => url): any {
   if (!json) return json
   let root = json
   if (typeof root === 'string') {
@@ -120,7 +122,7 @@ function normalizeFabricAssetJson(json: any): any {
     if (Array.isArray(node)) return node.map((item) => visit(item))
     const next = { ...node }
     if (typeof next.src === 'string' && isHttpUrl(next.src)) {
-      next.src = toCanvasSafeAssetUrl(next.src)
+      next.src = resolveUrl(toCanvasSafeAssetUrl(next.src))
       next.crossOrigin = 'anonymous'
     }
     if (next.backgroundImage) next.backgroundImage = visit(next.backgroundImage)
@@ -159,6 +161,84 @@ function loadCanvasFabricImage(url: string, onLoad: (img: any) => void, onError?
     }
     onLoad(img)
   }, options as any)
+}
+
+const decodedImageCache = new Map<string, Promise<HTMLImageElement>>()
+
+function perfEnabled() {
+  return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('perf') === '1'
+}
+
+function perfMark(name: string, detail?: Record<string, unknown>) {
+  if (!perfEnabled()) return
+  try {
+    performance.mark(name)
+    console.debug('[editor-perf]', name, detail ?? {})
+  } catch {}
+}
+
+function perfMeasure(name: string, start: string, end?: string, detail?: Record<string, unknown>) {
+  if (!perfEnabled()) return
+  try {
+    if (end) performance.measure(name, start, end)
+    else performance.measure(name, start)
+    const entry = performance.getEntriesByName(name).slice(-1)[0]
+    console.debug('[editor-perf]', name, {
+      duration_ms: entry ? Math.round(entry.duration * 10) / 10 : null,
+      ...detail,
+    })
+  } catch {}
+}
+
+function resourceStats(url: string) {
+  if (typeof performance === 'undefined') return null
+  const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
+  const entry = entries.slice().reverse().find((item) => item.name === url)
+  if (!entry) return null
+  return {
+    transferSize: entry.transferSize,
+    decodedBodySize: entry.decodedBodySize,
+    duration_ms: Math.round(entry.duration * 10) / 10,
+  }
+}
+
+async function loadDecodedImage(url: string) {
+  const safeUrl = toCanvasSafeAssetUrl(url)
+  const cached = decodedImageCache.get(safeUrl)
+  if (cached) {
+    perfMark('image-cache-hit', { url: safeUrl })
+    return cached
+  }
+  perfMark('image-cache-miss', { url: safeUrl })
+  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image()
+    if (isHttpUrl(safeUrl)) img.crossOrigin = 'anonymous'
+    img.onload = async () => {
+      try { await img.decode?.() } catch {}
+      if (perfEnabled()) {
+        console.debug('[editor-perf] image-loaded', {
+          url: safeUrl,
+          naturalWidth: img.naturalWidth,
+          naturalHeight: img.naturalHeight,
+          resource: resourceStats(safeUrl),
+        })
+      }
+      resolve(img)
+    }
+    img.onerror = () => {
+      decodedImageCache.delete(safeUrl)
+      reject(new Error(`No se pudo cargar la imagen: ${safeUrl}`))
+    }
+    img.decoding = 'async'
+    img.src = safeUrl
+  })
+  decodedImageCache.set(safeUrl, promise)
+  return promise
+}
+
+async function loadFabricImageCached(url: string) {
+  const img = await loadDecodedImage(url)
+  return new fabric.Image(img)
 }
 
 const FABRIC_CLONE_CUSTOM_PROPS = ['data']
@@ -1058,6 +1138,8 @@ export default function EditPublication() {
   // Miniaturas reales por página: conserva solo el último dataURL válido para page.id + versión.
   const [thumbnailByPageId, setThumbnailByPageId] = useState<Record<string, PageThumbnailCacheEntry>>({})
   const [thumbnailUrlByPublicUrl, setThumbnailUrlByPublicUrl] = useState<Record<string, string>>({})
+  const [displayUrlByPublicUrl, setDisplayUrlByPublicUrl] = useState<Record<string, string>>({})
+  const [canvasLoading, setCanvasLoading] = useState(false)
   // Debounce por página para agrupar cambios reales antes de pedir un snapshot.
   const thumbnailTimersRef = useRef<Record<string, any>>({})
   // Tokens por página: invalidan resultados viejos cuando entra un trabajo nuevo.
@@ -1093,13 +1175,14 @@ export default function EditPublication() {
     try {
       const [assetsRes, pendingRes] = await Promise.all([
         api.mediaAssets.list({ publication_id: id, limit: 12, page: 1 }),
-        api.mediaAssets.list({ publication_id: id, limit: 1, page: 1, needs_thumbnail: true }),
+        api.mediaAssets.list({ publication_id: id, limit: 1, page: 1, needs_optimization: true }),
       ])
       const assets = assetsRes.data ?? []
       setMediaBankAssets(assets)
       setMediaBankTotal(assetsRes.page?.total ?? assets.length)
       setOldImagesPendingCount(pendingRes.page?.total ?? 0)
       setThumbnailUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, buildThumbnailLookup(assets, toCanvasSafeAssetUrl)))
+      setDisplayUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, buildDisplayLookup(assets, toCanvasSafeAssetUrl)))
     } catch (err) {
       console.warn('[media-bank] failed to load assets', err)
     }
@@ -1200,9 +1283,8 @@ export default function EditPublication() {
   const restoreCanvasBackground = useCallback((canvas: any, page: any) => {
     return new Promise<void>((resolve) => {
       const src = page?.image_url || BLANK_PAGE_URL
-      const safeSrc = toCanvasSafeAssetUrl(src)
-      const options = isHttpUrl(safeSrc) ? { crossOrigin: 'anonymous' } : undefined
-      fabric.Image.fromURL(safeSrc, (img: any) => {
+      const safeSrc = resolveDisplayUrl(src, displayUrlByPublicUrl, toCanvasSafeAssetUrl)
+      loadFabricImageCached(safeSrc).then((img: any) => {
         if (img && img.width && img.height) {
           bgNatRef.current = { iw: img.width, ih: img.height }
           const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
@@ -1214,9 +1296,12 @@ export default function EditPublication() {
           canvas.renderAll()
           resolve()
         })
-      }, options as any)
+      }).catch(() => {
+        canvas.renderAll()
+        resolve()
+      })
     })
-  }, [])
+  }, [displayUrlByPublicUrl])
 
   // PROTECTED: Undo/Redo must reload objects and then restore the page background before render.
   const applyHistory = useCallback((json: string) => {
@@ -1226,7 +1311,7 @@ export default function EditPublication() {
     clearTimeout(autosaveTimer.current)
     if (pageId) saveSeqRef.current[pageId] = (saveSeqRef.current[pageId] ?? 0) + 1
     isUndoRedoRef.current = true
-    c.loadFromJSON(stripBackgroundImage(json), async () => {
+    c.loadFromJSON(stripBackgroundImage(normalizeFabricAssetJson(json, (url) => resolveDisplayUrl(url, displayUrlByPublicUrl, toCanvasSafeAssetUrl))), async () => {
       await restoreCanvasBackground(c, activePageRef.current ? pagesRef.current.find((p) => p.id === activePageRef.current) : activePage)
       const active = c.getActiveObject?.() ?? null
       selectedRef.current = active
@@ -1235,7 +1320,7 @@ export default function EditPublication() {
       isUndoRedoRef.current = false
       scheduleAutosaveRef.current()
     })
-  }, [activePage, restoreCanvasBackground])
+  }, [activePage, displayUrlByPublicUrl, restoreCanvasBackground])
 
   useEffect(() => {
     pagesRef.current = pages
@@ -1414,6 +1499,7 @@ export default function EditPublication() {
     const validAssets = assets.filter((asset) => asset?.id)
     if (!validAssets.length) return
     setThumbnailUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, buildThumbnailLookup(validAssets, toCanvasSafeAssetUrl)))
+    setDisplayUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, buildDisplayLookup(validAssets, toCanvasSafeAssetUrl)))
     setMediaBankAssets((prev) => {
       const seen = new Set(prev.map((asset) => asset.id))
       const nextAssets = validAssets.filter((asset) => !seen.has(asset.id))
@@ -1430,6 +1516,7 @@ export default function EditPublication() {
     try {
       const res = await api.mediaAssets.resolveThumbnails({ publication_id: id, public_urls: urls })
       setThumbnailUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, res.data.thumbnails ?? {}))
+      setDisplayUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, res.data.displays ?? {}))
       rememberMediaAssets(res.data.assets ?? [])
     } catch (error) {
       console.warn('[page-thumbnails] metadata lookup failed', error)
@@ -1511,7 +1598,7 @@ export default function EditPublication() {
       }
     }
 
-    const firstBatch = await api.mediaAssets.list({ publication_id: id, limit: 12, page: 1, needs_thumbnail: true })
+    const firstBatch = await api.mediaAssets.list({ publication_id: id, limit: 12, page: 1, needs_optimization: true })
     const total = firstBatch.page?.total ?? (firstBatch.data ?? []).length
     if (!total) {
       setOldImagesPendingCount(0)
@@ -1530,18 +1617,22 @@ export default function EditPublication() {
         const blob = await res.blob()
         const file = new File([blob], asset.original_name || 'imagen', { type: blob.type || asset.mime_type })
         const optimized = await optimizeImageFile(file)
-        const thumbnailRes = await api.mediaAssets.uploadThumbnail(asset.id, {
+        const thumbnailRes = await api.mediaAssets.uploadVariants(asset.id, {
           publication_id: id,
+          display: optimized.displayFile,
           thumbnail: optimized.thumbnailFile,
           metadata: {
+            optimized_width: optimized.metadata.optimized_width,
+            optimized_height: optimized.metadata.optimized_height,
             thumbnail_width: optimized.metadata.thumbnail_width,
             thumbnail_height: optimized.metadata.thumbnail_height,
-            optimization_status: optimized.metadata.optimization_status === 'optimized' ? 'thumbnail_only' : optimized.metadata.optimization_status,
+            optimization_status: optimized.metadata.optimization_status,
             optimization_version: optimized.metadata.optimization_version,
           },
         })
         const updatedAsset = thumbnailRes.data.asset
         setThumbnailUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, buildThumbnailLookup([updatedAsset], toCanvasSafeAssetUrl)))
+        setDisplayUrlByPublicUrl((prev) => mergeThumbnailLookup(prev, buildDisplayLookup([updatedAsset], toCanvasSafeAssetUrl)))
         setMediaBankAssets((prev) => prev.map((item) =>
           item.id === asset.id
             ? { ...item, ...updatedAsset }
@@ -1581,7 +1672,7 @@ export default function EditPublication() {
       const queue = [...candidates]
       await Promise.all(Array.from({ length: Math.min(2, queue.length) }, () => runBatch(queue)))
       if (legacyOptimizationCancelRef.current) break
-      const nextBatch = await api.mediaAssets.list({ publication_id: id, limit: 12, page: 1, needs_thumbnail: true })
+      const nextBatch = await api.mediaAssets.list({ publication_id: id, limit: 12, page: 1, needs_optimization: true })
       batch = (nextBatch.data ?? []).filter((asset) => !failedThisRun.has(asset.id))
       setOldImagesPendingCount(nextBatch.page?.total ?? batch.length)
     }
@@ -1600,9 +1691,10 @@ export default function EditPublication() {
     const seen = new Set<string>()
     const items: Array<{ key: string; url: string; thumbUrl?: string; name: string; meta: string }> = []
     for (const asset of mediaBankAssets) {
-      const url = toCanvasSafeAssetUrl(asset.public_url)
-      if (!url || seen.has(url)) continue
-      seen.add(url)
+      const originalUrl = toCanvasSafeAssetUrl(asset.public_url)
+      const url = toCanvasSafeAssetUrl(asset.display_url || asset.optimized_url || asset.public_url)
+      if (!url || !originalUrl || seen.has(originalUrl)) continue
+      seen.add(originalUrl)
       items.push({
         key: `asset:${asset.id}`,
         url,
@@ -1612,20 +1704,21 @@ export default function EditPublication() {
       })
     }
     for (const entry of imageBank) {
-      const url = toCanvasSafeAssetUrl(entry)
-      if (!url || seen.has(url)) continue
-      seen.add(url)
-      const name = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Imagen anterior')
+      const originalUrl = toCanvasSafeAssetUrl(entry)
+      const url = resolveDisplayUrl(originalUrl, displayUrlByPublicUrl, toCanvasSafeAssetUrl)
+      if (!originalUrl || !url || seen.has(originalUrl)) continue
+      seen.add(originalUrl)
+      const name = decodeURIComponent(originalUrl.split('/').pop()?.split('?')[0] || 'Imagen anterior')
       items.push({
-        key: `legacy:${url}`,
+        key: `legacy:${originalUrl}`,
         url,
-        thumbUrl: thumbnailUrlByPublicUrl[url] || undefined,
+        thumbUrl: thumbnailUrlByPublicUrl[originalUrl] || url,
         name,
-        meta: url.toLowerCase().includes('.svg') ? 'SVG · Anterior' : 'Anterior',
+        meta: originalUrl.toLowerCase().includes('.svg') ? 'SVG · Anterior' : 'Anterior',
       })
     }
     return items
-  }, [imageBank, mediaBankAssets, thumbnailUrlByPublicUrl])
+  }, [displayUrlByPublicUrl, imageBank, mediaBankAssets, thumbnailUrlByPublicUrl])
 
   // ── Autoguardado: guarda el canvas actual en segundo plano ──
   // Se llama tras cada cambio (debounce) y al cambiar de página.
@@ -1730,10 +1823,15 @@ export default function EditPublication() {
 
   // Mantiene la ref actualizada para que applyHistory pueda llamarla
   scheduleAutosaveRef.current = scheduleAutosave
+  const activePageDisplayUrl = useMemo(() => (
+    activePage ? resolveDisplayUrl(activePage.image_url || BLANK_PAGE_URL, displayUrlByPublicUrl, toCanvasSafeAssetUrl) : ''
+  ), [activePage?.image_url, displayUrlByPublicUrl])
 
   // ── Inicialización del canvas Fabric.js por página ──
   useEffect(() => {
     if (!activePage || !canvasRef.current) return
+    setCanvasLoading(true)
+    perfMark('canvas-load-start', { pageId: activePage.id, image_url: activePage.image_url, display_url: activePageDisplayUrl })
 
     const generation = canvasGenerationRef.current + 1
     canvasGenerationRef.current = generation
@@ -1783,21 +1881,25 @@ export default function EditPublication() {
     // internamente, lo que borra cualquier backgroundImage ya puesta. Llamar fromURL
     // antes del clear hace que el fondo desaparezca.
     const loadBg = (onDone: () => void) => {
-      if (!activePage.image_url) {
-        if (!isCurrentLoad()) return
-        canvas.renderAll()
+      const finishReady = () => {
         if (!isCurrentLoad()) return
         canvasReadyRef.current = true
+        setCanvasLoading(false)
+        perfMark('canvas-first-useful-render', { pageId: activePage.id })
+        perfMeasure('canvas-time-to-first-useful-render', 'canvas-load-start', undefined, { pageId: activePage.id })
         onDone()
+      }
+      if (!activePageDisplayUrl) {
+        if (!isCurrentLoad()) return
+        canvas.renderAll()
+        finishReady()
         return
       }
-      fabric.Image.fromURL(activePage.image_url, (img: any) => {
+      loadFabricImageCached(activePageDisplayUrl).then((img: any) => {
         if (!isCurrentLoad()) return
         if (!img) {
           canvas.renderAll()
-          if (!isCurrentLoad()) return
-          canvasReadyRef.current = true
-          onDone()
+          finishReady()
           return
         }
         img.set({ selectable: false, evented: false })
@@ -1810,10 +1912,13 @@ export default function EditPublication() {
           if (!isCurrentLoad()) return
           bgImgRef.current = canvas.backgroundImage ?? img
           canvas.renderAll()
-          if (!isCurrentLoad()) return
-          canvasReadyRef.current = true
-          onDone()
+          finishReady()
         })
+      }).catch((error) => {
+        if (!isCurrentLoad()) return
+        console.warn('[editor] background image failed', activePageDisplayUrl, error)
+        canvas.renderAll()
+        finishReady()
       })
     }
 
@@ -1854,7 +1959,7 @@ export default function EditPublication() {
       const pageJson = typeof activePage.canvas_json === 'string'
         ? JSON.parse(activePage.canvas_json)
         : activePage.canvas_json
-      const jsonWithoutBg = stripBackgroundImage(pageJson)
+      const jsonWithoutBg = stripBackgroundImage(normalizeFabricAssetJson(pageJson, (url) => resolveDisplayUrl(url, displayUrlByPublicUrl, toCanvasSafeAssetUrl)))
       canvas.loadFromJSON(jsonWithoutBg, () => {
         if (!isCurrentLoad()) return
         isLoading = false
@@ -2023,13 +2128,24 @@ export default function EditPublication() {
       }
       canvasGenerationRef.current += 1
       canvasReadyRef.current = false
+      setCanvasLoading(false)
       cleanupCanvas.dispose()
       if (fabricRef.current === cleanupCanvas) {
         fabricRef.current = null
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage?.id])
+  }, [activePage?.id, activePageDisplayUrl, displayUrlByPublicUrl])
+
+  useEffect(() => {
+    if (!activePage || !pages.length) return
+    const index = pages.findIndex((page) => page.id === activePage.id)
+    if (index < 0) return
+    for (const nearPage of [pages[index - 1], pages[index + 1]]) {
+      const url = nearPage ? resolveDisplayUrl(nearPage.image_url || '', displayUrlByPublicUrl, toCanvasSafeAssetUrl) : ''
+      if (url) void loadDecodedImage(url).catch(() => {})
+    }
+  }, [activePage?.id, displayUrlByPublicUrl, pages])
 
   // Activa/desactiva el modo de reencuadre (hoja o imagen): mientras está activo se
   // desactiva la selección de elementos (para arrastrar) y el cursor cambia a "grab".
@@ -2087,15 +2203,18 @@ export default function EditPublication() {
   // ── Elementos del canvas ──
   function addText(opts: any = {}) {
     const c = fabricRef.current; if (!c) return
+    perfMark('add-text-start', { pageId: pageIdRef.current })
     const t = new fabric.Textbox(opts.sample ?? 'Texto aquí', {
       left: 60, top: 60, width: 240, fontSize: 24, fill: '#111827',
       fontFamily: defaultFont, data: { kind: 'text' }, ...opts,
     })
     c.add(t); c.setActiveObject(t); c.requestRenderAll()
+    perfMeasure('add-text-latency', 'add-text-start', undefined, { pageId: pageIdRef.current })
     scheduleAutosave()
   }
   function addShape(kind: 'rect' | 'circle' | 'ellipse' | 'triangle' | 'line' | 'star') {
     const c = fabricRef.current; if (!c) return
+    perfMark('add-shape-start', { pageId: pageIdRef.current, kind })
     let o: any
     const common = { left: 100, top: 100, fill: 'rgba(79,70,229,0.85)', data: { kind: 'shape' } }
     if (kind === 'rect') o = new fabric.Rect({ ...common, width: 160, height: 90, rx: 8, ry: 8 })
@@ -2115,6 +2234,7 @@ export default function EditPublication() {
       o = new fabric.Polygon(pts, { ...common, fill: '#F59E0B' })
     }
     c.add(o); c.setActiveObject(o); c.requestRenderAll()
+    perfMeasure('add-shape-latency', 'add-shape-start', undefined, { pageId: pageIdRef.current, kind })
     scheduleAutosave()
   }
 
@@ -2194,16 +2314,19 @@ export default function EditPublication() {
   // Inserta una imagen ya subida (del banco) como elemento editable, sin re-subir
   function addImageFromUrl(url: string) {
     const c = fabricRef.current; if (!c) return
+    const displayUrl = resolveDisplayUrl(url, displayUrlByPublicUrl, toCanvasSafeAssetUrl)
+    perfMark('add-image-start', { pageId: pageIdRef.current, url: displayUrl })
     return new Promise<void>((resolve) => {
-      fabric.Image.fromURL(url, (img: any) => {
+      loadFabricImageCached(displayUrl).then((img: any) => {
       // Escala la imagen para que no ocupe más del 60 % del ancho del canvas
       const maxW = c.getWidth() * 0.6
       if (img.width > maxW) img.scaleToWidth(maxW)
-      img.set({ left: 60, top: 60, data: { kind: 'image', src: url } })
+      img.set({ left: 60, top: 60, data: { kind: 'image', src: displayUrl } })
       c.add(img); c.setActiveObject(img); c.requestRenderAll()
+      perfMeasure('add-image-latency', 'add-image-start', undefined, { pageId: pageIdRef.current, url: displayUrl })
       scheduleAutosave()
       resolve()
-    })
+    }).catch(() => resolve())
     })
   }
 
@@ -3163,6 +3286,7 @@ export default function EditPublication() {
   }
 
   function selectTool(key: ToolKey) {
+    if (key === 'image' || key === 'uploads') perfMark('media-bank-open', { tool: key })
     if (key === activeTool && panelOpen) { setPanelOpen(false); return }
     setActiveTool(key); setPanelOpen(true)
     if (key === 'svglib' || key === 'buttons') loadSvgLibrary()
@@ -3237,6 +3361,7 @@ export default function EditPublication() {
               pages={pages}
               thumbnailByPageId={thumbnailByPageId}
               thumbnailUrlByPublicUrl={thumbnailUrlByPublicUrl}
+              displayUrlByPublicUrl={displayUrlByPublicUrl}
               activePage={activePage}
               requestThumbnailUpdate={requestThumbnailUpdate}
               setActivePage={setActivePage}
@@ -3369,10 +3494,15 @@ export default function EditPublication() {
           <div style={s.canvasWrap}>
             {activePage ? (
               <div
-                style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center', boxShadow: '0 8px 32px rgba(0,0,0,0.18)', ...(adjustMode ? { outline: '2px solid #4F46E5', outlineOffset: 2 } : {}) }}
+                style={{ position: 'relative', transform: `scale(${zoom / 100})`, transformOrigin: 'top center', boxShadow: '0 8px 32px rgba(0,0,0,0.18)', ...(adjustMode ? { outline: '2px solid #4F46E5', outlineOffset: 2 } : {}) }}
                 onContextMenu={onCanvasContextMenu}
               >
                 <canvas ref={canvasRef} />
+                {canvasLoading && (
+                  <div style={s.canvasLoadingOverlay}>
+                    <span style={s.canvasLoadingText}>Cargando página...</span>
+                  </div>
+                )}
               </div>
             ) : (
               <div
@@ -3859,7 +3989,7 @@ function PagesPanel(p: any) {
               index={i}
               active={p.activePage?.id === page.id}
               shouldLoad={shouldLoad}
-              backgroundUrl={resolvePageImageThumbnailUrl(page, p.thumbnailUrlByPublicUrl ?? {}, toCanvasSafeAssetUrl) || BLANK_PAGE_URL}
+              backgroundUrl={resolvePageCardBackgroundUrl(page, p.thumbnailUrlByPublicUrl ?? {}, p.displayUrlByPublicUrl ?? {}, toCanvasSafeAssetUrl) || BLANK_PAGE_URL}
               overlayUrl={overlayUrl}
               onVisible={markVisible}
               onSelect={selectPage}
@@ -6820,6 +6950,8 @@ const s: Record<string, React.CSSProperties> = {
   zoomBtn:   { background: 'none', border: '1px solid transparent', borderRadius: 12, padding: '3px 9px', fontSize: 11, cursor: 'pointer', color: '#6b7280', fontWeight: 500 },
   zoomActive:{ background: '#f3f4f6', borderColor: '#e5e7eb', color: '#111827', fontWeight: 600 },
   canvasWrap:  { flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 32, alignItems: 'flex-start' },
+  canvasLoadingOverlay: { position: 'absolute', inset: 0, background: 'rgba(249,250,251,0.86)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' },
+  canvasLoadingText: { fontSize: 14, fontWeight: 700, color: '#374151', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', boxShadow: '0 8px 24px rgba(15,23,42,0.12)' },
   adjustBar:   { display: 'flex', alignItems: 'center', gap: 14, padding: '8px 16px', background: '#eef2ff', borderBottom: '1px solid #c7d2fe', flexShrink: 0, flexWrap: 'wrap' } as React.CSSProperties,
   adjustReset: { background: '#fff', border: '1px solid #c7d2fe', borderRadius: 7, padding: '5px 12px', fontSize: 12, fontWeight: 600, color: '#4338ca', cursor: 'pointer', fontFamily: 'inherit' } as React.CSSProperties,
   insTabs:   { display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', flexShrink: 0 } as React.CSSProperties,

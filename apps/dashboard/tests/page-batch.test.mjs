@@ -583,12 +583,14 @@ test('deduplicacion evita repetir una URL como asset y legacy', async () => {
   }
 })
 
-test('MIS IMAGENES usa thumbnail_url y cae a public_url si no existe', async () => {
+test('MIS IMAGENES muestra thumbnail_url y entrega display_url para lienzo', async () => {
   const picker = await loadMediaPicker()
   try {
     const withThumb = picker.mediaAssetToPickerItem({
       id: 'a1',
       public_url: 'https://media.example.test/uploads/user-1/full.webp',
+      optimized_url: 'https://media.example.test/uploads/user-1/full-display.webp',
+      display_url: 'https://media.example.test/uploads/user-1/full-display.webp',
       thumbnail_url: 'https://media.example.test/uploads/user-1/full-thumb.webp',
       original_name: 'full.webp',
       mime_type: 'image/webp',
@@ -604,7 +606,10 @@ test('MIS IMAGENES usa thumbnail_url y cae a public_url si no existe', async () 
     })
 
     assert.equal(withThumb.thumbUrl, 'https://media.example.test/uploads/user-1/full-thumb.webp')
+    assert.equal(withThumb.url, 'https://media.example.test/uploads/user-1/full-display.webp')
+    assert.equal(withThumb.asset.public_url, 'https://media.example.test/uploads/user-1/full.webp')
     assert.equal(withoutThumb.thumbUrl, 'https://media.example.test/uploads/user-1/only.webp')
+    assert.equal(withoutThumb.url, 'https://media.example.test/uploads/user-1/only.webp')
   } finally {
     await picker.cleanup()
   }

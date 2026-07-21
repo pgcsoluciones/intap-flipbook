@@ -101,19 +101,52 @@ test('cambiar de pagina puede reutilizar miniatura cacheada por version', async 
   }
 })
 
-test('tres imagenes legacy cambian fuente visual a thumbnail sin modificar public_url', async () => {
+test('tres imagenes legacy usan thumbnail en tarjetas y display en lienzo sin modificar public_url', async () => {
   const perf = await loadPerf()
   try {
     const assets = [1, 2, 3].map((index) => ({
       public_url: `https://media.example.test/uploads/u/legacy-${index}.jpg`,
+      optimized_url: `https://media.example.test/uploads/u/legacy-${index}-display.webp`,
+      display_url: `https://media.example.test/uploads/u/legacy-${index}-display.webp`,
       thumbnail_url: `https://media.example.test/uploads/u/legacy-${index}-thumb.webp`,
     }))
-    const lookup = perf.buildThumbnailLookup(assets)
+    const thumbnailLookup = perf.buildThumbnailLookup(assets)
+    const displayLookup = perf.buildDisplayLookup(assets)
     for (const asset of assets) {
       const page = { id: asset.public_url, image_url: asset.public_url }
-      assert.equal(perf.resolvePageImageThumbnailUrl(page, lookup), asset.thumbnail_url)
+      assert.equal(perf.resolvePageCardBackgroundUrl(page, thumbnailLookup, displayLookup), asset.thumbnail_url)
+      assert.equal(perf.resolveDisplayUrl(asset.public_url, displayLookup), asset.display_url)
       assert.equal(page.image_url, asset.public_url)
     }
+  } finally {
+    await perf.cleanup()
+  }
+})
+
+test('lienzo usa optimized_url primero y nunca thumbnail_url', async () => {
+  const perf = await loadPerf()
+  try {
+    const original = 'https://media.example.test/uploads/u/legacy.jpg'
+    const thumbnail = 'https://media.example.test/uploads/u/legacy-thumb.webp'
+    const display = 'https://media.example.test/uploads/u/legacy-display.webp'
+    const displayLookup = perf.buildDisplayLookup([{ public_url: original, optimized_url: display, thumbnail_url: thumbnail }])
+
+    assert.equal(perf.resolveDisplayUrl(original, displayLookup), display)
+    assert.notEqual(perf.resolveDisplayUrl(original, displayLookup), thumbnail)
+  } finally {
+    await perf.cleanup()
+  }
+})
+
+test('panel paginas usa thumbnail primero y display solo como fallback ligero', async () => {
+  const perf = await loadPerf()
+  try {
+    const page = { id: 'page-1', image_url: 'https://media.example.test/uploads/u/page.jpg' }
+    const thumbnailLookup = { [page.image_url]: 'https://media.example.test/uploads/u/page-thumb.webp' }
+    const displayLookup = { [page.image_url]: 'https://media.example.test/uploads/u/page-display.webp' }
+
+    assert.equal(perf.resolvePageCardBackgroundUrl(page, thumbnailLookup, displayLookup), thumbnailLookup[page.image_url])
+    assert.equal(perf.resolvePageCardBackgroundUrl(page, {}, displayLookup), displayLookup[page.image_url])
   } finally {
     await perf.cleanup()
   }
