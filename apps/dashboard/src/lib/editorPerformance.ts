@@ -55,7 +55,13 @@ export function resolvePageThumbnailOverlay<T extends { key: string; url: string
   page: PageLike,
   entry: T | null | undefined,
 ) {
-  if (!entry || entry.key !== pageThumbnailCacheKey(page)) return { url: undefined, status: undefined }
+  if (!entry) return { url: undefined, status: undefined }
+
+  // Cuando cambia el canvas, la página recibe una nueva cache key antes de que
+  // termine el render de la nueva miniatura. Conservamos el último overlay válido
+  // para evitar que la tarjeta quede blanca durante el debounce y la cola de render.
+  // replaceLocalPageThumbnail lo sustituirá de forma atómica cuando el nuevo blob
+  // esté listo.
   return { url: entry.url, status: entry.status }
 }
 
