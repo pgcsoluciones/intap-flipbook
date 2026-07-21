@@ -75,6 +75,11 @@ class FakeD1 {
     this.bookings = seed.bookings ?? []
     this.leadIntakes = seed.leadIntakes ?? []
     this.units = seed.units ?? []
+    this.availableTables = new Set(seed.availableTables ?? [
+      'units',
+      'appointment_calendar_bookings',
+      'lead_intakes',
+    ])
     this.failBatch = seed.failBatch ?? null
     this.batchCount = 0
     this.runCount = 0
@@ -128,12 +133,18 @@ class FakeStatement {
       const pub = page && this.db.publications.find((item) => item.id === page.publication_id && item.user_id === userId)
       return page && pub ? { id: page.id, publication_id: page.publication_id } : null
     }
-    if (sql.includes('COUNT(DISTINCT b.id) AS bookings_count')) {
+    if (sql.includes('FROM sqlite_master')) {
+      const [tableName] = this.params
+      return this.db.availableTables.has(tableName) ? { found: 1 } : null
+    }
+    if (sql.includes('COUNT(DISTINCT history.id) AS count')) {
       const [pageId] = this.params
       const markerIds = new Set(this.db.dynamicMarkers.filter((item) => item.page_id === pageId).map((item) => item.id))
-      return {
-        bookings_count: this.db.bookings.filter((item) => markerIds.has(item.marker_id)).length,
-        lead_intakes_count: this.db.leadIntakes.filter((item) => markerIds.has(item.marker_id)).length,
+      if (sql.includes('appointment_calendar_bookings history')) {
+        return { count: this.db.bookings.filter((item) => markerIds.has(item.marker_id)).length }
+      }
+      if (sql.includes('lead_intakes history')) {
+        return { count: this.db.leadIntakes.filter((item) => markerIds.has(item.marker_id)).length }
       }
     }
     throw new Error(`Unhandled first SQL: ${this.sql}`)
@@ -159,6 +170,7 @@ class FakeStatement {
     this.db.runCount += 1
     const sql = this.sql
     if (sql.startsWith('UPDATE units SET page_id = NULL')) {
+      if (!this.db.availableTables.has('units')) throw new Error('no such table: units')
       const [pageId] = this.params
       this.db.units = this.db.units.map((item) => item.page_id === pageId ? { ...item, page_id: null } : item)
       this.db.writes.push('units')
@@ -319,6 +331,34 @@ test('DELETE page with lead intakes returns 409 and preserves records', async ()
   assert.equal(db.pages.length, 4)
   assert.equal(db.dynamicMarkers.length, 1)
   assert.equal(db.batchCount, 0)
+})
+
+test('DELETE succeeds when optional units, bookings and leads tables are not installed', async () => {
+  const db = new FakeD1({
+    ...baseSeed(),
+    dynamicMarkers: [makeRow({ id: 'marker-1', page_id: 'page-2' })],
+    availableTables: [],
+  })
+  const result = await deletePage(db)
+
+  assert.equal(result.status, 200)
+  assert.equal(db.pages.some((page) => page.id === 'page-2'), false)
+  assert.equal(db.dynamicMarkers.some((marker) => marker.id === 'marker-1'), false)
+  assert.equal(db.writes.includes('units'), false)
+})
+
+test('DELETE still blocks lead history when bookings table is not installed', async () => {
+  const db = new FakeD1({
+    ...baseSeed(),
+    dynamicMarkers: [makeRow({ id: 'marker-1', page_id: 'page-2' })],
+    leadIntakes: [makeRow({ id: 'lead-1', marker_id: 'marker-1' })],
+    availableTables: ['lead_intakes'],
+  })
+  const result = await deletePage(db)
+
+  assert.equal(result.status, 409)
+  assert.equal(result.body.code, 'PAGE_HAS_HISTORY')
+  assert.equal(db.pages.some((page) => page.id === 'page-2'), true)
 })
 
 test('DELETE unexpected SQL failure returns generic 500 without exposing SQL', async () => {

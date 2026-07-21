@@ -253,20 +253,53 @@ pages.delete('/pages/:pageId', async (c) => {
     .first<{ id: string; publication_id: string }>()
   if (!page) return c.json({ success: false, error: 'Página no encontrada' }, 404)
 
-  const historySql = `SELECT
-       COUNT(DISTINCT b.id) AS bookings_count,
-       COUNT(DISTINCT li.id) AS lead_intakes_count
-     FROM dynamic_markers dm
-     LEFT JOIN appointment_calendar_bookings b ON b.marker_id = dm.id
-     LEFT JOIN lead_intakes li ON li.marker_id = dm.id
-     WHERE dm.page_id = ?`
+  type OptionalPageTable = 'units' | 'appointment_calendar_bookings' | 'lead_intakes'
+
+  const optionalTableExists = async (tableName: OptionalPageTable) => {
+    const row = await c.env.DB.prepare(
+      `SELECT 1 AS found
+       FROM sqlite_master
+       WHERE type = 'table' AND name = ?
+       LIMIT 1`,
+    ).bind(tableName).first<{ found: number }>()
+
+    return Boolean(row?.found)
+  }
+
+  const countHistoryRows = async (
+    tableName: 'appointment_calendar_bookings' | 'lead_intakes',
+  ) => {
+    if (!(await optionalTableExists(tableName))) return 0
+
+    const row = await c.env.DB.prepare(
+      `SELECT COUNT(DISTINCT history.id) AS count
+       FROM dynamic_markers dm
+       LEFT JOIN ${tableName} history ON history.marker_id = dm.id
+       WHERE dm.page_id = ?`,
+    ).bind(pageId).first<{ count: number }>()
+
+    return Number(row?.count ?? 0)
+  }
+
+  const loadPageHistory = async () => {
+    const [bookingsCount, leadIntakesCount] = await Promise.all([
+      countHistoryRows('appointment_calendar_bookings'),
+      countHistoryRows('lead_intakes'),
+    ])
+
+    return {
+      bookings_count: bookingsCount,
+      lead_intakes_count: leadIntakesCount,
+    }
+  }
 
   try {
-    const history = await c.env.DB.prepare(historySql)
-      .bind(pageId)
-      .first<{ bookings_count: number; lead_intakes_count: number }>()
+    const [history, hasUnitsTable] = await Promise.all([
+      loadPageHistory(),
+      optionalTableExists('units'),
+    ])
 
-    if ((history?.bookings_count ?? 0) > 0 || (history?.lead_intakes_count ?? 0) > 0) {
+    if (history.bookings_count > 0 || history.lead_intakes_count > 0) {
       return c.json({
         success: false,
         code: 'PAGE_HAS_HISTORY',
@@ -282,9 +315,10 @@ pages.delete('/pages/:pageId', async (c) => {
        ORDER BY page_number ASC, created_at ASC, id ASC`,
     ).bind(page.publication_id, pageId).all<{ id: string }>()
 
-    await c.env.DB.batch([
-      c.env.DB.prepare('UPDATE units SET page_id = NULL WHERE page_id = ?')
-        .bind(pageId),
+    const statements = [
+      ...(hasUnitsTable
+        ? [c.env.DB.prepare('UPDATE units SET page_id = NULL WHERE page_id = ?').bind(pageId)]
+        : []),
       c.env.DB.prepare(
         `UPDATE dynamic_markers
          SET cloned_from_marker_id = NULL
@@ -294,22 +328,19 @@ pages.delete('/pages/:pageId', async (c) => {
            WHERE page_id = ?
          )`,
       ).bind(pageId),
-      c.env.DB.prepare('DELETE FROM dynamic_markers WHERE page_id = ?')
-        .bind(pageId),
-      c.env.DB.prepare('DELETE FROM pages WHERE id = ?')
-        .bind(pageId),
+      c.env.DB.prepare('DELETE FROM dynamic_markers WHERE page_id = ?').bind(pageId),
+      c.env.DB.prepare('DELETE FROM pages WHERE id = ?').bind(pageId),
       ...remainingPages.map((remainingPage, index) =>
         c.env.DB.prepare('UPDATE pages SET page_number = ? WHERE id = ?')
           .bind(index + 1, remainingPage.id),
       ),
       c.env.DB.prepare(`UPDATE publications SET updated_at = datetime('now') WHERE id = ?`)
         .bind(page.publication_id),
-    ])
+    ]
+
+    await c.env.DB.batch(statements)
   } catch (error) {
-    const history = await c.env.DB.prepare(historySql)
-      .bind(pageId)
-      .first<{ bookings_count: number; lead_intakes_count: number }>()
-      .catch(() => null)
+    const history = await loadPageHistory().catch(() => null)
 
     if ((history?.bookings_count ?? 0) > 0 || (history?.lead_intakes_count ?? 0) > 0) {
       return c.json({
