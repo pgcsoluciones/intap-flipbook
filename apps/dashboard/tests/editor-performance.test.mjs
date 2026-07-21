@@ -200,3 +200,131 @@ test('fabric dispose invalida cache key obsoleta y evita aplicar snapshot viejo'
     await perf.cleanup()
   }
 })
+
+test('cambio local del canvas crea nueva version solo para la pagina activa', async () => {
+  const perf = await loadPerf()
+  try {
+    const original = pages(5)
+    const next = perf.patchPageThumbnailContent(original, 'page-2', '{"objects":[{"type":"textbox","text":"Nuevo"}]}', 'local:1')
+    assert.notEqual(next, original)
+    assert.equal(next[0], original[0])
+    assert.notEqual(next[1], original[1])
+    assert.equal(next[2], original[2])
+    assert.equal(next[3], original[3])
+    assert.equal(next[4], original[4])
+    assert.equal(next[1].thumbnail_version, 'local:1')
+    assert.match(String(next[1].canvas_json), /Nuevo/)
+  } finally {
+    await perf.cleanup()
+  }
+})
+
+test('cache key de miniatura cambia por version local sin depender de refresh', async () => {
+  const perf = await loadPerf()
+  try {
+    const [page] = pages(1)
+    const before = perf.pageThumbnailCacheKey(page)
+    const [updated] = perf.patchPageThumbnailContent([page], page.id, page.canvas_json, 'local:1')
+    const after = perf.pageThumbnailCacheKey(updated)
+    assert.notEqual(after, before)
+    assert.equal(perf.pageThumbnailCacheKey(updated), after)
+  } finally {
+    await perf.cleanup()
+  }
+})
+
+test('React.memo rerenderiza solo la tarjeta con overlay o estado cambiado', async () => {
+  const perf = await loadPerf()
+  try {
+    const [page1, page2] = pages(2)
+    const base = {
+      index: 0,
+      active: false,
+      shouldLoad: true,
+      backgroundUrl: page1.image_url,
+      overlayUrl: 'blob:thumb-1',
+      overlayStatus: 'local',
+    }
+    assert.equal(perf.pageThumbCardPropsEqual({ ...base, page: page1 }, { ...base, page: page1 }), true)
+    assert.equal(perf.pageThumbCardPropsEqual({ ...base, page: page1 }, { ...base, page: page1, overlayUrl: 'blob:thumb-2' }), false)
+    assert.equal(perf.pageThumbCardPropsEqual({ ...base, page: page1 }, { ...base, page: page1, overlayStatus: 'error' }), false)
+    assert.equal(perf.pageThumbCardPropsEqual({ ...base, page: page1 }, { ...base, page: page2, index: 1, backgroundUrl: page2.image_url }), false)
+  } finally {
+    await perf.cleanup()
+  }
+})
+
+test('respuesta antigua no puede sustituir una miniatura mas nueva', async () => {
+  const perf = await loadPerf()
+  try {
+    const [page] = pages(1)
+    const oldKey = perf.pageThumbnailCacheKey(page)
+    const [updated] = perf.patchPageThumbnailContent([page], page.id, '{"objects":[{"type":"rect"}]}', 'local:2')
+    assert.equal(perf.thumbnailJobStillCurrent(2, 1, updated, oldKey), false)
+    assert.equal(perf.thumbnailJobStillCurrent(2, 2, updated, perf.pageThumbnailCacheKey(updated)), true)
+  } finally {
+    await perf.cleanup()
+  }
+})
+
+test('pagesRef y pages pueden sincronizarse con el mismo patch por page.id', async () => {
+  const perf = await loadPerf()
+  try {
+    const statePages = pages(3)
+    let pagesRef = statePages
+    const next = perf.patchPageThumbnailContent(statePages, 'page-3', '{"objects":[{"type":"circle"}]}', 'local:7')
+    pagesRef = next
+    assert.equal(pagesRef, next)
+    assert.equal(pagesRef[2].thumbnail_version, 'local:7')
+    assert.equal(pagesRef[0], statePages[0])
+    assert.equal(pagesRef[1], statePages[1])
+  } finally {
+    await perf.cleanup()
+  }
+})
+
+test('misma version reutiliza overlay y nueva version cambia el src sin refresh', async () => {
+  const perf = await loadPerf()
+  try {
+    const [page] = pages(1)
+    const current = { ...page, thumbnail_version: 'local:1' }
+    const entry = { key: perf.pageThumbnailCacheKey(current), url: 'blob:thumb-local-1', status: 'local' }
+    assert.deepEqual(perf.resolvePageThumbnailOverlay(current, entry), { url: 'blob:thumb-local-1', status: 'local' })
+
+    const newer = { ...current, thumbnail_version: 'local:2' }
+    assert.deepEqual(perf.resolvePageThumbnailOverlay(newer, entry), { url: undefined, status: undefined })
+  } finally {
+    await perf.cleanup()
+  }
+})
+
+test('guardado exitoso preserva la version local de miniatura para no parpadear', async () => {
+  const perf = await loadPerf()
+  try {
+    const [page] = pages(1)
+    const current = { ...page, thumbnail_version: 'local:3' }
+    const saved = { ...page, updated_at: '2026-07-21T01:00:00.000Z' }
+    const patch = perf.mergeSavedPagePreservingThumbnailVersion(current, saved, '{"objects":[{"type":"textbox","text":"ok"}]}')
+    assert.equal(patch.thumbnail_version, 'local:3')
+    assert.match(String(patch.canvas_json), /ok/)
+    assert.equal(patch.updated_at, saved.updated_at)
+  } finally {
+    await perf.cleanup()
+  }
+})
+
+test('fallo de generacion conserva overlay local existente y marca error solo para la misma version', async () => {
+  const perf = await loadPerf()
+  try {
+    const [page] = pages(1)
+    const current = { ...page, thumbnail_version: 'local:4' }
+    const entry = { key: perf.pageThumbnailCacheKey(current), url: 'blob:last-good', status: 'local' }
+    const overlay = perf.resolvePageThumbnailOverlay(current, { ...entry, status: 'error' })
+    assert.deepEqual(overlay, { url: 'blob:last-good', status: 'error' })
+
+    const next = { ...current, thumbnail_version: 'local:5' }
+    assert.deepEqual(perf.resolvePageThumbnailOverlay(next, { ...entry, status: 'error' }), { url: undefined, status: undefined })
+  } finally {
+    await perf.cleanup()
+  }
+})

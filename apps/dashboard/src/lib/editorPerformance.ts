@@ -7,6 +7,7 @@ export type PageLike = {
   canvas_json?: unknown
   cover_json?: unknown
   updated_at?: string | null
+  thumbnail_version?: string | number | null
 }
 
 export function stableString(value: unknown) {
@@ -22,11 +23,83 @@ export function stableString(value: unknown) {
 export function pageThumbnailCacheKey(page: PageLike) {
   return [
     page.id,
-    page.updated_at ?? '',
+    page.thumbnail_version ?? page.updated_at ?? '',
     page.image_url ?? '',
     stableString(page.cover_json),
     stableString(page.canvas_json),
   ].join('|')
+}
+
+export function patchPageThumbnailContent<T extends PageLike>(
+  pages: T[],
+  pageId: string,
+  canvasJson: unknown,
+  thumbnailVersion: string | number,
+) {
+  return upsertPageById(pages, pageId, {
+    canvas_json: canvasJson,
+    thumbnail_version: thumbnailVersion,
+  } as Partial<T>)
+}
+
+export function thumbnailJobStillCurrent(
+  currentToken: number | undefined,
+  jobToken: number,
+  currentPage: PageLike | null | undefined,
+  jobCacheKey: string,
+) {
+  return currentToken === jobToken && !!currentPage && pageThumbnailCacheKey(currentPage) === jobCacheKey
+}
+
+export function resolvePageThumbnailOverlay<T extends { key: string; url: string; status?: string }>(
+  page: PageLike,
+  entry: T | null | undefined,
+) {
+  if (!entry || entry.key !== pageThumbnailCacheKey(page)) return { url: undefined, status: undefined }
+  return { url: entry.url, status: entry.status }
+}
+
+export function mergeSavedPagePreservingThumbnailVersion<T extends PageLike>(
+  current: T | null | undefined,
+  saved: Partial<T> | null | undefined,
+  canvasJson: unknown,
+) {
+  return {
+    ...(saved ?? {}),
+    canvas_json: canvasJson,
+    thumbnail_version: current?.thumbnail_version,
+  } as Partial<T>
+}
+
+export function pageThumbCardPropsEqual(
+  prev: {
+    page: PageLike
+    index: number
+    active: boolean
+    shouldLoad: boolean
+    backgroundUrl: string
+    overlayUrl?: string
+    overlayStatus?: string
+  },
+  next: {
+    page: PageLike
+    index: number
+    active: boolean
+    shouldLoad: boolean
+    backgroundUrl: string
+    overlayUrl?: string
+    overlayStatus?: string
+  },
+) {
+  return (
+    prev.page === next.page &&
+    prev.index === next.index &&
+    prev.active === next.active &&
+    prev.shouldLoad === next.shouldLoad &&
+    prev.backgroundUrl === next.backgroundUrl &&
+    prev.overlayUrl === next.overlayUrl &&
+    prev.overlayStatus === next.overlayStatus
+  )
 }
 
 export function visibleIndexesFromRange(start: number, end: number, total: number, margin = PAGE_THUMBNAIL_MARGIN) {

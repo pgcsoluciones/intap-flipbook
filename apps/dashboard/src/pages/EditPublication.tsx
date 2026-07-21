@@ -10,9 +10,14 @@ import {
   buildThumbnailLookup,
   firstVisibleIndexes,
   mergeThumbnailLookup,
+  mergeSavedPagePreservingThumbnailVersion,
+  pageThumbCardPropsEqual,
   pageThumbnailCacheKey,
+  patchPageThumbnailContent,
   resolveDisplayUrl,
   resolvePageCardBackgroundUrl,
+  resolvePageThumbnailOverlay,
+  thumbnailJobStillCurrent,
   shouldLoadPageThumbnail,
   upsertPageById,
 } from '../lib/editorPerformance'
@@ -456,7 +461,9 @@ async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas
     // Acceder al canvas HTML nativo que creamos — siempre transparente por defecto.
     const lower = (sc as any).lowerCanvasEl as HTMLCanvasElement | null
     if (!lower) return null
-    return lower.toDataURL('image/png')
+    return await new Promise<Blob | null>((resolve) => {
+      lower.toBlob((blob) => resolve(blob), 'image/png')
+    })
   } catch (error) {
     console.error('[thumbnail] persisted snapshot failed', error)
     return null
@@ -504,6 +511,7 @@ type ThumbnailPumpHandle =
 type PageThumbnailCacheEntry = {
   key: string
   url: string
+  status?: 'local' | 'error'
 }
 
 // ─── Iconos SVG monocromáticos (estilo línea, 20px, stroke uniforme) ──────────
@@ -1153,6 +1161,9 @@ export default function EditPublication() {
   // Evita escribir miniaturas después de desmontar el editor.
   const thumbnailMountedRef = useRef(true)
   const thumbnailPumpRef = useRef<(() => Promise<void>) | null>(null)
+  const thumbnailByPageIdRef = useRef<Record<string, PageThumbnailCacheEntry>>({})
+  const thumbnailObjectUrlsRef = useRef(new Set<string>())
+  const localThumbnailVersionRef = useRef<Record<string, number>>({})
   const [zoom, setZoom]   = useState(100)
 
   // Estado de autoguardado: 'idle' | 'saving' | 'saved'
@@ -1351,8 +1362,15 @@ export default function EditPublication() {
       thumbnailProcessingRef.current = false
       thumbnailQueueRef.current = []
       thumbnailTokensRef.current = {}
+      for (const url of thumbnailObjectUrlsRef.current) URL.revokeObjectURL(url)
+      thumbnailObjectUrlsRef.current.clear()
+      thumbnailByPageIdRef.current = {}
     }
   }, [])
+
+  useEffect(() => {
+    thumbnailByPageIdRef.current = thumbnailByPageId
+  }, [thumbnailByPageId])
 
   const buildPersistedThumbnailSnapshot = useCallback((pageId: string) => {
     const page = pagesRef.current.find((p) => p.id === pageId)
@@ -1373,6 +1391,30 @@ export default function EditPublication() {
     thumbnailQueueRef.current = thumbnailQueueRef.current.filter((job) => job.pageId !== pageId)
     return nextToken
   }, [])
+
+  const revokeThumbnailUrl = useCallback((url?: string | null) => {
+    if (!url || !url.startsWith('blob:')) return
+    if (!thumbnailObjectUrlsRef.current.has(url)) return
+    URL.revokeObjectURL(url)
+    thumbnailObjectUrlsRef.current.delete(url)
+  }, [])
+
+  const replaceLocalPageThumbnail = useCallback((pageId: string, cacheKey: string, blob: Blob) => {
+    const url = URL.createObjectURL(blob)
+    thumbnailObjectUrlsRef.current.add(url)
+    setThumbnailByPageId((prev) => {
+      if (!thumbnailMountedRef.current) {
+        revokeThumbnailUrl(url)
+        return prev
+      }
+      const previous = prev[pageId]
+      if (previous?.key === cacheKey && previous.url === url) return prev
+      if (previous?.url && previous.url !== url) revokeThumbnailUrl(previous.url)
+      const next = { ...prev, [pageId]: { key: cacheKey, url, status: 'local' as const } }
+      thumbnailByPageIdRef.current = next
+      return next
+    })
+  }, [revokeThumbnailUrl])
 
   const scheduleThumbnailPump = useCallback(() => {
     if (
@@ -1431,23 +1473,26 @@ export default function EditPublication() {
       } else {
         snapshot = buildPersistedThumbnailSnapshot(job.pageId)
       }
-      const dataUrl = snapshot ? await renderPageThumbnailSnapshot(snapshot) : null
+      const blob = snapshot ? await renderPageThumbnailSnapshot(snapshot) : null
       if (!thumbnailMountedRef.current) return
-      if ((thumbnailTokensRef.current[job.pageId] ?? 0) !== job.token) return
       const currentPage = pagesRef.current.find((page) => page.id === job.pageId)
-      if (!currentPage || pageThumbnailCacheKey(currentPage) !== job.cacheKey) return
-      if (!dataUrl) return
-
-      setThumbnailByPageId((prev) => {
-        if (!thumbnailMountedRef.current) return prev
-        if (prev[job.pageId]?.key === job.cacheKey && prev[job.pageId]?.url === dataUrl) return prev
-        return { ...prev, [job.pageId]: { key: job.cacheKey, url: dataUrl } }
-      })
+      if (!thumbnailJobStillCurrent(thumbnailTokensRef.current[job.pageId], job.token, currentPage, job.cacheKey)) return
+      if (!blob) {
+        setThumbnailByPageId((prev) => {
+          const current = prev[job.pageId]
+          if (!current || current.key !== job.cacheKey) return prev
+          const next = { ...prev, [job.pageId]: { ...current, status: 'error' as const } }
+          thumbnailByPageIdRef.current = next
+          return next
+        })
+        return
+      }
+      replaceLocalPageThumbnail(job.pageId, job.cacheKey, blob)
     } finally {
       thumbnailProcessingRef.current = false
       if (thumbnailQueueRef.current.length > 0) scheduleThumbnailPump()
     }
-  }, [buildPersistedThumbnailSnapshot, scheduleThumbnailPump])
+  }, [buildPersistedThumbnailSnapshot, replaceLocalPageThumbnail, scheduleThumbnailPump])
 
   useEffect(() => {
     thumbnailPumpRef.current = pumpThumbnailQueue
@@ -1508,6 +1553,32 @@ export default function EditPublication() {
       return [...nextAssets, ...prev]
     })
   }, [])
+
+  const markActivePageCanvasChanged = useCallback(() => {
+    const pageId = pageIdRef.current
+    const canvas = fabricRef.current
+    if (!pageId || !canvas || !canvasReadyRef.current) return
+    if (deletingPageIdsRef.current.has(pageId) || deletedPageIdsRef.current.has(pageId)) return
+    const json = JSON.stringify(serializeCanvasJson(canvas))
+    const nextVersion = (localThumbnailVersionRef.current[pageId] ?? 0) + 1
+    localThumbnailVersionRef.current[pageId] = nextVersion
+    const thumbnailVersion = `local:${nextVersion}`
+    let nextPageForThumbnail: any = null
+    setPages((prev) => {
+      const next = patchPageThumbnailContent(prev, pageId, json, thumbnailVersion)
+      pagesRef.current = next
+      nextPageForThumbnail = next.find((page) => page.id === pageId) ?? null
+      return next
+    })
+    setActivePage((prev: any) => (
+      prev?.id === pageId ? { ...prev, canvas_json: json, thumbnail_version: thumbnailVersion } : prev
+    ))
+    requestAnimationFrame(() => {
+      const page = nextPageForThumbnail ?? pagesRef.current.find((item) => item.id === pageId)
+      if (!page || pageThumbnailCacheKey(page) !== pageThumbnailCacheKey(pagesRef.current.find((item) => item.id === pageId) ?? page)) return
+      requestThumbnailUpdate(pageId, 'live', { immediate: false, priority: true })
+    })
+  }, [requestThumbnailUpdate])
 
   const resolvePublicationThumbnails = useCallback(async (pageList: any[]) => {
     if (!id || !pageList.length) return
@@ -1745,16 +1816,17 @@ export default function EditPublication() {
     const run = async () => {
       if (deletingPageIdsRef.current.has(pageId) || deletedPageIdsRef.current.has(pageId)) return
       setSaveState('saving')
-      await api.pages.saveCanvas(pageId, json)
+      const saved = await api.pages.saveCanvas(pageId, json)
       if (saveSeqRef.current[pageId] !== seq) return
       setPages((prev) => {
-        const next = upsertPageById(prev, pageId, { canvas_json: json })
+        const current = prev.find((page) => page.id === pageId)
+        const next = upsertPageById(prev, pageId, mergeSavedPagePreservingThumbnailVersion(current, saved?.data, json))
         pagesRef.current = next
         return next
       })
-      if (pageIdRef.current === pageId) {
-        requestThumbnailUpdate(pageId, 'live', { immediate: false, priority: true })
-      }
+      setActivePage((prev: any) => (
+        prev?.id === pageId ? { ...prev, ...mergeSavedPagePreservingThumbnailVersion(prev, saved?.data, json) } : prev
+      ))
 
       // Propagar objetos con syncGroupId a otras páginas.
       // syncGroupId (identificador de sincronización) marca SVGs que deben ser iguales en todas las páginas.
@@ -2046,6 +2118,7 @@ export default function EditPublication() {
       if (isTextEditingRef.current) return
       if (!isUndoRedoRef.current) pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
       scheduleAutosave()
+      markActivePageCanvasChanged()
     }
     const onTextEditingEntered = () => {
       isTextEditingRef.current = true
@@ -2056,7 +2129,7 @@ export default function EditPublication() {
       isTextEditingRef.current = false
       if (!isUndoRedoRef.current) pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
       scheduleAutosave()
-      refreshCurrentThumbnail(false)
+      markActivePageCanvasChanged()
     }
     // Reemplazo in-situ: si hay un objeto marcado para reemplazar y el usuario
     // inserta uno nuevo desde el panel, lo intercambiamos conservando posición,
@@ -3797,6 +3870,7 @@ type PageThumbCardProps = {
   shouldLoad: boolean
   backgroundUrl: string
   overlayUrl?: string
+  overlayStatus?: PageThumbnailCacheEntry['status']
   onVisible: (pageId: string, index: number) => void
   onSelect: (index: number) => void
   onDragStart: (index: number) => void
@@ -3813,6 +3887,7 @@ const PageThumbCard = React.memo(function PageThumbCard({
   shouldLoad,
   backgroundUrl,
   overlayUrl,
+  overlayStatus,
   onVisible,
   onSelect,
   onDragStart,
@@ -3886,6 +3961,9 @@ const PageThumbCard = React.memo(function PageThumbCard({
           onError={() => setOverlayFailed(true)}
         />
       )}
+      {overlayStatus === 'error' && (
+        <div style={cp.thumbStatus}>!</div>
+      )}
       <div style={cp.thumbNum}>{index + 1}</div>
       <button
         title="Duplicar página (copia con todo el contenido)"
@@ -3903,14 +3981,7 @@ const PageThumbCard = React.memo(function PageThumbCard({
       <button style={cp.thumbDel} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDelete(page.id) }}>x</button>
     </div>
   )
-}, (prev, next) => (
-  prev.page === next.page &&
-  prev.index === next.index &&
-  prev.active === next.active &&
-  prev.shouldLoad === next.shouldLoad &&
-  prev.backgroundUrl === next.backgroundUrl &&
-  prev.overlayUrl === next.overlayUrl
-))
+}, pageThumbCardPropsEqual)
 
 function PagesPanel(p: any) {
   const propsRef = useRef(p)
@@ -3978,9 +4049,10 @@ function PagesPanel(p: any) {
         onDragOver={p.onFileDragOver} onDragLeave={p.onFileDragLeave} onDrop={p.onFileDrop}
       >
         {p.pages.map((page: any, i: number) => {
-          const cacheKey = pageThumbnailCacheKey(page)
           const cached = p.thumbnailByPageId[page.id]
-          const overlayUrl = cached?.key === cacheKey ? cached.url : undefined
+          const overlay = resolvePageThumbnailOverlay(page, cached)
+          const overlayUrl = overlay.url
+          const overlayStatus = overlay.status as PageThumbnailCacheEntry['status'] | undefined
           const shouldLoad = shouldLoadPageThumbnail(i, visibleIndexes)
           return (
             <PageThumbCard
@@ -3991,6 +4063,7 @@ function PagesPanel(p: any) {
               shouldLoad={shouldLoad}
               backgroundUrl={resolvePageCardBackgroundUrl(page, p.thumbnailUrlByPublicUrl ?? {}, p.displayUrlByPublicUrl ?? {}, toCanvasSafeAssetUrl) || BLANK_PAGE_URL}
               overlayUrl={overlayUrl}
+              overlayStatus={overlayStatus}
               onVisible={markVisible}
               onSelect={selectPage}
               onDragStart={dragStart}
@@ -6994,6 +7067,7 @@ const cp: Record<string, React.CSSProperties> = {
   thumbSkeletonText: { background: 'rgba(255,255,255,0.78)', border: '1px solid #e5e7eb', borderRadius: 4, padding: '3px 7px' },
   thumbNum:   { position: 'absolute', bottom: 4, left: 6, background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 3 },
   thumbDel:   { position: 'absolute', top: 4, right: 4, background: 'rgba(239,68,68,0.9)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 11, width: 20, height: 20, cursor: 'pointer', padding: 0 },
+  thumbStatus:{ position: 'absolute', bottom: 4, right: 6, background: 'rgba(239,68,68,0.92)', color: '#fff', fontSize: 11, fontWeight: 800, width: 18, height: 18, lineHeight: '18px', textAlign: 'center', borderRadius: 999 },
   primaryBtn: { width: '100%', background: '#4F46E5', color: '#fff', border: 'none', borderRadius: 8, padding: '10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
   secondaryBtn: { width: '100%', background: '#fff', color: '#4F46E5', border: '1.5px solid #4F46E5', borderRadius: 8, padding: '10px', cursor: 'pointer', fontSize: 13, fontWeight: 600, marginTop: 8 },
   search:     { width: '100%', boxSizing: 'border-box' as const, border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontSize: 13, marginBottom: 12 },
