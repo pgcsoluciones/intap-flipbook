@@ -34,6 +34,18 @@ function pages(count) {
   }))
 }
 
+test('normaliza textBaseline legacy sin modificar valores validos', async () => {
+  const perf = await loadPerf()
+  try {
+    assert.equal(perf.normalizeCanvasTextBaseline('alphabetical'), 'alphabetic')
+    assert.equal(perf.normalizeCanvasTextBaseline('alphabetic'), 'alphabetic')
+    assert.equal(perf.normalizeCanvasTextBaseline('middle'), 'middle')
+    assert.equal(perf.normalizeCanvasTextBaseline(undefined), undefined)
+  } finally {
+    await perf.cleanup()
+  }
+})
+
 test('publicacion con 20 paginas solo carga miniaturas visibles iniciales', async () => {
   const perf = await loadPerf()
   try {
