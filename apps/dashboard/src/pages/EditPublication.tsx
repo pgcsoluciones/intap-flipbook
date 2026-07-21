@@ -1613,8 +1613,21 @@ export default function EditPublication() {
       if (ps.length > 0) setActivePage(requestedPage ?? ps[0])
       // Banco de imágenes: imágenes del proyecto + las guardadas localmente (subidas pero quizá no colocadas)
       let stored: string[] = []
-      try { stored = JSON.parse(localStorage.getItem(`imgbank_${id}`) ?? '[]') } catch {}
-      const merged = Array.from(new Set([...collectBankFromPages(ps), ...stored]))
+      let hidden: string[] = []
+      try {
+        const parsed = JSON.parse(localStorage.getItem(`imgbank_${id}`) ?? '[]')
+        stored = Array.isArray(parsed) ? parsed : []
+      } catch {}
+      try {
+        const parsed = JSON.parse(localStorage.getItem(`imgbank_hidden_${id}`) ?? '[]')
+        hidden = Array.isArray(parsed) ? parsed : []
+      } catch {}
+      const hiddenUrls = new Set(hidden.map((url) => toCanvasSafeAssetUrl(url)).filter(Boolean))
+      const merged = Array.from(new Set(
+        [...collectBankFromPages(ps), ...stored]
+          .map((url) => toCanvasSafeAssetUrl(url))
+          .filter(Boolean),
+      )).filter((url) => !hiddenUrls.has(url))
       setImageBank(merged)
       void refreshMediaBank()
       void resolvePublicationThumbnails(ps)
@@ -1631,13 +1644,49 @@ export default function EditPublication() {
     }
   }, [id, refreshMediaBank, resolvePublicationThumbnails])
 
-  // Agrega una URL al banco de imágenes del proyecto (sin duplicar) y lo persiste
+  // Agrega una URL al banco de imágenes del proyecto (sin duplicar) y lo persiste.
+  // Si había sido quitada manualmente del banco, una nueva inserción explícita la restaura.
   const addToBank = useCallback((url: string) => {
     if (!url) return
     const safeUrl = toCanvasSafeAssetUrl(url)
+    if (!safeUrl) return
+    try {
+      const parsed = JSON.parse(localStorage.getItem(`imgbank_hidden_${id}`) ?? '[]')
+      const hidden = Array.isArray(parsed) ? parsed : []
+      const nextHidden = Array.from(new Set(
+        hidden
+          .map((entry) => toCanvasSafeAssetUrl(entry))
+          .filter((entry) => entry && entry !== safeUrl),
+      ))
+      localStorage.setItem(`imgbank_hidden_${id}`, JSON.stringify(nextHidden))
+    } catch {}
     setImageBank((prev) => {
       if (prev.includes(safeUrl)) return prev
       const next = [safeUrl, ...prev]
+      try { localStorage.setItem(`imgbank_${id}`, JSON.stringify(next)) } catch {}
+      return next
+    })
+  }, [id])
+
+  // Retira URLs legacy del banco visual sin modificar las páginas, el canvas ni crear media_assets.
+  const removeLegacyUrlsFromBank = useCallback((urls: string[]) => {
+    const removedUrls = new Set(
+      urls.map((url) => toCanvasSafeAssetUrl(url)).filter(Boolean),
+    )
+    if (!removedUrls.size) return
+
+    try {
+      const parsed = JSON.parse(localStorage.getItem(`imgbank_hidden_${id}`) ?? '[]')
+      const hidden = Array.isArray(parsed) ? parsed : []
+      const nextHidden = Array.from(new Set([
+        ...hidden.map((url) => toCanvasSafeAssetUrl(url)).filter(Boolean),
+        ...removedUrls,
+      ]))
+      localStorage.setItem(`imgbank_hidden_${id}`, JSON.stringify(nextHidden))
+    } catch {}
+
+    setImageBank((prev) => {
+      const next = prev.filter((url) => !removedUrls.has(toCanvasSafeAssetUrl(url)))
       try { localStorage.setItem(`imgbank_${id}`, JSON.stringify(next)) } catch {}
       return next
     })
@@ -3692,6 +3741,7 @@ export default function EditPublication() {
         usedPageUrls={pages.map((page) => page.image_url).filter(Boolean)}
         onClose={() => setMediaPickerMode(null)}
         onSelect={handleMediaPickerSelect}
+        onRemoveLegacyUrls={removeLegacyUrlsFromBank}
         onPdfSelect={async (file, onProgress) => {
           const result = await importPdfPages(file, onProgress)
           return { confirmedCount: result?.confirmedPages.length ?? 0 }

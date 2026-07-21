@@ -474,59 +474,79 @@ test('12 imagenes legacy y 0 media_assets muestran total 12', () => {
   assert.equal(combinedTotal, 12)
 })
 
-test('seleccionar una legacy hace que eliminar adopte antes de consultar usage', async () => {
+test('seleccionar una legacy consulta usage por URL sin adoptarla', async () => {
   const calls = []
-  const selectedItem = { key: 'legacy:https://legacy.example.test/old.jpg', url: 'https://legacy.example.test/old.jpg', name: 'old.jpg' }
-  const adopt = async (item) => {
-    calls.push(['adopt', item.url])
-    return { id: 'asset-legacy', public_url: item.url }
+  const selectedItem = {
+    key: 'legacy:https://legacy.example.test/old.jpg',
+    url: 'https://legacy.example.test/old.jpg',
+    name: 'old.jpg',
   }
-  const usage = async (asset) => {
-    calls.push(['usage', asset.id])
+  const mediaAssets = []
+  const usageByUrl = async (item) => {
+    calls.push(['usageByUrl', item.url])
     return { usage_count: 0 }
   }
 
-  const asset = selectedItem.asset ?? await adopt(selectedItem)
-  await usage(asset)
+  await usageByUrl(selectedItem)
 
   assert.deepEqual(calls, [
-    ['adopt', 'https://legacy.example.test/old.jpg'],
-    ['usage', 'asset-legacy'],
+    ['usageByUrl', 'https://legacy.example.test/old.jpg'],
   ])
+  assert.equal(mediaAssets.length, 0)
 })
 
-test('legacy ocultada no reaparece despues de recargar fallback', () => {
-  const knownUrls = new Set(['https://legacy.example.test/hidden.jpg'])
-  const legacyUrls = ['https://legacy.example.test/hidden.jpg', 'https://legacy.example.test/visible.jpg']
-  const visibleLegacy = legacyUrls.filter((url) => !knownUrls.has(url))
+test('legacy quitada no reaparece aunque siga usada en una pagina', () => {
+  const usedInPages = [
+    'https://legacy.example.test/hidden.jpg',
+    'https://legacy.example.test/visible.jpg',
+  ]
+  const stored = ['https://legacy.example.test/hidden.jpg']
+  const hidden = new Set(['https://legacy.example.test/hidden.jpg'])
 
-  assert.deepEqual(visibleLegacy, ['https://legacy.example.test/visible.jpg'])
+  const merged = Array.from(new Set([...usedInPages, ...stored]))
+    .filter((url) => !hidden.has(url))
+
+  assert.deepEqual(merged, [
+    'https://legacy.example.test/visible.jpg',
+  ])
+  assert.equal(usedInPages.includes('https://legacy.example.test/hidden.jpg'), true)
 })
 
-test('adoptar legacy no duplica total y ocultar reduce total', () => {
-  const before = { assetTotal: 0, legacyTotal: 12 }
-  const afterAdopt = { assetTotal: 1, legacyTotal: 11 }
-  const afterHide = { assetTotal: 0, legacyTotal: 11 }
+test('volver a agregar una legacy la restaura en el banco', () => {
+  const url = 'https://legacy.example.test/restored.jpg'
+  const state = {
+    bank: [],
+    hidden: [url, 'https://legacy.example.test/other.jpg'],
+  }
 
-  assert.equal(before.assetTotal + before.legacyTotal, 12)
-  assert.equal(afterAdopt.assetTotal + afterAdopt.legacyTotal, 12)
-  assert.equal(afterHide.assetTotal + afterHide.legacyTotal, 11)
+  state.hidden = state.hidden.filter((entry) => entry !== url)
+  state.bank = [url, ...state.bank.filter((entry) => entry !== url)]
+
+  assert.deepEqual(state.hidden, [
+    'https://legacy.example.test/other.jpg',
+  ])
+  assert.deepEqual(state.bank, [url])
 })
 
-test('error API al adoptar legacy muestra mensaje y conserva seleccion', async () => {
-  const state = { selected: ['legacy:old'], error: '' }
-  const adopt = async () => {
-    throw new Error('No se pudo registrar esta imagen anterior en el banco.')
+test('error API al consultar una legacy conserva la seleccion', async () => {
+  const state = {
+    selected: ['legacy:https://legacy.example.test/old.jpg'],
+    error: '',
+  }
+  const usageByUrl = async () => {
+    throw new Error('No se pudieron consultar los usos de esta imagen.')
   }
 
   try {
-    await adopt()
+    await usageByUrl()
   } catch (error) {
     state.error = error.message
   }
 
-  assert.equal(state.error, 'No se pudo registrar esta imagen anterior en el banco.')
-  assert.deepEqual(state.selected, ['legacy:old'])
+  assert.equal(state.error, 'No se pudieron consultar los usos de esta imagen.')
+  assert.deepEqual(state.selected, [
+    'legacy:https://legacy.example.test/old.jpg',
+  ])
 })
 
 test('52 elementos combinados paginan 12, 12 y 4 elementos', async () => {

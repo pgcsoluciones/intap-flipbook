@@ -949,6 +949,17 @@ export const api = {
         `/api/upload/media-assets/${encodeURIComponent(assetId)}/usage?${qs}`,
       )
     },
+    usageByUrl: (input: { publication_id: string; public_url: string }) =>
+      request<{ success: true; data: { asset_id: null; public_url: string; usage_count: number; can_delete_physical: false; usages: Array<{ type: string; page_id?: string; page_number?: number | null; marker_id?: string; field: string; label: string }> } }>(
+        '/api/upload/media-assets/usage-by-url',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            publication_id: input.publication_id,
+            public_url: toCanvasSafeAssetUrl(input.public_url),
+          }),
+        },
+      ),
     resolveThumbnails: (input: { publication_id: string; public_urls: string[] }) =>
       request<{ success: true; data: { thumbnails: Record<string, string>; displays?: Record<string, string>; variants?: Record<string, { original_url: string; display_url: string; thumbnail_url: string | null; optimized_url: string | null }>; assets: MediaAsset[] } }>('/api/upload/media-assets/resolve-thumbnails', {
         method: 'POST',

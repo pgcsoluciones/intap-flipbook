@@ -1019,6 +1019,61 @@ test('adopting legacy URL creates media_asset without R2 put and reusing same UR
   assert.equal(r2.puts.length, 0)
 })
 
+test('usage by legacy URL reports project references without creating media_asset or touching R2', async () => {
+  const legacyUrl = 'https://legacy.example.test/used-without-adopt.jpg'
+  const db = new FakeD1({
+    pages: [
+      {
+        id: 'p1',
+        publication_id: 'pub-1',
+        page_number: 4,
+        image_url: legacyUrl,
+        canvas_json: JSON.stringify({
+          objects: [
+            { type: 'image', src: legacyUrl },
+          ],
+        }),
+        cover_json: null,
+      },
+    ],
+    dynamicMarkers: [
+      {
+        id: 'marker-1',
+        publication_id: 'pub-1',
+        page_id: 'p1',
+        media_json: JSON.stringify({
+          gallery: [legacyUrl],
+        }),
+      },
+    ],
+  })
+  const r2 = new FakeR2()
+
+  const result = await requestUpload(db, r2, '/media-assets/usage-by-url', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      publication_id: 'pub-1',
+      public_url: legacyUrl,
+    }),
+  })
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.data.asset_id, null)
+  assert.equal(result.body.data.public_url, legacyUrl)
+  assert.equal(result.body.data.usage_count, 3)
+  assert.equal(result.body.data.can_delete_physical, false)
+  assert.deepEqual(
+    result.body.data.usages.map((usage) => usage.type),
+    ['page_image', 'page_canvas', 'dynamic_marker_media'],
+  )
+  assert.equal(db.mediaAssets.length, 0)
+  assert.equal(db.pages[0].image_url, legacyUrl)
+  assert.equal(db.dynamicMarkers[0].media_json.includes(legacyUrl), true)
+  assert.deepEqual(r2.puts, [])
+  assert.deepEqual(r2.deletes, [])
+})
+
 test('adopted legacy used in a page reports usage and can be hidden without deleting origin', async () => {
   const db = new FakeD1({
     pages: [

@@ -44,6 +44,7 @@ type MediaPickerProps = {
   usedPageUrls?: string[]
   onClose: () => void
   onSelect: (urls: string[], assets?: MediaAsset[]) => void | { confirmedCount?: number } | Promise<void | { confirmedCount?: number }>
+  onRemoveLegacyUrls?: (urls: string[]) => void | Promise<void>
   onPdfSelect?: (file: File, onProgress?: (message: string) => void) => void | { confirmedCount?: number } | Promise<void | { confirmedCount?: number }>
   onGoToPages?: () => void
 }
@@ -67,9 +68,17 @@ type UploadResult = {
   error?: string
 }
 
+type DeletePromptItem = {
+  asset?: MediaAsset
+  legacyUrl?: string
+  usage_count: number
+  can_delete_physical: boolean
+  usages: Array<{ label: string; type: string }>
+}
+
 type DeletePrompt = {
   mode: 'in-use' | 'unused'
-  assets: Array<{ asset: MediaAsset; usage_count: number; can_delete_physical: boolean; usages: Array<{ label: string; type: string }> }>
+  items: DeletePromptItem[]
   totalUses: number
 }
 
@@ -217,6 +226,7 @@ export default function MediaPicker({
   usedPageUrls = [],
   onClose,
   onSelect,
+  onRemoveLegacyUrls,
   onPdfSelect,
   onGoToPages,
 }: MediaPickerProps) {
@@ -415,68 +425,134 @@ export default function MediaPicker({
     setDeletePrompt(null)
     try {
       let totalUses = 0
-      const usageByAsset: DeletePrompt['assets'] = []
-      const adoptedAssets: MediaAsset[] = []
+      const usageItems: DeletePromptItem[] = []
+
       for (const item of selectedBankItems) {
-        let asset = item.asset
-        if (!asset) {
-          const adopted = await api.mediaAssets.adopt({
-            publication_id: publicationId,
-            public_url: item.url,
-            original_name: item.name,
+        if (item.asset) {
+          const usage = await api.mediaAssets.usage(item.asset.id, publicationId)
+          totalUses += usage.data.usage_count
+          usageItems.push({
+            asset: item.asset,
+            usage_count: usage.data.usage_count,
+            can_delete_physical: usage.data.can_delete_physical,
+            usages: usage.data.usages.map((usageItem) => ({
+              label: usageItem.label,
+              type: usageItem.type,
+            })),
           })
-          asset = adopted.data.asset
-          adoptedAssets.push(asset)
+          continue
         }
-        const usage = await api.mediaAssets.usage(asset.id, publicationId)
+
+        const usage = await api.mediaAssets.usageByUrl({
+          publication_id: publicationId,
+          public_url: item.url,
+        })
         totalUses += usage.data.usage_count
-        usageByAsset.push({
-          asset,
+        usageItems.push({
+          legacyUrl: item.url,
           usage_count: usage.data.usage_count,
-          can_delete_physical: usage.data.can_delete_physical,
-          usages: usage.data.usages.map((item) => ({ label: item.label, type: item.type })),
+          can_delete_physical: false,
+          usages: usage.data.usages.map((usageItem) => ({
+            label: usageItem.label,
+            type: usageItem.type,
+          })),
         })
       }
-      if (adoptedAssets.length) {
-        setAssets((prev) => {
-          const seen = new Set(prev.map((asset) => asset.id))
-          return [...adoptedAssets.filter((asset) => !seen.has(asset.id)), ...prev]
-        })
-        setKnownAssetUrls((prev) => Array.from(new Set([...prev, ...adoptedAssets.map((asset) => asset.public_url)])))
-      }
-      setDeletePrompt({ mode: totalUses > 0 ? 'in-use' : 'unused', assets: usageByAsset, totalUses })
+
+      setDeletePrompt({
+        mode: totalUses > 0 ? 'in-use' : 'unused',
+        items: usageItems,
+        totalUses,
+      })
     } catch (err: any) {
-      setError(err?.message?.startsWith('Error 500') ? 'No se pudieron consultar los usos de esta imagen.' : err?.message ?? 'No fue posible eliminar la imagen.')
+      setError(
+        err?.message?.startsWith('Error 500')
+          ? 'No se pudieron consultar los usos de esta imagen.'
+          : err?.message ?? 'No fue posible eliminar la imagen.',
+      )
     } finally {
       setLoading(false)
     }
   }
 
-  const refreshAfterBankRemoval = async (removedAssets: MediaAsset[]) => {
+  const refreshAfterBankRemoval = async (
+    removedAssets: MediaAsset[],
+    removedLegacyUrls: string[] = [],
+  ) => {
+    if (removedLegacyUrls.length) {
+      if (!onRemoveLegacyUrls) {
+        throw new Error('No fue posible actualizar el banco de imágenes anteriores.')
+      }
+      await onRemoveLegacyUrls(removedLegacyUrls)
+    }
+
+    const removedLegacySet = new Set(
+      removedLegacyUrls.map((url) => normalizeUrlForCompare(url)),
+    )
+
     setSelectedItems((prev) => prev.filter((item) => {
-      if (item.asset) return !removedAssets.some((asset) => asset.id === item.asset?.id)
+      if (item.asset) {
+        return !removedAssets.some((asset) => asset.id === item.asset?.id)
+      }
+
+      if (removedLegacySet.has(normalizeUrlForCompare(item.url))) {
+        return false
+      }
+
       return !removedAssets.some((asset) =>
         normalizeUrlForCompare(asset.public_url) === normalizeUrlForCompare(item.url)
         || normalizeUrlForCompare(asset.display_url || asset.optimized_url || '') === normalizeUrlForCompare(item.url),
       )
     }))
-    setAssets((prev) => prev.filter((asset) => !removedAssets.some((removed) => removed.id === asset.id)))
-    setKnownAssetUrls((prev) => Array.from(new Set([...prev, ...removedAssets.map((asset) => asset.public_url)])))
-    const nextPage = items.length <= removedAssets.length && pageNumber > 1 ? pageNumber - 1 : pageNumber
+
+    setAssets((prev) =>
+      prev.filter((asset) => !removedAssets.some((removed) => removed.id === asset.id)),
+    )
+
+    if (removedAssets.length) {
+      setKnownAssetUrls((prev) =>
+        Array.from(new Set([
+          ...prev,
+          ...removedAssets.map((asset) => asset.public_url),
+        ])),
+      )
+    }
+
+    const removedCount = removedAssets.length + removedLegacyUrls.length
+    const nextPage = items.length <= removedCount && pageNumber > 1
+      ? pageNumber - 1
+      : pageNumber
+
     await loadAssets(nextPage)
   }
 
   const hidePromptAssets = async () => {
     if (!deletePrompt || loading) return
-    const selectedAssets = deletePrompt.assets.map((item) => item.asset)
+
+    const selectedAssets = deletePrompt.items.flatMap((item) =>
+      item.asset ? [item.asset] : [],
+    )
+    const selectedLegacyUrls = deletePrompt.items.flatMap((item) =>
+      item.legacyUrl ? [item.legacyUrl] : [],
+    )
+    const totalSelected = selectedAssets.length + selectedLegacyUrls.length
+
     setLoading(true)
     setError('')
     setNotice('')
+
     try {
-      for (const asset of selectedAssets) await api.mediaAssets.hide(asset.id, true)
+      for (const asset of selectedAssets) {
+        await api.mediaAssets.hide(asset.id, true)
+      }
+
+      await refreshAfterBankRemoval(selectedAssets, selectedLegacyUrls)
       setDeletePrompt(null)
-      setNotice(selectedAssets.length === 1 ? 'La imagen fue quitada del banco sin afectar el proyecto.' : 'Las imágenes fueron quitadas del banco sin afectar el proyecto.')
-      await refreshAfterBankRemoval(selectedAssets)
+      setNotice(
+        totalSelected === 1
+          ? 'La imagen fue quitada del banco sin afectar el proyecto.'
+          : 'Las imágenes fueron quitadas del banco sin afectar el proyecto.',
+      )
     } catch (err: any) {
       setError(err?.message ?? 'No fue posible quitar la imagen del banco.')
     } finally {
@@ -486,15 +562,32 @@ export default function MediaPicker({
 
   const deletePromptAssets = async () => {
     if (!deletePrompt || loading) return
-    const selectedAssets = deletePrompt.assets.map((item) => item.asset)
+
+    const selectedAssets = deletePrompt.items.flatMap((item) =>
+      item.asset ? [item.asset] : [],
+    )
+
+    if (!selectedAssets.length) {
+      setError('No hay archivos seguros disponibles para eliminación definitiva.')
+      return
+    }
+
     setLoading(true)
     setError('')
     setNotice('')
+
     try {
-      for (const asset of selectedAssets) await api.mediaAssets.deleteMediaAsset(asset.id, publicationId)
-      setDeletePrompt(null)
-      setNotice(selectedAssets.length === 1 ? 'La imagen fue eliminada definitivamente.' : 'Las imágenes fueron eliminadas definitivamente.')
+      for (const asset of selectedAssets) {
+        await api.mediaAssets.deleteMediaAsset(asset.id, publicationId)
+      }
+
       await refreshAfterBankRemoval(selectedAssets)
+      setDeletePrompt(null)
+      setNotice(
+        selectedAssets.length === 1
+          ? 'La imagen fue eliminada definitivamente.'
+          : 'Las imágenes fueron eliminadas definitivamente.',
+      )
     } catch (err: any) {
       setError(err?.message ?? 'No fue posible eliminar la imagen.')
     } finally {
@@ -720,8 +813,9 @@ export default function MediaPicker({
   }
 
   if (deletePrompt) {
-    const labels = deletePrompt.assets.flatMap((item) => item.usages.map((usage) => usage.label))
-    const canDeleteAllPhysical = deletePrompt.assets.every((item) => item.can_delete_physical)
+    const labels = deletePrompt.items.flatMap((item) => item.usages.map((usage) => usage.label))
+    const canDeleteAllPhysical = deletePrompt.items.length > 0
+      && deletePrompt.items.every((item) => item.can_delete_physical)
     return (
       <div style={styles.overlay} onClick={() => setDeletePrompt(null)}>
         <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
@@ -732,10 +826,10 @@ export default function MediaPicker({
           <div style={styles.body}>
             <div style={deletePrompt.mode === 'in-use' ? styles.warning : styles.error}>
               {deletePrompt.mode === 'in-use'
-                ? `${deletePrompt.assets.length === 1 ? 'Esta imagen está' : 'Estas imágenes están'} siendo utilizada${deletePrompt.assets.length === 1 ? '' : 's'} en ${deletePrompt.totalUses} lugares del proyecto.`
+                ? `${deletePrompt.items.length === 1 ? 'Esta imagen está' : 'Estas imágenes están'} siendo utilizada${deletePrompt.items.length === 1 ? '' : 's'} en ${deletePrompt.totalUses} lugares del proyecto.`
                 : canDeleteAllPhysical
-                  ? `${deletePrompt.assets.length === 1 ? 'Esta imagen no está' : 'Estas imágenes no están'} siendo utilizada${deletePrompt.assets.length === 1 ? '' : 's'}. ¿Deseas eliminarla${deletePrompt.assets.length === 1 ? '' : 's'} definitivamente?`
-                  : `${deletePrompt.assets.length === 1 ? 'Esta imagen no está' : 'Estas imágenes no están'} siendo utilizada${deletePrompt.assets.length === 1 ? '' : 's'}, pero el archivo de origen no pertenece a un almacenamiento seguro para borrado físico.`}
+                  ? `${deletePrompt.items.length === 1 ? 'Esta imagen no está' : 'Estas imágenes no están'} siendo utilizada${deletePrompt.items.length === 1 ? '' : 's'}. ¿Deseas eliminarla${deletePrompt.items.length === 1 ? '' : 's'} definitivamente?`
+                  : `${deletePrompt.items.length === 1 ? 'Esta imagen no está' : 'Estas imágenes no están'} siendo utilizada${deletePrompt.items.length === 1 ? '' : 's'}, pero el archivo de origen no pertenece a un almacenamiento seguro para borrado físico.`}
             </div>
             {notice && <div style={styles.success}>{notice}</div>}
             {error && <div style={styles.error}>{error}</div>}

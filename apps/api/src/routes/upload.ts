@@ -870,6 +870,66 @@ upload.post('/media-assets/:assetId/variants', async (c) => {
   return c.json({ success: true, data: { asset: mediaAssetResponse(updated.status === 'owned' ? updated.asset : asset) } })
 })
 
+upload.post('/media-assets/usage-by-url', async (c) => {
+  const userId = c.get('user').sub
+  const reqId = c.req.header('CF-Ray') ?? crypto.randomUUID()
+  const body: { publication_id?: string; public_url?: string } = await c.req
+    .json<{ publication_id?: string; public_url?: string }>()
+    .catch(() => ({}))
+  const publicationId = String(body.publication_id ?? '').trim()
+  const publicUrl = normalizeStoredAssetUrl(String(body.public_url ?? ''))
+
+  if (!publicationId) return c.json({ success: false, error: 'publication_id es requerido' }, 400)
+  if (!publicUrl) return c.json({ success: false, error: 'public_url es requerido' }, 400)
+
+  const publication = await getOwnedPublication(c, publicationId, userId)
+  if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  const now = new Date().toISOString()
+  const syntheticAsset: MediaAssetRow = {
+    id: publicUrl,
+    tenant_id: userId,
+    publication_id: publicationId,
+    storage_bucket: 'EXTERNAL',
+    storage_key: null,
+    public_url: publicUrl,
+    original_name: assetNameFromUrl(publicUrl),
+    mime_type: mimeFromAssetUrl(publicUrl),
+    size_bytes: 0,
+    sha256: legacyAssetSha(publicUrl),
+    width: null,
+    height: null,
+    created_at: now,
+    updated_at: now,
+  }
+
+  try {
+    const usage = await countMediaAssetUsage(c, syntheticAsset)
+    return c.json({
+      success: true,
+      data: {
+        ...usage,
+        asset_id: null,
+        public_url: publicUrl,
+        can_delete_physical: false,
+      },
+    })
+  } catch (error) {
+    console.error('[media-assets.usage-by-url] failed', {
+      request_id: reqId,
+      user_id: userId,
+      publication_id: publicationId,
+      public_url: publicUrl,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return c.json({
+      success: false,
+      code: 'MEDIA_ASSET_USAGE_FAILED',
+      error: 'No se pudieron consultar los usos de esta imagen.',
+    }, 500)
+  }
+})
+
 upload.get('/media-assets/:assetId/usage', async (c) => {
   const userId = c.get('user').sub
   const reqId = c.req.header('CF-Ray') ?? crypto.randomUUID()
