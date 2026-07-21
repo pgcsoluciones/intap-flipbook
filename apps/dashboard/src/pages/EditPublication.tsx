@@ -2915,7 +2915,17 @@ export default function EditPublication() {
           )
         : pagesRef.current
 
-      const res = await api.pages.add(id!, { image_url: page.image_url })
+      // Algunas páginas legacy o diseñadas completamente en el canvas no tienen
+      // image_url propio. Se crea la copia sobre una hoja blanca y luego se restaura
+      // todo el canvas_json, evitando que la API rechace la duplicación.
+      const duplicatePageImageUrl =
+        typeof page.image_url === 'string' && page.image_url.trim()
+          ? page.image_url.trim()
+          : BLANK_PAGE_URL
+
+      const res = await api.pages.add(id!, {
+        image_url: duplicatePageImageUrl,
+      })
       const createdPage = res.data
       createdCopyId = createdPage.id
 
