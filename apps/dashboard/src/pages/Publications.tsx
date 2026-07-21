@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useIsMobile } from '../hooks/useIsMobile'
-import { BLANK_PAGE_URL } from './EditPublication'
+import { BLANK_PAGE_URL } from '../lib/blankPage'
+import { ensurePdfJs } from '../lib/externalScripts'
 
 const CATEGORIES: Record<string, string> = {
   catalogo:   'Catálogo',
@@ -73,9 +74,31 @@ export default function Publications() {
       .catch(() => { localStorage.removeItem('token'); navigate('/login') })
       .finally(() => setLoading(false))
     api.folders.list().then((r) => setFolders(r.data ?? [])).catch(() => {})
-    api.templates.list().then((r) => setTemplates(r.data ?? [])).catch(() => {})
-    api.auth.me().then((r) => setMeData({ contact_whatsapp: r.data.contact_whatsapp, contact_phone: r.data.contact_phone })).catch(() => {})
   }, [])
+
+  // Los datos de contacto solo se consultan al abrir el modal de creación.
+  // Layout ya valida la sesión al cargar el Dashboard.
+  useEffect(() => {
+    if (!showModal || meData) return
+
+    api.auth.me()
+      .then((response) => {
+        setMeData({
+          contact_whatsapp: response.data.contact_whatsapp,
+          contact_phone: response.data.contact_phone,
+        })
+      })
+      .catch(() => {})
+  }, [showModal, meData])
+
+  // Las plantillas solo se consultan cuando el usuario abre esa opción.
+  useEffect(() => {
+    if (!showModal || mode !== 'template' || templates.length > 0) return
+
+    api.templates.list()
+      .then((response) => setTemplates(response.data ?? []))
+      .catch(() => setTemplates([]))
+  }, [mode, showModal, templates.length])
 
   // Carpeta destino actual: solo si hay una carpeta real seleccionada (no 'Todas'/'Sin carpeta')
   const targetFolderId = (selectedFolder !== 'none' && selectedFolder !== null) ? selectedFolder : null
@@ -149,8 +172,13 @@ export default function Publications() {
     e.preventDefault()
     if (!title.trim()) { setModalError('El nombre es requerido.'); return }
     if (!pdfFile) { setModalError('Seleccioná un archivo PDF.'); return }
-    const pdfjsLib = (window as any).pdfjsLib
-    if (!pdfjsLib) { setModalError('pdf.js no está disponible. Recargá la página.'); return }
+    let pdfjsLib: any
+    try {
+      pdfjsLib = await ensurePdfJs()
+    } catch {
+      setModalError('No se pudo cargar el importador de PDF. Inténtalo nuevamente.')
+      return
+    }
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
     setCreating(true); setModalError('')
