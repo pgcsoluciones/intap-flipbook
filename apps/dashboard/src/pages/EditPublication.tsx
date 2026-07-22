@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 // @ts-ignore
 import { fabric } from 'fabric'
-import { ApiRequestError, api, toCanvasSafeAssetUrl, type MediaAsset } from '../lib/api'
+import { ApiRequestError, api, toCanvasSafeAssetUrl, type MediaAsset, type MediaFolder } from '../lib/api'
 import { PageBatchConfirmationError, pdfPageAssetName, processPageBatch, uploadPdfRenderedPagesAsAssets } from '../lib/pageBatch'
 import { optimizeImageFile, type OptimizedImageResult } from '../lib/imageOptimization'
 import {
@@ -24,7 +24,7 @@ import {
   upsertPageById,
 } from '../lib/editorPerformance'
 import FileField from '../components/FileField'
-import MediaPicker from '../components/MediaPicker'
+import MediaPicker, { resolveExistingMediaFolderFilter } from '../components/MediaPicker'
 import WidgetPreview from '../components/WidgetPreview'
 import DynamicMarkerPanel from '../components/DynamicMarkerPanel'
 
@@ -45,6 +45,7 @@ const THUMB_W = 220
 // PROTECTED: 3-second editor autosave debounce.
 // Reducing this can reintroduce excessive saves and focus loss while editing.
 const AUTOSAVE_DELAY_MS = 3000
+type MediaBankFolderFilter = undefined | null | string
 
 // Calcula el recorte "cubrir" de una imagen dentro de un recuadro destino según el
 // encuadre { zoom>=1, fx 0..1, fy 0..1 }. zoom=1 y fx=fy=0.5 → cubrir centrado.
@@ -1206,6 +1207,9 @@ export default function EditPublication() {
   const [defaultFont, setDefaultFont] = useState<string>(FONTS[0].family) // tipografía para texto nuevo
   const [imageBank, setImageBank] = useState<string[]>([]) // banco de imágenes subidas en este proyecto
   const [mediaBankAssets, setMediaBankAssets] = useState<MediaAsset[]>([])
+  const [mediaBankFolders, setMediaBankFolders] = useState<MediaFolder[]>([])
+  const [mediaBankFolderId, setMediaBankFolderId] = useState<MediaBankFolderFilter>(undefined)
+  const [mediaPickerInitialFolderId, setMediaPickerInitialFolderId] = useState<MediaBankFolderFilter>(undefined)
   const [mediaBankTotal, setMediaBankTotal] = useState(0)
   const [oldImagesPendingCount, setOldImagesPendingCount] = useState(0)
   const [legacyOptimization, setLegacyOptimization] = useState({ running: false, cancelled: false, done: 0, total: 0, failed: 0, message: '' })
@@ -1251,11 +1255,16 @@ export default function EditPublication() {
   const refreshMediaBank = useCallback(async () => {
     if (!id) return
     try {
-      const [assetsRes, pendingRes] = await Promise.all([
-        api.mediaAssets.list({ publication_id: id, limit: 12, page: 1 }),
+      const [foldersRes, pendingRes] = await Promise.all([
+        api.mediaFolders.list(id),
         api.mediaAssets.list({ publication_id: id, limit: 1, page: 1, needs_optimization: true }),
       ])
+      const folders = foldersRes.data ?? []
+      const effectiveFolderId = resolveExistingMediaFolderFilter(mediaBankFolderId, folders)
+      const assetsRes = await api.mediaAssets.list({ publication_id: id, limit: 12, page: 1, folder_id: effectiveFolderId })
       const assets = assetsRes.data ?? []
+      if (effectiveFolderId !== mediaBankFolderId) setMediaBankFolderId(effectiveFolderId)
+      setMediaBankFolders(folders)
       setMediaBankAssets(assets)
       setMediaBankTotal(assetsRes.page?.total ?? assets.length)
       setOldImagesPendingCount(pendingRes.page?.total ?? 0)
@@ -1264,7 +1273,11 @@ export default function EditPublication() {
     } catch (err) {
       console.warn('[media-bank] failed to load assets', err)
     }
-  }, [id])
+  }, [id, mediaBankFolderId])
+
+  useEffect(() => {
+    void refreshMediaBank()
+  }, [refreshMediaBank])
 
   // Biblioteca SVG (recursos vectoriales del super admin, filtrados por plan)
   const [svgLib, setSvgLib]         = useState<any[]>([])
@@ -1876,21 +1889,29 @@ export default function EditPublication() {
 
   const imageBankItems = useMemo(() => {
     const seen = new Set<string>()
-    const items: Array<{ key: string; url: string; thumbUrl?: string; name: string; meta: string }> = []
+    const folderById = new Map(mediaBankFolders.map((folder) => [folder.id, folder]))
+    const items: Array<{ key: string; url: string; thumbUrl?: string; name: string; meta: string; folderLabel?: string }> = []
     for (const asset of mediaBankAssets) {
+      if (items.length >= 12) break
       const originalUrl = toCanvasSafeAssetUrl(asset.public_url)
       const url = toCanvasSafeAssetUrl(asset.display_url || asset.optimized_url || asset.public_url)
       if (!url || !originalUrl || seen.has(originalUrl)) continue
       seen.add(originalUrl)
+      const folderLabel = mediaBankFolderId === undefined
+        ? (asset.folder_id ? folderById.get(asset.folder_id)?.name ?? 'Carpeta' : 'Banco general')
+        : undefined
       items.push({
         key: `asset:${asset.id}`,
         url,
         thumbUrl: asset.thumbnail_url ? toCanvasSafeAssetUrl(asset.thumbnail_url) : url,
         name: asset.original_name || 'Imagen',
         meta: [formatMediaMime(asset.mime_type), formatMediaBytes(asset.size_bytes)].filter(Boolean).join(' · '),
+        folderLabel,
       })
     }
+    if (mediaBankFolderId !== undefined && mediaBankFolderId !== null) return items
     for (const entry of imageBank) {
+      if (items.length >= 12) break
       const originalUrl = toCanvasSafeAssetUrl(entry)
       const url = resolveDisplayUrl(originalUrl, displayUrlByPublicUrl, toCanvasSafeAssetUrl)
       if (!originalUrl || !url || seen.has(originalUrl)) continue
@@ -1902,10 +1923,11 @@ export default function EditPublication() {
         thumbUrl: thumbnailUrlByPublicUrl[originalUrl] || url,
         name,
         meta: originalUrl.toLowerCase().includes('.svg') ? 'SVG · Anterior' : 'Anterior',
+        folderLabel: mediaBankFolderId === undefined ? 'Banco general' : undefined,
       })
     }
     return items
-  }, [displayUrlByPublicUrl, imageBank, mediaBankAssets, thumbnailUrlByPublicUrl])
+  }, [displayUrlByPublicUrl, imageBank, mediaBankAssets, mediaBankFolderId, mediaBankFolders, thumbnailUrlByPublicUrl])
 
   // ── Autoguardado: guarda el canvas actual en segundo plano ──
   // Se llama tras cada cambio (debounce) y al cambiar de página.
@@ -3620,7 +3642,10 @@ export default function EditPublication() {
               addShape={addShape}
               addButton={addButton}
               addLinkZone={addLinkZone}
-              openImagePicker={() => setMediaPickerMode('add')}
+              openImagePicker={() => {
+                setMediaPickerInitialFolderId(mediaBankFolderId)
+                setMediaPickerMode('add')
+              }}
               openPagePicker={() => setMediaPickerMode('pages')}
               openSvgPicker={() => setMediaPickerMode('svg')}
               addIcon={addIcon}
@@ -3640,6 +3665,9 @@ export default function EditPublication() {
               setDefaultFont={setDefaultFont}
               imageBank={imageBank}
               imageBankItems={imageBankItems}
+              mediaBankFolders={mediaBankFolders}
+              mediaBankFolderId={mediaBankFolderId}
+              setMediaBankFolderId={setMediaBankFolderId}
               imageBankTotal={mediaBankTotal || imageBankItems.length}
               oldImagesPendingOptimization={oldImagesPendingCount}
               legacyOptimization={legacyOptimization}
@@ -3840,6 +3868,7 @@ export default function EditPublication() {
       <MediaPicker
         open={!!mediaPickerMode}
         publicationId={id ?? ''}
+        initialFolderId={mediaPickerMode === 'add' ? mediaPickerInitialFolderId : undefined}
         mode={mediaPickerMode === 'pages' ? 'pages' : mediaPickerMode === 'svg' ? 'svg' : 'image'}
         multiple={mediaPickerMode === 'add' || mediaPickerMode === 'pages' || mediaPickerMode === 'svg'}
         title={
@@ -3854,7 +3883,10 @@ export default function EditPublication() {
         legacyUrls={imageBank}
         busyMessage={mediaPickerProgress}
         usedPageUrls={pages.map((page) => page.image_url).filter(Boolean)}
-        onClose={() => setMediaPickerMode(null)}
+        onClose={() => {
+          setMediaPickerMode(null)
+          void refreshMediaBank()
+        }}
         onSelect={handleMediaPickerSelect}
         onRemoveLegacyUrls={removeLegacyUrlsFromBank}
         onPdfSelect={async (file, onProgress) => {
@@ -4005,7 +4037,7 @@ function ToolbarBtn({ icon, title, onClick, disabled, active }: { icon: string; 
   )
 }
 
-function BankImageButton({ item, onClick }: { item: { url: string; thumbUrl?: string; name: string; meta: string }; onClick: () => void }) {
+function BankImageButton({ item, onClick }: { item: { url: string; thumbUrl?: string; name: string; meta: string; folderLabel?: string }; onClick: () => void }) {
   const [failed, setFailed] = useState(false)
   return (
     <button type="button" style={cp.bankItem} title={`${item.name}${item.meta ? ` · ${item.meta}` : ''}`} onClick={onClick}>
@@ -4024,6 +4056,7 @@ function BankImageButton({ item, onClick }: { item: { url: string; thumbUrl?: st
       ) : (
         <span style={cp.bankFallback}>{item.meta?.split(' · ')[0] || 'IMG'}</span>
       )}
+      {item.folderLabel && <span style={cp.bankFolderBadge}>{item.folderLabel}</span>}
     </button>
   )
 }
@@ -4356,6 +4389,32 @@ function ContextPanel(p: any) {
           <p style={cp.hint}>Agrega la imagen como página nueva del flipbook (igual que en el panel Páginas).</p>
 
           <div style={cp.sectionLabel}>Mis imágenes ({p.imageBankTotal ?? p.imageBankItems?.length ?? 0})</div>
+          <div style={cp.bankFolderNav}>
+            <button
+              type="button"
+              style={{ ...cp.bankFolderBtn, ...(p.mediaBankFolderId === undefined ? cp.bankFolderActive : {}) }}
+              onClick={() => p.setMediaBankFolderId(undefined)}
+            >
+              Todas
+            </button>
+            <button
+              type="button"
+              style={{ ...cp.bankFolderBtn, ...(p.mediaBankFolderId === null ? cp.bankFolderActive : {}) }}
+              onClick={() => p.setMediaBankFolderId(null)}
+            >
+              Banco general
+            </button>
+            {p.mediaBankFolders?.map((folder: MediaFolder) => (
+              <button
+                key={folder.id}
+                type="button"
+                style={{ ...cp.bankFolderBtn, ...(p.mediaBankFolderId === folder.id ? cp.bankFolderActive : {}) }}
+                onClick={() => p.setMediaBankFolderId(folder.id)}
+              >
+                {folder.name} ({folder.asset_count})
+              </button>
+            ))}
+          </div>
           {p.oldImagesPendingOptimization > 0 && (
             <div style={cp.legacyOptimizeBox}>
               <div style={cp.legacyOptimizeTop}>
@@ -4376,7 +4435,7 @@ function ContextPanel(p: any) {
           {p.imageBankItems?.length ? (
             <>
               <div style={cp.bankGrid}>
-                {p.imageBankItems.slice(0, 12).map((item: any) => (
+                {p.imageBankItems.map((item: any) => (
                   <div key={item.key} style={cp.bankItemWrap}>
                     <BankImageButton item={item} onClick={() => p.insertImageFromBank(item.url)} />
                   </div>
@@ -7265,9 +7324,13 @@ const cp: Record<string, React.CSSProperties> = {
   iconName:   { fontSize: 9, color: '#9ca3af', lineHeight: 1 },
   bankGrid:   { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginTop: 4 },
   bankItemWrap: { position: 'relative' as const, aspectRatio: '1' },
-  bankItem:   { padding: 0, border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden', cursor: 'pointer', background: '#fff', width: '100%', height: '100%', display: 'block' },
+  bankItem:   { position: 'relative' as const, padding: 0, border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden', cursor: 'pointer', background: '#fff', width: '100%', height: '100%', display: 'block' },
   bankImg:    { width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block' },
   bankFallback: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f3f4f6', color: '#64748b', fontSize: 11, fontWeight: 800 },
+  bankFolderNav: { display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2, marginBottom: 8 },
+  bankFolderBtn: { flex: '0 0 auto', border: '1px solid #e5e7eb', background: '#fff', color: '#475569', borderRadius: 7, padding: '6px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' as const },
+  bankFolderActive: { borderColor: '#4F46E5', background: '#eef2ff', color: '#3730a3' },
+  bankFolderBadge: { position: 'absolute' as const, left: 4, right: 4, bottom: 4, background: 'rgba(15,23,42,0.78)', color: '#fff', borderRadius: 4, padding: '2px 4px', fontSize: 9, fontWeight: 800, textAlign: 'center' as const, whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' },
   bankMoreBtn: { width: '100%', marginTop: 8, background: '#fff', color: '#4F46E5', border: '1px solid #c7d2fe', borderRadius: 7, padding: '8px', cursor: 'pointer', fontSize: 12, fontWeight: 700 },
   legacyOptimizeBox: { border: '1px solid #e5e7eb', borderRadius: 8, padding: 8, marginBottom: 8, background: '#f8fafc' },
   legacyOptimizeTop: { display: 'grid', gridTemplateColumns: '1fr', gap: 6, fontSize: 12, color: '#475569', fontWeight: 700 },

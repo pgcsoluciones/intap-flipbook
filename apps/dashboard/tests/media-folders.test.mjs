@@ -16,6 +16,7 @@ async function loadDashboardModule(entry, name) {
     format: 'esm',
     platform: 'node',
     target: 'node20',
+    external: ['canvas'],
     define: {
       'import.meta.env.VITE_API_BASE_URL': '"http://api.test"',
     },
@@ -94,6 +95,129 @@ test('MediaPicker folder helpers keep legacy out of folders and block mixed move
     assert.equal(mod.canMoveMediaPickerSelection([{ asset: { id: 'a1' } }]), true)
     assert.equal(mod.canMoveMediaPickerSelection([{ asset: { id: 'a1' } }, {}]), false)
     assert.equal(mod.canMoveMediaPickerSelection([]), false)
+  } finally {
+    await mod.cleanup()
+  }
+})
+
+test('MediaPicker move requires explicit valid destination before executing', async () => {
+  const mod = await loadDashboardModule('apps/dashboard/src/components/MediaPicker.tsx', 'media-picker-move-target')
+  try {
+    const items = [{ key: 'asset:a1', asset: { id: 'a1', folder_id: 'folder-1' } }]
+    assert.equal(mod.canExecuteMediaMove(items, undefined), false)
+    assert.equal(mod.canExecuteMediaMove(items, 'folder-1'), false)
+    assert.equal(mod.canExecuteMediaMove(items, null), true)
+    assert.equal(mod.canExecuteMediaMove(items, null, true), false)
+  } finally {
+    await mod.cleanup()
+  }
+})
+
+test('moving selected assets calls move endpoint once with selected ids', async () => {
+  const mod = await loadDashboardModule('apps/dashboard/src/lib/api.ts', 'dashboard-api-move-selected')
+  const calls = installFetchRecorder({ success: true, data: { moved_count: 2, folder_id: 'folder-2' } })
+  try {
+    await mod.api.mediaAssets.move({ publication_id: 'pub-1', asset_ids: ['a1', 'a2'], folder_id: 'folder-2' })
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].url, 'http://api.test/api/upload/media-assets/move')
+    assert.deepEqual(JSON.parse(calls[0].init.body), { publication_id: 'pub-1', asset_ids: ['a1', 'a2'], folder_id: 'folder-2' })
+  } finally {
+    await mod.cleanup()
+  }
+})
+
+test('dragging an unselected image moves only that image', async () => {
+  const mod = await loadDashboardModule('apps/dashboard/src/components/MediaPicker.tsx', 'media-picker-drag-single')
+  try {
+    const dragged = { key: 'asset:a3', asset: { id: 'a3' } }
+    const selected = [
+      { key: 'asset:a1', asset: { id: 'a1' } },
+      { key: 'asset:a2', asset: { id: 'a2' } },
+    ]
+    assert.deepEqual(mod.selectedMediaAssetIdsForMove(dragged, selected), ['a3'])
+  } finally {
+    await mod.cleanup()
+  }
+})
+
+test('dragging a selected image moves the selected asset set', async () => {
+  const mod = await loadDashboardModule('apps/dashboard/src/components/MediaPicker.tsx', 'media-picker-drag-set')
+  try {
+    const dragged = { key: 'asset:a2', asset: { id: 'a2' } }
+    const selected = [
+      { key: 'asset:a1', asset: { id: 'a1' } },
+      { key: 'asset:a2', asset: { id: 'a2' } },
+    ]
+    assert.deepEqual(mod.selectedMediaAssetIdsForMove(dragged, selected), ['a1', 'a2'])
+  } finally {
+    await mod.cleanup()
+  }
+})
+
+test('legacy assets cannot be moved by drag or selection', async () => {
+  const mod = await loadDashboardModule('apps/dashboard/src/components/MediaPicker.tsx', 'media-picker-legacy-move')
+  try {
+    assert.deepEqual(mod.selectedMediaAssetIdsForMove({ key: 'legacy:u' }, []), [])
+    assert.deepEqual(mod.selectedMediaAssetIdsForMove(
+      { key: 'asset:a1', asset: { id: 'a1' } },
+      [{ key: 'asset:a1', asset: { id: 'a1' } }, { key: 'legacy:u' }],
+    ), [])
+  } finally {
+    await mod.cleanup()
+  }
+})
+
+test('folder badge labels Banco general and named folders', async () => {
+  const mod = await loadDashboardModule('apps/dashboard/src/components/MediaPicker.tsx', 'media-picker-folder-badges')
+  try {
+    assert.equal(mod.mediaFolderLabel(null, [{ id: 'folder-1', name: 'Campaña' }]), 'Banco general')
+    assert.equal(mod.mediaFolderLabel(undefined, [{ id: 'folder-1', name: 'Campaña' }]), 'Banco general')
+    assert.equal(mod.mediaFolderLabel('folder-1', [{ id: 'folder-1', name: 'Campaña' }]), 'Campaña')
+  } finally {
+    await mod.cleanup()
+  }
+})
+
+test('deleted active quick-bank folder falls back to Banco general before listing assets', async () => {
+  const mod = await loadDashboardModule('apps/dashboard/src/components/MediaPicker.tsx', 'media-picker-deleted-folder-fallback')
+  const apiMod = await loadDashboardModule('apps/dashboard/src/lib/api.ts', 'media-picker-deleted-folder-api')
+  const calls = installFetchRecorder({ success: true, data: [], page: { limit: 12, page: 1, total: 2, total_pages: 1, has_more: false, next_cursor: null } })
+  try {
+    const fallbackFolder = mod.resolveExistingMediaFolderFilter('folder-deleted', [{ id: 'folder-live' }])
+    assert.equal(fallbackFolder, null)
+    assert.equal(mod.resolveExistingMediaFolderFilter('folder-live', [{ id: 'folder-live' }]), 'folder-live')
+    assert.equal(mod.resolveExistingMediaFolderFilter(null, [{ id: 'folder-live' }]), null)
+    assert.equal(mod.resolveExistingMediaFolderFilter(undefined, [{ id: 'folder-live' }]), undefined)
+    await apiMod.api.mediaAssets.list({ publication_id: 'pub-1', limit: 12, page: 1, folder_id: fallbackFolder })
+    assert.match(calls[0].url, /limit=12/)
+    assert.match(calls[0].url, /page=1/)
+    assert.match(calls[0].url, /folder_id=unfiled/)
+  } finally {
+    await mod.cleanup()
+    await apiMod.cleanup()
+  }
+})
+
+test('drop asset ids prefer immediate ref and fall back to dataTransfer', async () => {
+  const mod = await loadDashboardModule('apps/dashboard/src/components/MediaPicker.tsx', 'media-picker-drop-ids')
+  try {
+    assert.deepEqual(mod.resolveDropMediaAssetIds(['a1', 'a2'], 'a3'), ['a1', 'a2'])
+    assert.deepEqual(mod.resolveDropMediaAssetIds([], 'a3,a4'), ['a3', 'a4'])
+    assert.deepEqual(mod.resolveDropMediaAssetIds([], '  a5, ,a6 '), ['a5', 'a6'])
+    assert.deepEqual(mod.resolveDropMediaAssetIds([], ''), [])
+  } finally {
+    await mod.cleanup()
+  }
+})
+
+test('editor quick media bank can request paginated folder-filtered assets', async () => {
+  const mod = await loadDashboardModule('apps/dashboard/src/lib/api.ts', 'editor-quick-bank-api')
+  const calls = installFetchRecorder({ success: true, data: [], page: { limit: 12, page: 1, total: 0, total_pages: 1, has_more: false, next_cursor: null } })
+  try {
+    await mod.api.mediaAssets.list({ publication_id: 'pub-1', limit: 12, page: 1, folder_id: 'folder-1' })
+    assert.match(calls[0].url, /limit=12/)
+    assert.match(calls[0].url, /page=1/)
+    assert.match(calls[0].url, /folder_id=folder-1/)
   } finally {
     await mod.cleanup()
   }
