@@ -196,10 +196,20 @@ CREATE TABLE IF NOT EXISTS editor_elements (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS media_folders (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES users(id),
+  publication_id TEXT NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS media_assets (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL REFERENCES users(id),
   publication_id TEXT NOT NULL REFERENCES publications(id),
+  folder_id TEXT REFERENCES media_folders(id) ON DELETE SET NULL,
   storage_bucket TEXT NOT NULL,
   storage_key TEXT NOT NULL,
   public_url TEXT NOT NULL,
@@ -522,6 +532,9 @@ CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_media_assets_dedup ON media_assets(tenant_id, publication_id, storage_bucket, sha256);
 CREATE INDEX IF NOT EXISTS idx_media_assets_publication_recent ON media_assets(tenant_id, publication_id, storage_bucket, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_media_assets_publication_name ON media_assets(tenant_id, publication_id, original_name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_media_folders_publication_name ON media_folders(tenant_id, publication_id, name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_media_folders_publication_created ON media_folders(tenant_id, publication_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_media_assets_folder_recent ON media_assets(tenant_id, publication_id, folder_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_dynamic_markers_publication ON dynamic_markers(publication_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dynamic_markers_page ON dynamic_markers(page_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dynamic_markers_status ON dynamic_markers(publication_id, status, updated_at DESC);

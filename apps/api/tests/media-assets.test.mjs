@@ -82,6 +82,7 @@ class FakeD1 {
     this.pages = seed.pages ?? []
     this.dynamicMarkers = seed.dynamicMarkers ?? []
     this.mediaAssets = seed.mediaAssets ?? []
+    this.mediaFolders = seed.mediaFolders ?? []
     this.addUsageOnSecondUsageCheck = seed.addUsageOnSecondUsageCheck ?? false
     this.pageUsageQueryCount = 0
   }
@@ -139,8 +140,34 @@ class FakeStatement {
         && (!publicationId || asset.publication_id === publicationId)
       ) ?? null
     }
+    if (sql.startsWith('SELECT * FROM media_folders WHERE')) {
+      const [folderId, tenantId, publicationId] = this.params
+      return this.db.mediaFolders.find((folder) =>
+        folder.id === folderId
+        && folder.tenant_id === tenantId
+        && (!publicationId || folder.publication_id === publicationId)
+      ) ?? null
+    }
+    if (sql.startsWith('SELECT id FROM media_folders')) {
+      const [tenantId, publicationId, name, exceptId] = this.params
+      return this.db.mediaFolders.find((folder) =>
+        folder.tenant_id === tenantId
+        && folder.publication_id === publicationId
+        && folder.name.toLowerCase() === String(name).toLowerCase()
+        && (!exceptId || folder.id !== exceptId)
+      ) ?? null
+    }
+    if (sql.startsWith('SELECT COUNT(*) AS count FROM media_assets')) {
+      const [tenantId, publicationId, folderId] = this.params
+      return { count: this.db.mediaAssets.filter((asset) =>
+        asset.tenant_id === tenantId
+        && asset.publication_id === publicationId
+        && asset.folder_id === folderId
+      ).length }
+    }
     if (sql.startsWith('SELECT COUNT(*) as count FROM media_assets')) {
       const [tenantId, publicationId, storageBucket] = this.params
+      let index = 3
       let rows = this.db.mediaAssets.filter((asset) =>
         asset.tenant_id === tenantId
         && asset.publication_id === publicationId
@@ -149,8 +176,14 @@ class FakeStatement {
         && !asset.deleted_at
         && ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif'].includes(asset.mime_type)
       )
+      if (this.sql.includes('folder_id IS NULL')) {
+        rows = rows.filter((asset) => asset.folder_id == null)
+      } else if (this.sql.includes('folder_id = ?')) {
+        const folderId = this.params[index++]
+        rows = rows.filter((asset) => asset.folder_id === folderId)
+      }
       if (this.sql.includes('original_name LIKE ?')) {
-        const q = String(this.params[3]).replace(/%/g, '').toLowerCase()
+        const q = String(this.params[index++]).replace(/%/g, '').toLowerCase()
         rows = rows.filter((asset) => asset.original_name.toLowerCase().includes(q))
       }
       if (this.sql.includes('optimized_url IS NULL')) {
@@ -173,12 +206,41 @@ class FakeStatement {
   }
 
   async all() {
+    if (this.sql.includes('FROM media_folders f')) {
+      const [tenantId, publicationId] = this.params
+      return {
+        results: this.db.mediaFolders
+          .filter((folder) => folder.tenant_id === tenantId && folder.publication_id === publicationId)
+          .map((folder) => ({
+            ...folder,
+            asset_count: this.db.mediaAssets.filter((asset) =>
+              asset.tenant_id === tenantId
+              && asset.publication_id === publicationId
+              && asset.folder_id === folder.id
+              && !asset.is_hidden
+              && !asset.deleted_at
+            ).length,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name) || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)),
+      }
+    }
     if (this.sql.startsWith('SELECT public_url FROM media_assets')) {
       const [tenantId, publicationId] = this.params
       return { results: this.db.mediaAssets.filter((asset) =>
         asset.tenant_id === tenantId
         && asset.publication_id === publicationId
       ).map((asset) => ({ public_url: asset.public_url })) }
+    }
+    if (this.sql.startsWith('SELECT id FROM media_assets') && this.sql.includes('id IN')) {
+      const [tenantId, publicationId, ...assetIds] = this.params
+      const allowed = new Set(assetIds)
+      return { results: this.db.mediaAssets.filter((asset) =>
+        asset.tenant_id === tenantId
+        && asset.publication_id === publicationId
+        && allowed.has(asset.id)
+        && !asset.is_hidden
+        && !asset.deleted_at
+      ).map((asset) => ({ id: asset.id })) }
     }
     if (this.sql.startsWith('SELECT * FROM media_assets WHERE') && this.sql.includes('public_url IN')) {
       const [tenantId, publicationId, ...urls] = this.params
@@ -202,6 +264,12 @@ class FakeStatement {
         && !asset.deleted_at
         && ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif'].includes(asset.mime_type)
       )
+      if (this.sql.includes('folder_id IS NULL')) {
+        rows = rows.filter((asset) => asset.folder_id == null)
+      } else if (this.sql.includes('folder_id = ?')) {
+        const folderId = this.params[index++]
+        rows = rows.filter((asset) => asset.folder_id === folderId)
+      }
       if (this.sql.includes('original_name LIKE ?')) {
         const q = String(this.params[index++]).replace(/%/g, '').toLowerCase()
         rows = rows.filter((asset) => asset.original_name.toLowerCase().includes(q))
@@ -243,47 +311,71 @@ class FakeStatement {
   }
 
   async run() {
+    if (this.sql.startsWith('INSERT INTO media_folders')) {
+      const [id, tenant_id, publication_id, name, created_at, updated_at] = this.params
+      if (this.db.mediaFolders.some((folder) =>
+        folder.tenant_id === tenant_id
+        && folder.publication_id === publication_id
+        && folder.name.toLowerCase() === String(name).toLowerCase()
+      )) {
+        throw new Error('UNIQUE constraint failed: media_folders.tenant_id, media_folders.publication_id, media_folders.name')
+      }
+      this.db.mediaFolders.push({ id, tenant_id, publication_id, name, created_at, updated_at })
+      return { success: true }
+    }
+    if (this.sql.startsWith('UPDATE media_folders')) {
+      const [name, updatedAt, folderId, tenantId] = this.params
+      this.db.mediaFolders = this.db.mediaFolders.map((folder) =>
+        folder.id === folderId && folder.tenant_id === tenantId ? { ...folder, name, updated_at: updatedAt } : folder,
+      )
+      return { success: true }
+    }
+    if (this.sql.startsWith('DELETE FROM media_folders')) {
+      const [folderId, tenantId] = this.params
+      this.db.mediaFolders = this.db.mediaFolders.filter((folder) => !(folder.id === folderId && folder.tenant_id === tenantId))
+      return { success: true }
+    }
     if (this.sql.startsWith('INSERT INTO media_assets')) {
-      const base = this.params.slice(0, 12)
-      const [
-        id,
-        tenant_id,
-        publication_id,
-        storage_bucket,
-        storage_key,
-        public_url,
-        original_name,
-        mime_type,
-        size_bytes,
-        sha256,
-        width,
-        height,
-      ] = base
-      const hasDisplayVariantColumns = this.params.length >= 33
+      const hasFolderColumn = this.sql.includes('publication_id, folder_id, storage_bucket')
+      const id = this.params[0]
+      const tenant_id = this.params[1]
+      const publication_id = this.params[2]
+      const folder_id = hasFolderColumn ? this.params[3] : null
+      const storage_bucket = this.params[hasFolderColumn ? 4 : 3]
+      const storage_key = this.params[hasFolderColumn ? 5 : 4]
+      const public_url = this.params[hasFolderColumn ? 6 : 5]
+      const original_name = this.params[hasFolderColumn ? 7 : 6]
+      const mime_type = this.params[hasFolderColumn ? 8 : 7]
+      const size_bytes = this.params[hasFolderColumn ? 9 : 8]
+      const sha256 = this.params[hasFolderColumn ? 10 : 9]
+      const width = this.params[hasFolderColumn ? 11 : 10]
+      const height = this.params[hasFolderColumn ? 12 : 11]
+      const offset = hasFolderColumn ? 1 : 0
+      const hasDisplayVariantColumns = this.params.length >= 33 + offset
       const hasOptimizationColumns = this.params.length > 14
       const optimization = hasDisplayVariantColumns
         ? {
-            original_mime_type: this.params[12],
-            original_size_bytes: this.params[13],
-            original_width: this.params[14],
-            original_height: this.params[15],
-            optimized_storage_key: this.params[16],
-            optimized_url: this.params[17],
-            optimized_mime_type: this.params[18],
-            optimized_size_bytes: this.params[19],
-            optimized_width: this.params[20],
-            optimized_height: this.params[21],
-            thumbnail_storage_key: this.params[22],
-            thumbnail_url: this.params[23],
-            thumbnail_mime_type: this.params[24],
-            thumbnail_size_bytes: this.params[25],
-            thumbnail_width: this.params[26],
-            thumbnail_height: this.params[27],
-            optimization_status: this.params[28],
-            optimization_version: this.params[29],
-            optimized_at: this.params[30],
-            created_at: this.params[31],
-            updated_at: this.params[32],
+            original_mime_type: this.params[12 + offset],
+            original_size_bytes: this.params[13 + offset],
+            original_width: this.params[14 + offset],
+            original_height: this.params[15 + offset],
+            optimized_storage_key: this.params[16 + offset],
+            optimized_url: this.params[17 + offset],
+            optimized_mime_type: this.params[18 + offset],
+            optimized_size_bytes: this.params[19 + offset],
+            optimized_width: this.params[20 + offset],
+            optimized_height: this.params[21 + offset],
+            thumbnail_storage_key: this.params[22 + offset],
+            thumbnail_url: this.params[23 + offset],
+            thumbnail_mime_type: this.params[24 + offset],
+            thumbnail_size_bytes: this.params[25 + offset],
+            thumbnail_width: this.params[26 + offset],
+            thumbnail_height: this.params[27 + offset],
+            optimization_status: this.params[28 + offset],
+            optimization_version: this.params[29 + offset],
+            optimized_at: this.params[30 + offset],
+            created_at: this.params[31 + offset],
+            updated_at: this.params[32 + offset],
           }
         : hasOptimizationColumns
         ? {
@@ -319,6 +411,7 @@ class FakeStatement {
         id,
         tenant_id,
         publication_id,
+        folder_id,
         storage_bucket,
         storage_key,
         public_url,
@@ -330,6 +423,34 @@ class FakeStatement {
         height,
         ...optimization,
       })
+      return { success: true }
+    }
+    if (this.sql.startsWith('UPDATE media_assets SET folder_id = ?, updated_at = ?')) {
+      if (this.sql.includes('id IN')) {
+        const [folderId, updatedAt, tenantId, publicationId, ...assetIds] = this.params
+        const allowed = new Set(assetIds)
+        this.db.mediaAssets = this.db.mediaAssets.map((asset) =>
+          asset.tenant_id === tenantId && asset.publication_id === publicationId && allowed.has(asset.id)
+            ? { ...asset, folder_id: folderId, updated_at: updatedAt }
+            : asset,
+        )
+        return { success: true }
+      }
+      const [folderId, updatedAt, assetId, tenantId, publicationId] = this.params
+      this.db.mediaAssets = this.db.mediaAssets.map((asset) =>
+        asset.id === assetId && asset.tenant_id === tenantId && asset.publication_id === publicationId
+          ? { ...asset, folder_id: folderId, updated_at: updatedAt }
+          : asset,
+      )
+      return { success: true }
+    }
+    if (this.sql.startsWith('UPDATE media_assets SET folder_id = NULL')) {
+      const [updatedAt, tenantId, publicationId, folderId] = this.params
+      this.db.mediaAssets = this.db.mediaAssets.map((asset) =>
+        asset.tenant_id === tenantId && asset.publication_id === publicationId && asset.folder_id === folderId
+          ? { ...asset, folder_id: null, updated_at: updatedAt }
+          : asset,
+      )
       return { success: true }
     }
     if (this.sql.startsWith('UPDATE media_assets SET optimized_storage_key = ?')) {
@@ -1279,4 +1400,206 @@ test('legacy asset without trusted storage_key is not physically deleted', async
   assert.equal(result.body.code, 'MEDIA_ASSET_UNSAFE_STORAGE_KEY')
   assert.deepEqual(r2.deletes, [])
   assert.equal(db.mediaAssets[0].deleted_at, undefined)
+})
+
+test('media folders can be created, listed, renamed and deleted without touching R2', async () => {
+  const db = new FakeD1({
+    mediaAssets: [
+      { id: 'in-folder', tenant_id: 'user-1', publication_id: 'pub-1', folder_id: 'folder-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/in-folder.png', public_url: 'https://media.example.test/uploads/user-1/in-folder.png', original_name: 'in-folder.png', mime_type: 'image/png', size_bytes: 1, sha256: 'in-folder', width: null, height: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+    mediaFolders: [
+      { id: 'folder-1', tenant_id: 'user-1', publication_id: 'pub-1', name: 'Campana', created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+
+  const created = await requestUpload(db, r2, '/media-folders', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', name: 'Productos' }),
+  })
+  const listed = await requestUpload(db, r2, '/media-folders?publication_id=pub-1', { method: 'GET' })
+  const renamed = await requestUpload(db, r2, `/media-folders/${created.body.data.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Productos 2026' }),
+  })
+  const deleted = await requestUpload(db, r2, '/media-folders/folder-1', { method: 'DELETE' })
+
+  assert.equal(created.status, 201)
+  assert.equal(renamed.body.data.name, 'Productos 2026')
+  assert.deepEqual(listed.body.data.map((folder) => [folder.name, folder.asset_count]), [['Campana', 1], ['Productos', 0]])
+  assert.equal(deleted.status, 200)
+  assert.equal(deleted.body.data.moved_count, 1)
+  assert.equal(db.mediaAssets.find((asset) => asset.id === 'in-folder').folder_id, null)
+  assert.equal(db.mediaFolders.some((folder) => folder.id === 'folder-1'), false)
+  assert.deepEqual(r2.puts, [])
+  assert.deepEqual(r2.deletes, [])
+})
+
+test('media folder names reject empty, long and duplicate case-insensitive values', async () => {
+  const db = new FakeD1({
+    mediaFolders: [
+      { id: 'folder-1', tenant_id: 'user-1', publication_id: 'pub-1', name: 'Productos', created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const empty = await requestUpload(db, r2, '/media-folders', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', name: '   ' }),
+  })
+  const long = await requestUpload(db, r2, '/media-folders', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', name: 'x'.repeat(81) }),
+  })
+  const duplicate = await requestUpload(db, r2, '/media-folders', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', name: 'productos' }),
+  })
+
+  assert.equal(empty.status, 400)
+  assert.equal(long.status, 400)
+  assert.equal(duplicate.status, 409)
+  assert.equal(db.mediaFolders.length, 1)
+})
+
+test('media folders are isolated by tenant and publication', async () => {
+  const db = new FakeD1({
+    users: [{ id: 'user-1', plan_id: 'free' }, { id: 'user-2', plan_id: 'free' }],
+    mediaFolders: [
+      { id: 'pub-1-folder', tenant_id: 'user-1', publication_id: 'pub-1', name: 'Pub 1', created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'pub-2-folder', tenant_id: 'user-1', publication_id: 'pub-2', name: 'Pub 2', created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'foreign-folder', tenant_id: 'user-2', publication_id: 'other-pub', name: 'Foreign', created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const own = await requestUpload(db, r2, '/media-folders?publication_id=pub-1', { method: 'GET' })
+  const foreign = await requestUpload(db, r2, '/media-folders?publication_id=other-pub', { method: 'GET' }, 'user-1')
+  const otherTenant = await requestUpload(db, r2, '/media-folders?publication_id=other-pub', { method: 'GET' }, 'user-2')
+
+  assert.deepEqual(own.body.data.map((folder) => folder.id), ['pub-1-folder'])
+  assert.equal(foreign.status, 404)
+  assert.deepEqual(otherTenant.body.data.map((folder) => folder.id), ['foreign-folder'])
+})
+
+test('media asset listing supports all, unfiled and folder filters while known urls remain global', async () => {
+  const db = new FakeD1({
+    mediaFolders: [
+      { id: 'folder-1', tenant_id: 'user-1', publication_id: 'pub-1', name: 'Folder', created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+    mediaAssets: [
+      { id: 'general', tenant_id: 'user-1', publication_id: 'pub-1', folder_id: null, storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/general.png', public_url: 'https://media.example.test/uploads/user-1/general.png', original_name: 'general.png', mime_type: 'image/png', size_bytes: 1, sha256: 'general', width: null, height: null, created_at: '2026-01-03T00:00:00.000Z', updated_at: '2026-01-03T00:00:00.000Z' },
+      { id: 'foldered', tenant_id: 'user-1', publication_id: 'pub-1', folder_id: 'folder-1', storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/foldered.png', public_url: 'https://media.example.test/uploads/user-1/foldered.png', original_name: 'foldered.png', mime_type: 'image/png', size_bytes: 1, sha256: 'foldered', width: null, height: null, created_at: '2026-01-02T00:00:00.000Z', updated_at: '2026-01-02T00:00:00.000Z' },
+      { id: 'hidden-known', tenant_id: 'user-1', publication_id: 'pub-1', folder_id: 'folder-1', storage_bucket: 'EXTERNAL', storage_key: 'external/hidden', public_url: 'https://legacy.example.test/hidden.jpg', original_name: 'hidden.jpg', mime_type: 'image/jpeg', size_bytes: 0, sha256: 'hidden', width: null, height: null, is_hidden: 1, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const all = await requestUpload(db, r2, '/media-assets?publication_id=pub-1&limit=12&page=1', { method: 'GET' })
+  const unfiled = await requestUpload(db, r2, '/media-assets?publication_id=pub-1&folder_id=unfiled&limit=12&page=1', { method: 'GET' })
+  const foldered = await requestUpload(db, r2, '/media-assets?publication_id=pub-1&folder_id=folder-1&limit=12&page=1', { method: 'GET' })
+
+  assert.deepEqual(all.body.data.map((asset) => asset.id), ['general', 'foldered'])
+  assert.deepEqual(unfiled.body.data.map((asset) => asset.id), ['general'])
+  assert.deepEqual(foldered.body.data.map((asset) => asset.id), ['foldered'])
+  assert.deepEqual(foldered.body.meta.known_urls.sort(), [
+    'https://legacy.example.test/hidden.jpg',
+    'https://media.example.test/uploads/user-1/foldered.png',
+    'https://media.example.test/uploads/user-1/general.png',
+  ].sort())
+})
+
+test('moving one or many media assets validates ownership, visibility and does not touch R2', async () => {
+  const db = new FakeD1({
+    mediaFolders: [
+      { id: 'folder-1', tenant_id: 'user-1', publication_id: 'pub-1', name: 'Folder', created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+    mediaAssets: [
+      { id: 'a1', tenant_id: 'user-1', publication_id: 'pub-1', folder_id: null, storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/a1.png', public_url: 'https://media.example.test/uploads/user-1/a1.png', original_name: 'a1.png', mime_type: 'image/png', size_bytes: 1, sha256: 'a1', width: null, height: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'a2', tenant_id: 'user-1', publication_id: 'pub-1', folder_id: null, storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/a2.png', public_url: 'https://media.example.test/uploads/user-1/a2.png', original_name: 'a2.png', mime_type: 'image/png', size_bytes: 1, sha256: 'a2', width: null, height: null, created_at: '2026-01-02T00:00:00.000Z', updated_at: '2026-01-02T00:00:00.000Z' },
+      { id: 'hidden', tenant_id: 'user-1', publication_id: 'pub-1', folder_id: null, storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/hidden.png', public_url: 'https://media.example.test/uploads/user-1/hidden.png', original_name: 'hidden.png', mime_type: 'image/png', size_bytes: 1, sha256: 'hidden', width: null, height: null, is_hidden: 1, created_at: '2026-01-03T00:00:00.000Z', updated_at: '2026-01-03T00:00:00.000Z' },
+      { id: 'deleted', tenant_id: 'user-1', publication_id: 'pub-1', folder_id: null, storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/deleted.png', public_url: 'https://media.example.test/uploads/user-1/deleted.png', original_name: 'deleted.png', mime_type: 'image/png', size_bytes: 1, sha256: 'deleted', width: null, height: null, deleted_at: '2026-01-04T00:00:00.000Z', created_at: '2026-01-04T00:00:00.000Z', updated_at: '2026-01-04T00:00:00.000Z' },
+      { id: 'foreign', tenant_id: 'user-1', publication_id: 'pub-2', folder_id: null, storage_bucket: 'MEDIA', storage_key: 'uploads/user-1/foreign.png', public_url: 'https://media.example.test/uploads/user-1/foreign.png', original_name: 'foreign.png', mime_type: 'image/png', size_bytes: 1, sha256: 'foreign', width: null, height: null, created_at: '2026-01-05T00:00:00.000Z', updated_at: '2026-01-05T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const moved = await requestUpload(db, r2, '/media-assets/move', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', asset_ids: ['a1', 'a2', 'a2'], folder_id: 'folder-1' }),
+  })
+  const hidden = await requestUpload(db, r2, '/media-assets/move', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', asset_ids: ['hidden'], folder_id: null }),
+  })
+  const deleted = await requestUpload(db, r2, '/media-assets/move', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', asset_ids: ['deleted'], folder_id: null }),
+  })
+  const foreign = await requestUpload(db, r2, '/media-assets/move', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', asset_ids: ['foreign'], folder_id: null }),
+  })
+  const tooMany = await requestUpload(db, r2, '/media-assets/move', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ publication_id: 'pub-1', asset_ids: Array.from({ length: 101 }, (_, index) => `asset-${index}`), folder_id: null }),
+  })
+
+  assert.equal(moved.status, 200)
+  assert.equal(moved.body.data.moved_count, 2)
+  assert.equal(db.mediaAssets.find((asset) => asset.id === 'a1').folder_id, 'folder-1')
+  assert.equal(db.mediaAssets.find((asset) => asset.id === 'a2').folder_id, 'folder-1')
+  assert.equal(hidden.status, 404)
+  assert.equal(deleted.status, 404)
+  assert.equal(foreign.status, 404)
+  assert.equal(tooMany.status, 400)
+  assert.deepEqual(r2.puts, [])
+  assert.deepEqual(r2.deletes, [])
+})
+
+test('upload folder_id controls new and reused assets without duplicate records or extra R2 puts', async () => {
+  const db = new FakeD1({
+    mediaFolders: [
+      { id: 'folder-1', tenant_id: 'user-1', publication_id: 'pub-1', name: 'Folder 1', created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'folder-2', tenant_id: 'user-1', publication_id: 'pub-1', name: 'Folder 2', created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' },
+    ],
+  })
+  const r2 = new FakeR2()
+  const toFolder = form('pub-1', pngFile('hero.png', 'same-bytes'))
+  toFolder.append('folder_id', 'folder-1')
+  const first = await requestUpload(db, r2, '/media-assets', { method: 'POST', body: toFolder })
+
+  const reusedToOtherFolder = form('pub-1', pngFile('hero-renamed.png', 'same-bytes'))
+  reusedToOtherFolder.append('folder_id', 'folder-2')
+  const second = await requestUpload(db, r2, '/media-assets', { method: 'POST', body: reusedToOtherFolder })
+  const folderAfterSecond = db.mediaAssets[0].folder_id
+
+  const reusedToUnfiled = form('pub-1', pngFile('hero-again.png', 'same-bytes'))
+  reusedToUnfiled.append('folder_id', 'unfiled')
+  const third = await requestUpload(db, r2, '/media-assets', { method: 'POST', body: reusedToUnfiled })
+  const folderAfterThird = db.mediaAssets[0].folder_id
+
+  db.mediaAssets[0].folder_id = 'folder-1'
+  const omitted = await requestUpload(db, r2, '/media-assets', {
+    method: 'POST',
+    body: form('pub-1', pngFile('hero-omitted.png', 'same-bytes')),
+  })
+
+  assert.equal(first.status, 201)
+  assert.equal(first.body.data.asset.folder_id, 'folder-1')
+  assert.equal(second.status, 200)
+  assert.equal(second.body.data.reused, true)
+  assert.equal(second.body.data.asset.folder_id, 'folder-2')
+  assert.equal(folderAfterSecond, 'folder-2')
+  assert.equal(third.body.data.asset.folder_id, null)
+  assert.equal(folderAfterThird, null)
+  assert.equal(omitted.body.data.asset.folder_id, 'folder-1')
+  assert.equal(db.mediaAssets.length, 1)
+  assert.equal(r2.puts.length, 1)
 })

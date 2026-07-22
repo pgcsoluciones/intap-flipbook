@@ -90,6 +90,7 @@ type MediaAssetRow = {
   id: string
   tenant_id: string
   publication_id: string
+  folder_id?: string | null
   storage_bucket: string
   storage_key: string | null
   public_url: string
@@ -124,11 +125,22 @@ type MediaAssetRow = {
   updated_at: string
 }
 
+type MediaFolderRow = {
+  id: string
+  tenant_id: string
+  publication_id: string
+  name: string
+  asset_count?: number
+  created_at: string
+  updated_at: string
+}
+
 function mediaAssetResponse(row: MediaAssetRow) {
   return {
     id: row.id,
     tenant_id: row.tenant_id,
     publication_id: row.publication_id,
+    folder_id: row.folder_id ?? null,
     storage_bucket: row.storage_bucket,
     storage_key: row.storage_key,
     public_url: row.public_url,
@@ -161,6 +173,18 @@ function mediaAssetResponse(row: MediaAssetRow) {
     optimized_at: row.optimized_at ?? null,
     is_hidden: row.is_hidden ?? 0,
     deleted_at: row.deleted_at ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+function mediaFolderResponse(row: MediaFolderRow) {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    publication_id: row.publication_id,
+    name: row.name,
+    asset_count: Number(row.asset_count ?? 0),
     created_at: row.created_at,
     updated_at: row.updated_at,
   }
@@ -258,6 +282,55 @@ async function getOwnedPublication(c: any, publicationId: string, userId: string
   return c.env.DB.prepare(
     'SELECT id FROM publications WHERE id = ? AND user_id = ?',
   ).bind(publicationId, userId).first<{ id: string }>()
+}
+
+function normalizeMediaFolderName(value: unknown) {
+  const name = String(value ?? '').trim()
+  if (name.length < 1) return { ok: false as const, error: 'El nombre de la carpeta es requerido.' }
+  if (name.length > 80) return { ok: false as const, error: 'El nombre de la carpeta no puede superar 80 caracteres.' }
+  return { ok: true as const, name }
+}
+
+async function getOwnedMediaFolder(c: any, userId: string, folderId: string, publicationId?: string) {
+  const conditions = ['id = ?', 'tenant_id = ?']
+  const params: unknown[] = [folderId, userId]
+  if (publicationId) {
+    conditions.push('publication_id = ?')
+    params.push(publicationId)
+  }
+  return c.env.DB.prepare(
+    `SELECT *
+     FROM media_folders
+     WHERE ${conditions.join(' AND ')}
+     LIMIT 1`,
+  ).bind(...params).first<MediaFolderRow>()
+}
+
+async function ensureMediaFolderNameAvailable(c: any, userId: string, publicationId: string, name: string, exceptFolderId?: string) {
+  const params: unknown[] = [userId, publicationId, name]
+  let except = ''
+  if (exceptFolderId) {
+    except = 'AND id <> ?'
+    params.push(exceptFolderId)
+  }
+  const existing = await c.env.DB.prepare(
+    `SELECT id
+     FROM media_folders
+     WHERE tenant_id = ?
+       AND publication_id = ?
+       AND name = ? COLLATE NOCASE
+       ${except}
+     LIMIT 1`,
+  ).bind(...params).first<{ id: string }>()
+  return !existing
+}
+
+async function parseTargetMediaFolder(c: any, userId: string, publicationId: string, rawFolderId: unknown) {
+  const folderId = String(rawFolderId ?? '').trim()
+  if (!folderId || folderId === 'unfiled') return { ok: true as const, folderId: null as string | null }
+  const folder = await getOwnedMediaFolder(c, userId, folderId, publicationId)
+  if (!folder) return { ok: false as const, response: c.json({ success: false, error: 'Carpeta no encontrada' }, 404) }
+  return { ok: true as const, folderId }
 }
 
 async function getOwnedMediaAsset(c: any, userId: string, assetId: string, publicationId?: string) {
@@ -368,7 +441,7 @@ async function countMediaAssetUsage(c: any, asset: MediaAssetRow) {
   }
 }
 
-async function storeMediaAsset(c: any, userId: string, publicationId: string, file: File, width: number | null, height: number | null, thumbnail: File | null, metadata: Record<string, any>) {
+async function storeMediaAsset(c: any, userId: string, publicationId: string, folderId: string | null | undefined, file: File, width: number | null, height: number | null, thumbnail: File | null, metadata: Record<string, any>) {
   const ext = MEDIA_IMAGE_EXT_BY_TYPE[file.type]
   if (!ext) {
     throw new Response(JSON.stringify({ success: false, error: 'Tipo de imagen no permitido. Se aceptan JPEG, PNG, WebP, GIF y SVG seguro.' }), {
@@ -431,6 +504,14 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
   ).bind(userId, publicationId, sha256, 'MEDIA').first<MediaAssetRow>()
 
   if (existing) {
+    if (folderId !== undefined && existing.folder_id !== folderId) {
+      await c.env.DB.prepare(
+        `UPDATE media_assets
+         SET folder_id = ?, updated_at = ?
+         WHERE id = ? AND tenant_id = ? AND publication_id = ?`,
+      ).bind(folderId, new Date().toISOString(), existing.id, userId, publicationId).run()
+      existing.folder_id = folderId
+    }
     if (thumbnail && thumbnailBody && !existing.thumbnail_url) {
       const thumbExt = MEDIA_IMAGE_EXT_BY_TYPE[thumbnail.type]!
       thumbnailKey = `uploads/${userId}/${existing.id}-thumb.${thumbExt}`
@@ -492,6 +573,7 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
     id,
     tenant_id: userId,
     publication_id: publicationId,
+    folder_id: folderId ?? null,
     storage_bucket: 'MEDIA',
     storage_key: key,
     public_url: url,
@@ -535,18 +617,19 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
 
   await c.env.DB.prepare(
     `INSERT INTO media_assets (
-       id, tenant_id, publication_id, storage_bucket, storage_key, public_url,
+       id, tenant_id, publication_id, folder_id, storage_bucket, storage_key, public_url,
        original_name, mime_type, size_bytes, sha256, width, height,
        original_mime_type, original_size_bytes, original_width, original_height,
        optimized_storage_key, optimized_url, optimized_mime_type, optimized_size_bytes, optimized_width, optimized_height,
        thumbnail_storage_key, thumbnail_url, thumbnail_mime_type, thumbnail_size_bytes, thumbnail_width, thumbnail_height,
        optimization_status, optimization_version, optimized_at,
        created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     asset.id,
     asset.tenant_id,
     asset.publication_id,
+    asset.folder_id,
     asset.storage_bucket,
     asset.storage_key,
     asset.public_url,
@@ -582,6 +665,112 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fi
   return { asset: mediaAssetResponse(asset), url, reused: false }
 }
 
+upload.get('/media-folders', async (c) => {
+  const userId = c.get('user').sub
+  const publicationId = (c.req.query('publication_id') ?? '').trim()
+  if (!publicationId) return c.json({ success: false, error: 'publication_id es requerido' }, 400)
+  const publication = await getOwnedPublication(c, publicationId, userId)
+  if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  const result = await c.env.DB.prepare(
+    `SELECT f.*,
+            COUNT(a.id) AS asset_count
+     FROM media_folders f
+     LEFT JOIN media_assets a
+       ON a.folder_id = f.id
+      AND a.tenant_id = f.tenant_id
+      AND a.publication_id = f.publication_id
+      AND (a.is_hidden IS NULL OR a.is_hidden = 0)
+      AND a.deleted_at IS NULL
+     WHERE f.tenant_id = ?
+       AND f.publication_id = ?
+     GROUP BY f.id
+     ORDER BY f.name COLLATE NOCASE ASC, f.created_at ASC, f.id ASC`,
+  ).bind(userId, publicationId).all<MediaFolderRow>()
+
+  return c.json({ success: true, data: (result.results ?? []).map(mediaFolderResponse) })
+})
+
+upload.post('/media-folders', async (c) => {
+  const userId = c.get('user').sub
+  const body = await c.req.json<{ publication_id?: string; name?: string }>().catch(() => ({} as { publication_id?: string; name?: string }))
+  const publicationId = String(body.publication_id ?? '').trim()
+  const parsedName = normalizeMediaFolderName(body.name)
+  if (!publicationId) return c.json({ success: false, error: 'publication_id es requerido' }, 400)
+  if (!parsedName.ok) return c.json({ success: false, error: parsedName.error }, 400)
+  const publication = await getOwnedPublication(c, publicationId, userId)
+  if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+  if (!(await ensureMediaFolderNameAvailable(c, userId, publicationId, parsedName.name))) {
+    return c.json({ success: false, code: 'MEDIA_FOLDER_NAME_EXISTS', error: 'Ya existe una carpeta con ese nombre en esta publicación.' }, 409)
+  }
+
+  const now = new Date().toISOString()
+  const folder: MediaFolderRow = {
+    id: crypto.randomUUID(),
+    tenant_id: userId,
+    publication_id: publicationId,
+    name: parsedName.name,
+    asset_count: 0,
+    created_at: now,
+    updated_at: now,
+  }
+  await c.env.DB.prepare(
+    `INSERT INTO media_folders (id, tenant_id, publication_id, name, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).bind(folder.id, userId, publicationId, folder.name, now, now).run()
+  return c.json({ success: true, data: mediaFolderResponse(folder) }, 201)
+})
+
+upload.patch('/media-folders/:folderId', async (c) => {
+  const userId = c.get('user').sub
+  const folderId = c.req.param('folderId')
+  const body = await c.req.json<{ name?: string }>().catch(() => ({} as { name?: string }))
+  const parsedName = normalizeMediaFolderName(body.name)
+  if (!parsedName.ok) return c.json({ success: false, error: parsedName.error }, 400)
+  const folder = await getOwnedMediaFolder(c, userId, folderId)
+  if (!folder) return c.json({ success: false, error: 'Carpeta no encontrada' }, 404)
+  if (!(await ensureMediaFolderNameAvailable(c, userId, folder.publication_id, parsedName.name, folder.id))) {
+    return c.json({ success: false, code: 'MEDIA_FOLDER_NAME_EXISTS', error: 'Ya existe una carpeta con ese nombre en esta publicación.' }, 409)
+  }
+
+  const now = new Date().toISOString()
+  await c.env.DB.prepare(
+    `UPDATE media_folders
+     SET name = ?, updated_at = ?
+     WHERE id = ? AND tenant_id = ?`,
+  ).bind(parsedName.name, now, folder.id, userId).run()
+  return c.json({ success: true, data: mediaFolderResponse({ ...folder, name: parsedName.name, updated_at: now }) })
+})
+
+upload.delete('/media-folders/:folderId', async (c) => {
+  const userId = c.get('user').sub
+  const folderId = c.req.param('folderId')
+  const folder = await getOwnedMediaFolder(c, userId, folderId)
+  if (!folder) return c.json({ success: false, error: 'Carpeta no encontrada' }, 404)
+
+  const countRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS count
+     FROM media_assets
+     WHERE tenant_id = ?
+       AND publication_id = ?
+       AND folder_id = ?`,
+  ).bind(userId, folder.publication_id, folder.id).first<{ count: number }>()
+  const movedCount = Number(countRow?.count ?? 0)
+  const now = new Date().toISOString()
+  await c.env.DB.prepare(
+    `UPDATE media_assets
+     SET folder_id = NULL, updated_at = ?
+     WHERE tenant_id = ?
+       AND publication_id = ?
+       AND folder_id = ?`,
+  ).bind(now, userId, folder.publication_id, folder.id).run()
+  await c.env.DB.prepare(
+    `DELETE FROM media_folders
+     WHERE id = ? AND tenant_id = ?`,
+  ).bind(folder.id, userId).run()
+  return c.json({ success: true, data: { deleted: true, moved_count: movedCount } })
+})
+
 upload.get('/media-assets', async (c) => {
   const userId = c.get('user').sub
   const publicationId = (c.req.query('publication_id') ?? '').trim()
@@ -589,6 +778,14 @@ upload.get('/media-assets', async (c) => {
 
   const publication = await getOwnedPublication(c, publicationId, userId)
   if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  const folderFilter = c.req.query('folder_id')
+  if (folderFilter === 'unfiled') {
+    // Banco general: folder_id NULL.
+  } else if (folderFilter != null && folderFilter.trim()) {
+    const folder = await getOwnedMediaFolder(c, userId, folderFilter.trim(), publicationId)
+    if (!folder) return c.json({ success: false, error: 'Carpeta no encontrada' }, 404)
+  }
 
   const q = (c.req.query('q') ?? '').trim()
   const needsThumbnail = c.req.query('needs_thumbnail') === 'true'
@@ -606,6 +803,12 @@ upload.get('/media-assets', async (c) => {
     "mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif')",
   ]
   const params: unknown[] = [userId, publicationId, 'MEDIA']
+  if (folderFilter === 'unfiled') {
+    conditions.push('folder_id IS NULL')
+  } else if (folderFilter != null && folderFilter.trim()) {
+    conditions.push('folder_id = ?')
+    params.push(folderFilter.trim())
+  }
   if (q) {
     conditions.push('original_name LIKE ?')
     params.push(`%${q}%`)
@@ -662,6 +865,47 @@ upload.get('/media-assets', async (c) => {
     },
     meta: { known_urls: knownUrls, excluded_legacy_urls: knownUrls },
   })
+})
+
+upload.post('/media-assets/move', async (c) => {
+  const userId = c.get('user').sub
+  const body = await c.req.json<{ publication_id?: string; asset_ids?: string[]; folder_id?: string | null }>().catch(() => ({} as { publication_id?: string; asset_ids?: string[]; folder_id?: string | null }))
+  const publicationId = String(body.publication_id ?? '').trim()
+  const assetIds = Array.from(new Set((body.asset_ids ?? []).map((id: string) => String(id ?? '').trim()).filter(Boolean)))
+  if (!publicationId) return c.json({ success: false, error: 'publication_id es requerido' }, 400)
+  if (!assetIds.length) return c.json({ success: false, error: 'asset_ids es requerido' }, 400)
+  if (assetIds.length > 100) return c.json({ success: false, error: 'No se pueden mover más de 100 imágenes por solicitud.' }, 400)
+  const publication = await getOwnedPublication(c, publicationId, userId)
+  if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  const parsedFolder = await parseTargetMediaFolder(c, userId, publicationId, body.folder_id ?? null)
+  if (!parsedFolder.ok) return parsedFolder.response
+
+  const placeholders = assetIds.map(() => '?').join(',')
+  const owned = await c.env.DB.prepare(
+    `SELECT id
+     FROM media_assets
+     WHERE tenant_id = ?
+       AND publication_id = ?
+       AND (is_hidden IS NULL OR is_hidden = 0)
+       AND deleted_at IS NULL
+       AND id IN (${placeholders})`,
+  ).bind(userId, publicationId, ...assetIds).all<{ id: string }>()
+  const ownedIds = new Set((owned.results ?? []).map((row) => row.id))
+  if (ownedIds.size !== assetIds.length) {
+    return c.json({ success: false, error: 'Una o más imágenes no pertenecen a esta publicación o no pueden moverse.' }, 404)
+  }
+
+  const now = new Date().toISOString()
+  await c.env.DB.prepare(
+    `UPDATE media_assets
+     SET folder_id = ?, updated_at = ?
+     WHERE tenant_id = ?
+       AND publication_id = ?
+       AND id IN (${placeholders})`,
+  ).bind(parsedFolder.folderId, now, userId, publicationId, ...assetIds).run()
+
+  return c.json({ success: true, data: { moved_count: assetIds.length, folder_id: parsedFolder.folderId } })
 })
 
 upload.post('/media-assets/adopt', async (c) => {
@@ -1074,11 +1318,16 @@ upload.post('/media-assets', async (c) => {
 
   const publication = await getOwnedPublication(c, publicationId, userId)
   if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+  const hasFolderId = formData.has('folder_id')
+  const parsedFolder = hasFolderId
+    ? await parseTargetMediaFolder(c, userId, publicationId, formData.get('folder_id'))
+    : { ok: true as const, folderId: undefined as string | null | undefined }
+  if (!parsedFolder.ok) return parsedFolder.response
 
   try {
     const results = []
     for (const file of files) {
-      results.push(await storeMediaAsset(c, userId, publicationId, file, width, height, thumbnail instanceof File ? thumbnail : null, metadata))
+      results.push(await storeMediaAsset(c, userId, publicationId, parsedFolder.folderId, file, width, height, thumbnail instanceof File ? thumbnail : null, metadata))
     }
     const first = results[0]
     const status = results.some((item) => !item.reused) ? 201 : 200
