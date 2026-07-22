@@ -35,6 +35,17 @@ import {
   shouldIgnoreEditorClipboardShortcut,
   stripDynamicAssociations,
 } from '../lib/editorClipboard'
+import {
+  type EditorHistory,
+  appendEditorHistorySnapshot,
+  createEditorHistory,
+  editorHistoryStorageKey,
+  getEditorHistoryCurrentSnapshot,
+  loadEditorHistoryFromSession,
+  moveEditorHistoryIndex,
+  removeEditorHistoryFromSession,
+  saveEditorHistoryToSession,
+} from '../lib/editorHistory'
 import FileField from '../components/FileField'
 import MediaPicker, { resolveExistingMediaFolderFilter } from '../components/MediaPicker'
 import WidgetPreview from '../components/WidgetPreview'
@@ -58,6 +69,20 @@ const THUMB_W = 220
 // Reducing this can reintroduce excessive saves and focus loss while editing.
 const AUTOSAVE_DELAY_MS = 3000
 type MediaBankFolderFilter = undefined | null | string
+let editorHistorySessionStorageAccessWarningShown = false
+
+function getEditorHistorySessionStorage() {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.sessionStorage
+  } catch (error) {
+    if (!editorHistorySessionStorageAccessWarningShown) {
+      editorHistorySessionStorageAccessWarningShown = true
+      console.warn('[editorHistory] sessionStorage unavailable; undo history will remain in memory only', error)
+    }
+    return null
+  }
+}
 
 // Calcula el recorte "cubrir" de una imagen dentro de un recuadro destino según el
 // encuadre { zoom>=1, fx 0..1, fy 0..1 }. zoom=1 y fx=fy=0.5 → cubrir centrado.
@@ -1304,18 +1329,41 @@ export default function EditPublication() {
   const saveChainRef = useRef<Record<string, Promise<void>>>({})
 
   // ── Historial de deshacer/rehacer (undo/redo) ──
-  // Guardamos hasta 20 snapshots (JSON del canvas) por página.
-  // historyRef[historyIndexRef] = estado actual.
+  // El historial persistente vive aislado por publicación/página en sessionStorage.
+  // Estas refs son el espejo activo para conservar la integración existente.
   const historyRef      = useRef<string[]>([])
   const historyIndexRef = useRef<number>(-1)
+  const activeHistoryRef = useRef<EditorHistory | null>(null)
+  const activeHistoryKeyRef = useRef<string | null>(null)
+  const historyByKeyRef = useRef<Record<string, EditorHistory>>({})
   const isUndoRedoRef   = useRef<boolean>(false)   // true mientras cargamos un estado pasado
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
 
-  const updateUndoRedoState = useCallback(() => {
-    setCanUndo(historyIndexRef.current > 0)
-    setCanRedo(historyIndexRef.current < historyRef.current.length - 1)
+  const updateUndoRedoState = useCallback((history = activeHistoryRef.current) => {
+    const index = history?.index ?? historyIndexRef.current
+    const length = history?.entries.length ?? historyRef.current.length
+    setCanUndo(index > 0)
+    setCanRedo(index >= 0 && index < length - 1)
   }, [])
+
+  const syncActiveHistory = useCallback((history: EditorHistory | null, persist = true) => {
+    activeHistoryRef.current = history
+    if (!history) {
+      activeHistoryKeyRef.current = null
+      historyRef.current = []
+      historyIndexRef.current = -1
+      updateUndoRedoState(null)
+      return
+    }
+    const key = editorHistoryStorageKey(history.publicationId, history.pageId)
+    activeHistoryKeyRef.current = key
+    historyByKeyRef.current[key] = history
+    historyRef.current = history.entries
+    historyIndexRef.current = history.index
+    if (persist) saveEditorHistoryToSession(getEditorHistorySessionStorage(), history)
+    updateUndoRedoState(history)
+  }, [updateUndoRedoState])
 
   const showEditorClipboardNotice = useCallback((message: string) => {
     setEditorClipboardNotice(message)
@@ -1329,20 +1377,23 @@ export default function EditPublication() {
     editorClipboardRef.current = null
     setEditorClipboardCount(0)
     setEditorClipboardNotice('')
+    historyByKeyRef.current = {}
+    syncActiveHistory(null, false)
     return () => {
       editorClipboardRef.current = null
       clearTimeout(editorClipboardNoticeTimer.current)
     }
-  }, [id])
+  }, [id, syncActiveHistory])
 
   const pushHistory = useCallback((json: string) => {
-    // Descarta cualquier redo pendiente y agrega el nuevo estado
-    historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1)
-    historyRef.current.push(json)
-    if (historyRef.current.length > 20) historyRef.current.shift()
-    historyIndexRef.current = historyRef.current.length - 1
-    updateUndoRedoState()
-  }, [updateUndoRedoState])
+    const publicationId = id ?? ''
+    const pageId = pageIdRef.current ?? activePageRef.current ?? ''
+    if (!publicationId || !pageId) return
+    const current = activeHistoryRef.current?.publicationId === publicationId && activeHistoryRef.current?.pageId === pageId
+      ? activeHistoryRef.current
+      : createEditorHistory(publicationId, pageId, json)
+    syncActiveHistory(appendEditorHistorySnapshot(current, json))
+  }, [id, syncActiveHistory])
 
   const scheduleAutosaveRef = useRef<() => void>(() => {})
 
@@ -1379,15 +1430,27 @@ export default function EditPublication() {
     clearTimeout(autosaveTimer.current)
     if (pageId) saveSeqRef.current[pageId] = (saveSeqRef.current[pageId] ?? 0) + 1
     isUndoRedoRef.current = true
-    c.loadFromJSON(stripBackgroundImage(normalizeFabricAssetJson(json, (url) => resolveDisplayUrl(url, displayUrlByPublicUrl, toCanvasSafeAssetUrl))), async () => {
-      await restoreCanvasBackground(c, activePageRef.current ? pagesRef.current.find((p) => p.id === activePageRef.current) : activePage)
-      const active = c.getActiveObject?.() ?? null
-      selectedRef.current = active
-      setSelected(active)
-      setSelectVersion((v) => v + 1)
+    try {
+      c.loadFromJSON(stripBackgroundImage(normalizeFabricAssetJson(json, (url) => resolveDisplayUrl(url, displayUrlByPublicUrl, toCanvasSafeAssetUrl))), async () => {
+        try {
+          if (fabricRef.current !== c || pageIdRef.current !== pageId) return
+          await restoreCanvasBackground(c, pageId ? pagesRef.current.find((p) => p.id === pageId) : activePage)
+          const active = c.getActiveObject?.() ?? null
+          selectedRef.current = active
+          setSelected(active)
+          setSelectVersion((v) => v + 1)
+          scheduleAutosaveRef.current()
+        } catch (error) {
+          console.error('[editor] apply history failed', error)
+          c.renderAll?.()
+        } finally {
+          isUndoRedoRef.current = false
+        }
+      })
+    } catch (error) {
       isUndoRedoRef.current = false
-      scheduleAutosaveRef.current()
-    })
+      console.error('[editor] apply history failed', error)
+    }
   }, [activePage, displayUrlByPublicUrl, restoreCanvasBackground])
 
   useEffect(() => {
@@ -2008,6 +2071,15 @@ export default function EditPublication() {
     }, AUTOSAVE_DELAY_MS)
   }, [persistCanvas])
 
+  const recordCurrentCanvasChange = useCallback(() => {
+    const c = fabricRef.current
+    if (c && !isTextEditingRef.current && !isUndoRedoRef.current) {
+      pushHistory(JSON.stringify(serializeCanvasJson(c)))
+    }
+    scheduleAutosave()
+    markActivePageCanvasChanged()
+  }, [markActivePageCanvasChanged, pushHistory, scheduleAutosave])
+
   // Mantiene la ref actualizada para que applyHistory pueda llamarla
   scheduleAutosaveRef.current = scheduleAutosave
   const activePageDisplayUrl = useMemo(() => (
@@ -2033,11 +2105,13 @@ export default function EditPublication() {
     adjustModeRef.current = false
     setAdjustMode(false)
 
-    // Reinicia el historial al cambiar de página
-    historyRef.current = []
-    historyIndexRef.current = -1
-    setCanUndo(false)
-    setCanRedo(false)
+    const publicationId = id ?? ''
+    const pageHistoryKey = publicationId ? editorHistoryStorageKey(publicationId, activePage.id) : null
+    const restoredHistory = pageHistoryKey
+      ? historyByKeyRef.current[pageHistoryKey] ?? loadEditorHistoryFromSession(getEditorHistorySessionStorage(), publicationId, activePage.id)
+      : null
+    syncActiveHistory(restoredHistory, !!restoredHistory)
+    const restoredSnapshot = getEditorHistoryCurrentSnapshot(restoredHistory)
 
     const W = CANVAS_W
     const H = CANVAS_H
@@ -2142,10 +2216,11 @@ export default function EditPublication() {
       setDeepLinkNotice('No se encontró el objeto visual asociado a esta ficha.')
     }
 
-    if (activePage.canvas_json) {
-      const pageJson = typeof activePage.canvas_json === 'string'
-        ? JSON.parse(activePage.canvas_json)
-        : activePage.canvas_json
+    const canvasJsonToLoad = restoredSnapshot ?? activePage.canvas_json
+    if (canvasJsonToLoad) {
+      const pageJson = typeof canvasJsonToLoad === 'string'
+        ? JSON.parse(canvasJsonToLoad)
+        : canvasJsonToLoad
       const jsonWithoutBg = stripBackgroundImage(normalizeFabricAssetJson(pageJson, (url) => resolveDisplayUrl(url, displayUrlByPublicUrl, toCanvasSafeAssetUrl)))
       canvas.loadFromJSON(jsonWithoutBg, () => {
         if (!isCurrentLoad()) return
@@ -2156,12 +2231,16 @@ export default function EditPublication() {
           }
         })
         canvas.renderAll()
-        pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
+        if (restoredHistory) {
+          syncActiveHistory(restoredHistory)
+        } else {
+          syncActiveHistory(createEditorHistory(publicationId, activePage.id, JSON.stringify(serializeCanvasJson(canvas))))
+        }
         loadBg(tryDeepLinkSelection)
       })
     } else {
       isLoading = false
-      pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
+      syncActiveHistory(createEditorHistory(publicationId, activePage.id, JSON.stringify(serializeCanvasJson(canvas))))
       loadBg(tryDeepLinkSelection)
     }
 
@@ -2227,19 +2306,15 @@ export default function EditPublication() {
         if (o) { canvas.remove(o); setSelected(null); scheduleAutosave() }
       }
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && key === 'z') {
-        e.preventDefault()
         if (historyIndexRef.current > 0) {
-          historyIndexRef.current--
-          updateUndoRedoState()
-          applyHistory(historyRef.current[historyIndexRef.current])
+          e.preventDefault()
+          undo()
         }
       }
       if ((e.ctrlKey || e.metaKey) && (key === 'y' || (e.shiftKey && key === 'z'))) {
-        e.preventDefault()
         if (historyIndexRef.current < historyRef.current.length - 1) {
-          historyIndexRef.current++
-          updateUndoRedoState()
-          applyHistory(historyRef.current[historyIndexRef.current])
+          e.preventDefault()
+          redo()
         }
       }
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && key === 'd') {
@@ -2850,6 +2925,12 @@ export default function EditPublication() {
       deletingPageIdsRef.current.delete(pageId)
       saveSeqRef.current[pageId] = (saveSeqRef.current[pageId] ?? 0) + 1
       delete saveChainRef.current[pageId]
+      if (id) {
+        const historyKey = editorHistoryStorageKey(id, pageId)
+        delete historyByKeyRef.current[historyKey]
+        removeEditorHistoryFromSession(getEditorHistorySessionStorage(), id, pageId)
+        if (activeHistoryKeyRef.current === historyKey) syncActiveHistory(null, false)
+      }
 
       const currentPages = pagesRef.current
       const originalIndex = currentPages.findIndex((p) => p.id === pageId)
@@ -2990,6 +3071,9 @@ export default function EditPublication() {
         canvas_json: copyCanvasJson,
         cover_json: copyCoverJson,
       }
+      const duplicateHistory = createEditorHistory(id!, updatedPage.id, copyCanvasJson)
+      historyByKeyRef.current[editorHistoryStorageKey(id!, updatedPage.id)] = duplicateHistory
+      saveEditorHistoryToSession(getEditorHistorySessionStorage(), duplicateHistory)
 
       const idx = basePages.findIndex((p) => p.id === sourcePageId)
       const insertAt = idx >= 0 ? idx + 1 : basePages.length
@@ -3116,17 +3200,23 @@ export default function EditPublication() {
   }
 
   function undo() {
-    if (historyIndexRef.current <= 0) return
-    historyIndexRef.current--
-    updateUndoRedoState()
-    applyHistory(historyRef.current[historyIndexRef.current])
+    const history = activeHistoryRef.current
+    if (!history || history.index <= 0) return
+    const next = moveEditorHistoryIndex(history, -1)
+    const snapshot = getEditorHistoryCurrentSnapshot(next)
+    if (!snapshot || next.index === history.index) return
+    syncActiveHistory(next)
+    applyHistory(snapshot)
   }
 
   function redo() {
-    if (historyIndexRef.current >= historyRef.current.length - 1) return
-    historyIndexRef.current++
-    updateUndoRedoState()
-    applyHistory(historyRef.current[historyIndexRef.current])
+    const history = activeHistoryRef.current
+    if (!history || history.index >= history.entries.length - 1) return
+    const next = moveEditorHistoryIndex(history, 1)
+    const snapshot = getEditorHistoryCurrentSnapshot(next)
+    if (!snapshot || next.index === history.index) return
+    syncActiveHistory(next)
+    applyHistory(snapshot)
   }
 
   function deleteSelected() {
@@ -3259,19 +3349,19 @@ export default function EditPublication() {
       console.error('[editor] duplicate selected failed', error)
     }
   }
-  function bringToFront() { const o = fabricRef.current?.getActiveObject(); if (o) { o.bringToFront(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
-  function sendToBack() { const o = fabricRef.current?.getActiveObject(); if (o) { o.sendToBack(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
-  function bringForward() { const o = fabricRef.current?.getActiveObject(); if (o) { o.bringForward(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
-  function sendBackward() { const o = fabricRef.current?.getActiveObject(); if (o) { o.sendBackwards(); fabricRef.current.requestRenderAll(); scheduleAutosave() } }
+  function bringToFront() { const o = fabricRef.current?.getActiveObject(); if (o) { o.bringToFront(); fabricRef.current.requestRenderAll(); recordCurrentCanvasChange() } }
+  function sendToBack() { const o = fabricRef.current?.getActiveObject(); if (o) { o.sendToBack(); fabricRef.current.requestRenderAll(); recordCurrentCanvasChange() } }
+  function bringForward() { const o = fabricRef.current?.getActiveObject(); if (o) { o.bringForward(); fabricRef.current.requestRenderAll(); recordCurrentCanvasChange() } }
+  function sendBackward() { const o = fabricRef.current?.getActiveObject(); if (o) { o.sendBackwards(); fabricRef.current.requestRenderAll(); recordCurrentCanvasChange() } }
 
   // Agrupar la selección múltiple en un solo objeto / desagrupar un grupo.
   function groupSelected() {
     const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
-    if (o.type === 'activeSelection') { o.toGroup(); c.requestRenderAll(); setSelectVersion((v) => v + 1); scheduleAutosave() }
+    if (o.type === 'activeSelection') { o.toGroup(); c.requestRenderAll(); setSelectVersion((v) => v + 1); recordCurrentCanvasChange() }
   }
   function ungroupSelected() {
     const c = fabricRef.current; const o = c?.getActiveObject(); if (!o) return
-    if (o.type === 'group') { o.toActiveSelection(); c.requestRenderAll(); setSelectVersion((v) => v + 1); scheduleAutosave() }
+    if (o.type === 'group') { o.toActiveSelection(); c.requestRenderAll(); setSelectVersion((v) => v + 1); recordCurrentCanvasChange() }
   }
 
   // Bloquear / desbloquear: impide mover, escalar y rotar el objeto.
@@ -3284,7 +3374,7 @@ export default function EditPublication() {
       hasControls: !locked, editable: !locked,
     })
     o.data = { ...(o.data ?? {}), locked }
-    c.discardActiveObject(); c.requestRenderAll(); setSelected(null); setSelectVersion((v) => v + 1); scheduleAutosave()
+    c.discardActiveObject(); c.requestRenderAll(); setSelected(null); setSelectVersion((v) => v + 1); recordCurrentCanvasChange()
   }
 
   // Oculta o muestra un elemento EN EL LIENZO del editor (no afecta la publicación).
@@ -3305,7 +3395,7 @@ export default function EditPublication() {
     }
     c.requestRenderAll()
     setSelectVersion((v) => v + 1)
-    scheduleAutosave()
+    recordCurrentCanvasChange()
   }
 
   function showAllHiddenInEditor() {
@@ -3319,7 +3409,7 @@ export default function EditPublication() {
         changed = true
       }
     })
-    if (changed) { c.requestRenderAll(); setSelectVersion((v) => v + 1); scheduleAutosave() }
+    if (changed) { c.requestRenderAll(); setSelectVersion((v) => v + 1); recordCurrentCanvasChange() }
   }
 
   // ── Reencuadre manual (cubrir + recorte) — funciona sobre el FONDO de la hoja o
@@ -3542,7 +3632,7 @@ export default function EditPublication() {
 
     if (!enabled) {
       o.data = { ...(o.data ?? {}), syncGroupId: undefined }
-      c.requestRenderAll(); scheduleAutosave(); setSelectVersion((v) => v + 1)
+      c.requestRenderAll(); recordCurrentCanvasChange(); setSelectVersion((v) => v + 1)
       return
     }
 
@@ -3569,7 +3659,7 @@ export default function EditPublication() {
         } catch { /* página con JSON inválido — se ignora */ }
       }
     } finally { setUploading(false) }
-    scheduleAutosave(); setSelectVersion((v) => v + 1)
+    recordCurrentCanvasChange(); setSelectVersion((v) => v + 1)
   }
 
   // Alinear el objeto respecto al lienzo o a la selección múltiple.
@@ -3612,7 +3702,7 @@ export default function EditPublication() {
       }
       o.setCoords(); c.requestRenderAll()
     }
-    setSelectVersion((v) => v + 1); scheduleAutosave()
+    setSelectVersion((v) => v + 1); recordCurrentCanvasChange()
   }
 
   // Menú contextual (clic derecho) sobre el lienzo.
@@ -3916,7 +4006,7 @@ export default function EditPublication() {
               pages={pages}
               publicationId={id}
               pageId={activePage?.id}
-              onChange={() => { scheduleAutosave() }}
+              onChange={() => { recordCurrentCanvasChange() }}
               onSyncToggle={handleSvgSyncToggle}
               onReframeImage={startImageReframe}
               onToggleHide={toggleHideInEditor}
