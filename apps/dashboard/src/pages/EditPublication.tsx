@@ -36,6 +36,13 @@ import {
   stripDynamicAssociations,
 } from '../lib/editorClipboard'
 import {
+  appendMediaPickerUrls,
+  readMediaPickerFolder,
+  selectFirstMediaPickerUrl,
+  writeMediaPickerFolder,
+  type MediaPickerFolderId,
+} from '../lib/mediaPickerIntent'
+import {
   type EditorHistory,
   appendEditorHistorySnapshot,
   createEditorHistory,
@@ -69,7 +76,29 @@ const THUMB_W = 220
 // Reducing this can reintroduce excessive saves and focus loss while editing.
 const AUTOSAVE_DELAY_MS = 3000
 type MediaBankFolderFilter = undefined | null | string
+type FabricObjectInstance = Record<string, any>
+type FabricCanvasInstance = Record<string, any>
+type EditorMediaPickerIntent =
+  | { type: 'insert-images'; pageId: string }
+  | { type: 'replace-object'; pageId: string; elementId: string; canvasInstance: FabricCanvasInstance }
+  | { type: 'pages' }
+  | { type: 'svg' }
+  | { type: 'widget-gallery-add'; pageId: string; elementId: string; max: number }
+  | { type: 'widget-gallery-replace'; pageId: string; elementId: string; imageIndex: number }
+  | { type: 'action-gallery-add'; pageId: string; elementId: string; max: number }
+  | { type: 'action-gallery-replace'; pageId: string; elementId: string; imageIndex: number }
+  | { type: 'widget-image-field'; pageId: string; elementId: string; field: 'image' | 'poster' }
+  | { type: 'action-image-field'; pageId: string; elementId: string; field: 'image' }
+type OpenWidgetGalleryMediaPicker = (request:
+  | { type: 'add'; max: number }
+  | { type: 'replace'; imageIndex: number }
+  | { type: 'field'; field: 'image' | 'poster' }
+) => void
 let editorHistorySessionStorageAccessWarningShown = false
+
+function createFabricElementId() {
+  return `el_${Math.random().toString(36).slice(2, 9)}`
+}
 
 function getEditorHistorySessionStorage() {
   if (typeof window === 'undefined') return null
@@ -1230,7 +1259,7 @@ export default function EditPublication() {
   const [pagePanelTab, setPagePanelTab] = useState<'config' | 'actions' | 'dynamic'>('config')
   const [ctxMenu, setCtxMenu]       = useState<{ x: number; y: number } | null>(null)
   const [alignRef, setAlignRef]     = useState<'canvas' | 'selection'>('canvas')
-  const [mediaPickerMode, setMediaPickerMode] = useState<'add' | 'replace' | 'pages' | 'svg' | null>(null)
+  const [mediaPickerIntent, setMediaPickerIntent] = useState<EditorMediaPickerIntent | null>(null)
   const [mediaPickerProgress, setMediaPickerProgress] = useState('')
   const [templates, setTemplates]   = useState<any[]>([])
   const [tplQuery, setTplQuery]     = useState('')
@@ -1258,6 +1287,49 @@ export default function EditPublication() {
       console.warn('[media-bank] failed to load assets', err)
     }
   }, [id, mediaBankFolderId])
+
+  const getMediaPickerSessionStorage = useCallback(() => {
+    if (typeof window === 'undefined') return null
+    try {
+      return window.sessionStorage
+    } catch {
+      return null
+    }
+  }, [])
+
+  const getRememberedMediaPickerFolder = useCallback((): MediaPickerFolderId => {
+    if (!id) return undefined
+    return readMediaPickerFolder(getMediaPickerSessionStorage(), id)
+  }, [getMediaPickerSessionStorage, id])
+
+  const rememberMediaPickerFolder = useCallback((folderId: MediaPickerFolderId) => {
+    if (!id) return
+    writeMediaPickerFolder(getMediaPickerSessionStorage(), id, folderId)
+  }, [getMediaPickerSessionStorage, id])
+
+  const openMediaPicker = useCallback((intent: EditorMediaPickerIntent, preferredFolderId?: MediaPickerFolderId) => {
+    if (!id) return
+    const initialFolderId =
+      preferredFolderId === undefined
+        ? getRememberedMediaPickerFolder()
+        : preferredFolderId
+    setMediaPickerProgress('')
+    setMediaPickerInitialFolderId(initialFolderId)
+    setMediaPickerIntent(intent)
+  }, [getRememberedMediaPickerFolder, id])
+
+  const ensureFabricElementIdForPicker = useCallback((obj: FabricObjectInstance) => {
+    const data = ((obj as any).data ?? {}) as Record<string, unknown>
+    const existing = data.elementId
+    if (typeof existing === 'string' && existing) return existing
+    const elementId = createFabricElementId()
+    ;(obj as any).data = { ...data, elementId }
+    return elementId
+  }, [])
+
+  const findCanvasObjectByElementId = useCallback((canvas: FabricCanvasInstance, elementId: string) => {
+    return (canvas.getObjects?.() ?? []).find((obj: FabricObjectInstance) => (obj as any).data?.elementId === elementId) ?? null
+  }, [])
 
   useEffect(() => {
     void refreshMediaBank()
@@ -3526,7 +3598,13 @@ export default function EditPublication() {
     if (!o) return
     const kind = o.data?.kind
     // Imágenes → selector del banco de imágenes
-    if (kind === 'image' || o.type === 'image') { setMediaPickerMode('replace'); return }
+    if (kind === 'image' || o.type === 'image') {
+      const pageId = pageIdRef.current
+      if (!pageId || !c) return
+      const elementId = ensureFabricElementIdForPicker(o)
+      openMediaPicker({ type: 'replace-object', pageId, elementId, canvasInstance: c })
+      return
+    }
     // Marca el objeto a reemplazar y abre el panel de origen correspondiente.
     replaceTargetRef.current = o
     // Iconos → panel Elementos
@@ -3543,7 +3621,10 @@ export default function EditPublication() {
     if (o.type === 'i-text' || o.type === 'textbox') { selectTool('text'); return }
     // Tipo no reconocido: cancelamos el reemplazo in-situ y abrimos el modal de imagen
     replaceTargetRef.current = null
-    setMediaPickerMode('replace')
+    const pageId = pageIdRef.current
+    if (!pageId || !c) return
+    const elementId = ensureFabricElementIdForPicker(o)
+    openMediaPicker({ type: 'replace-object', pageId, elementId, canvasInstance: c })
   }
 
   // Reemplaza la imagen activa por una URL nueva, conservando el MISMO recuadro
@@ -3552,8 +3633,129 @@ export default function EditPublication() {
   // proporción. Se crea siempre con fabric.Image.fromURL (igual que addImageFromUrl,
   // la ruta que sí funciona) y SIN crossOrigin: forzar crossOrigin:'anonymous' rompe
   // la carga cuando R2 no envía cabeceras CORS (la imagen quedaba como una "línea").
-  function doReplaceWithUrl(url: string) {
-    const c = fabricRef.current; const o = c?.getActiveObject(); if (!o || !c) return
+  const getIntentCanvasObject = useCallback((intent: Extract<EditorMediaPickerIntent, { pageId: string; elementId: string }>) => {
+    if (pageIdRef.current !== intent.pageId) return null
+    const canvas = fabricRef.current
+    if (!canvas) return null
+    if (intent.type === 'replace-object' && canvas !== intent.canvasInstance) return null
+    const target = findCanvasObjectByElementId(canvas, intent.elementId)
+    if (!target) return null
+    if (!canvas.getObjects?.().includes(target)) return null
+    if ((target as any).data?.elementId !== intent.elementId) return null
+    return { canvas, target }
+  }, [findCanvasObjectByElementId])
+
+  const updateWidgetGalleryImagesByIntent = useCallback((
+    intent: Extract<EditorMediaPickerIntent, { type: 'widget-gallery-add' | 'widget-gallery-replace' }>,
+    selectedUrls: string[],
+  ) => {
+    const resolved = getIntentCanvasObject(intent)
+    if (!resolved) return false
+    const data = { ...((resolved.target as any).data ?? {}) }
+    const widget = { ...(data.widget ?? {}) }
+    const config = { ...(widget.config ?? {}) }
+    const currentImages = Array.isArray(config.images) ? [...config.images] : []
+    let nextImages = currentImages
+
+    if (intent.type === 'widget-gallery-add') {
+      nextImages = appendMediaPickerUrls(currentImages, { urls: selectedUrls }, intent.max)
+      if (nextImages === currentImages) return false
+    } else {
+      const url = selectFirstMediaPickerUrl({ urls: selectedUrls })
+      if (!url) return false
+      if (intent.imageIndex < 0 || intent.imageIndex >= currentImages.length) return false
+      nextImages[intent.imageIndex] = url
+    }
+
+    widget.config = { ...config, images: nextImages }
+    data.widget = widget
+    ;(resolved.target as any).data = data
+    resolved.canvas.requestRenderAll()
+    recordCurrentCanvasChange()
+    setSelectVersion((v) => v + 1)
+    return true
+  }, [getIntentCanvasObject, recordCurrentCanvasChange])
+
+  const updateActionGalleryImagesByIntent = useCallback((
+    intent: Extract<EditorMediaPickerIntent, { type: 'action-gallery-add' | 'action-gallery-replace' }>,
+    selectedUrls: string[],
+  ) => {
+    const resolved = getIntentCanvasObject(intent)
+    if (!resolved) return false
+    const data = { ...((resolved.target as any).data ?? {}) }
+    const action = { ...(data.action ?? { type: 'gallery_images' }) }
+    const currentImages = Array.isArray(action.images) ? [...action.images] : []
+    const cover = typeof action.cover === 'string' ? action.cover : currentImages[0] ?? ''
+    let nextImages = currentImages
+
+    if (intent.type === 'action-gallery-add') {
+      nextImages = appendMediaPickerUrls(currentImages, { urls: selectedUrls }, intent.max)
+      if (nextImages === currentImages) return false
+    } else {
+      const url = selectFirstMediaPickerUrl({ urls: selectedUrls })
+      if (!url) return false
+      if (intent.imageIndex < 0 || intent.imageIndex >= currentImages.length) return false
+      nextImages[intent.imageIndex] = url
+    }
+
+    data.action = {
+      ...action,
+      images: nextImages,
+      cover: nextImages.includes(cover) ? cover : (nextImages[0] ?? ''),
+    }
+    ;(resolved.target as any).data = data
+    resolved.canvas.requestRenderAll()
+    recordCurrentCanvasChange()
+    setSelectVersion((v) => v + 1)
+    return true
+  }, [getIntentCanvasObject, recordCurrentCanvasChange])
+
+  const updateWidgetImageFieldByIntent = useCallback((
+    intent: Extract<EditorMediaPickerIntent, { type: 'widget-image-field' }>,
+    selectedUrls: string[],
+  ) => {
+    const url = selectFirstMediaPickerUrl({ urls: selectedUrls })
+    if (!url) return false
+    const resolved = getIntentCanvasObject(intent)
+    if (!resolved) return false
+    const data = { ...((resolved.target as any).data ?? {}) }
+    const widget = { ...(data.widget ?? {}) }
+    const config = { ...(widget.config ?? {}) }
+    widget.config = { ...config, [intent.field]: url }
+    data.widget = widget
+    ;(resolved.target as any).data = data
+    resolved.canvas.requestRenderAll()
+    recordCurrentCanvasChange()
+    setSelectVersion((v) => v + 1)
+    return true
+  }, [getIntentCanvasObject, recordCurrentCanvasChange])
+
+  const updateActionImageFieldByIntent = useCallback((
+    intent: Extract<EditorMediaPickerIntent, { type: 'action-image-field' }>,
+    selectedUrls: string[],
+  ) => {
+    const url = selectFirstMediaPickerUrl({ urls: selectedUrls })
+    if (!url) return false
+    const resolved = getIntentCanvasObject(intent)
+    if (!resolved) return false
+    const data = { ...((resolved.target as any).data ?? {}) }
+    data.action = { ...(data.action ?? {}), [intent.field]: url }
+    ;(resolved.target as any).data = data
+    resolved.canvas.requestRenderAll()
+    recordCurrentCanvasChange()
+    setSelectVersion((v) => v + 1)
+    return true
+  }, [getIntentCanvasObject, recordCurrentCanvasChange])
+
+  function doReplaceWithUrl(
+    url: string,
+    targetObject: FabricObjectInstance,
+    canvasInstance: FabricCanvasInstance,
+    pageId: string,
+    elementId: string,
+  ): Promise<boolean> {
+    const c = canvasInstance
+    const o = targetObject
     // Recuadro mostrado actual (ancho y alto ya escalados) que debemos replicar.
     const targetW = o.getScaledWidth?.() ?? (o.width ?? 0) * (o.scaleX ?? 1)
     const targetH = o.getScaledHeight?.() ?? (o.height ?? 0) * (o.scaleY ?? 1)
@@ -3563,64 +3765,141 @@ export default function EditPublication() {
     const prevOriginX = o.originX ?? 'left', prevOriginY = o.originY ?? 'top'
     const prevData = { ...(o.data ?? {}), kind: 'image', src: url }
     const idx = c.getObjects().indexOf(o)
-    fabric.Image.fromURL(url, (img: any) => {
-      if (!img || !img.width || !img.height) { alert('No se pudo cargar la imagen de reemplazo'); return }
-      const iw = img.width, ih = img.height
-      // Modo "cubrir": recorta el sobrante para que la región mostrada tenga la misma
-      // proporción que el recuadro destino, centrando el recorte.
-      const targetAspect = targetH > 0 ? targetW / targetH : iw / ih
-      let cropW = iw, cropH = ih, cropX = 0, cropY = 0
-      if (iw / ih > targetAspect) {
-        // Imagen más ancha que el recuadro → recortar lados
-        cropW = ih * targetAspect; cropX = (iw - cropW) / 2
-      } else {
-        // Imagen más alta → recortar arriba/abajo
-        cropH = iw / targetAspect; cropY = (ih - cropH) / 2
+
+    return new Promise((resolve) => {
+      try {
+        fabric.Image.fromURL(url, (img: any) => {
+          try {
+            if (!img || !img.width || !img.height) {
+              alert('No se pudo cargar la imagen de reemplazo')
+              resolve(false)
+              return
+            }
+            if (pageIdRef.current !== pageId) { resolve(false); return }
+            if (fabricRef.current !== c) { resolve(false); return }
+            if (!c.getObjects?.().includes(o)) { resolve(false); return }
+            if ((o as any).data?.elementId !== elementId) { resolve(false); return }
+
+            const iw = img.width, ih = img.height
+            // Modo "cubrir": recorta el sobrante para que la región mostrada tenga la misma
+            // proporción que el recuadro destino, centrando el recorte.
+            const targetAspect = targetH > 0 ? targetW / targetH : iw / ih
+            let cropW = iw, cropH = ih, cropX = 0, cropY = 0
+            if (iw / ih > targetAspect) {
+              // Imagen más ancha que el recuadro → recortar lados
+              cropW = ih * targetAspect; cropX = (iw - cropW) / 2
+            } else {
+              // Imagen más alta → recortar arriba/abajo
+              cropH = iw / targetAspect; cropY = (ih - cropH) / 2
+            }
+            const scale = cropW > 0 ? targetW / cropW : 1
+            img.set({
+              cropX, cropY, width: cropW, height: cropH,
+              left: prevLeft, top: prevTop, scaleX: scale, scaleY: scale, angle: prevAngle,
+              flipX: prevFlipX, flipY: prevFlipY, originX: prevOriginX, originY: prevOriginY,
+            })
+            img.data = prevData
+            const previousUndoRedo = isUndoRedoRef.current
+            isUndoRedoRef.current = true
+            try {
+              c.remove(o)
+              c.add(img)
+            } finally {
+              isUndoRedoRef.current = previousUndoRedo
+            }
+            if (idx >= 0 && img.moveTo) img.moveTo(idx)
+            c.setActiveObject(img)
+            img.setCoords(); c.requestRenderAll()
+            setSelected(img); setSelectVersion((v) => v + 1)
+            recordCurrentCanvasChange()
+            addToBank(url)
+            resolve(true)
+          } catch (error) {
+            console.warn('[media-picker] image replacement failed', error)
+            resolve(false)
+          }
+        }, (message) => {
+          alert(message)
+          resolve(false)
+        })
+      } catch (error) {
+        console.warn('[media-picker] image replacement failed', error)
+        resolve(false)
       }
-      const scale = cropW > 0 ? targetW / cropW : 1
-      img.set({
-        cropX, cropY, width: cropW, height: cropH,
-        left: prevLeft, top: prevTop, scaleX: scale, scaleY: scale, angle: prevAngle,
-        flipX: prevFlipX, flipY: prevFlipY, originX: prevOriginX, originY: prevOriginY,
-      })
-      img.data = prevData
-      c.remove(o)
-      c.add(img)
-      if (idx >= 0 && img.moveTo) img.moveTo(idx)
-      c.setActiveObject(img)
-      img.setCoords(); c.requestRenderAll(); scheduleAutosave()
-      setSelected(img); setSelectVersion((v) => v + 1)
-    }, (message) => {
-      alert(message)
     })
-    addToBank(url)
-    setMediaPickerMode(null)
   }
 
   const handleMediaPickerSelect = useCallback(async (urls: string[], assets?: MediaAsset[]) => {
+    const intent = mediaPickerIntent
     const selectedUrls = urls.filter(Boolean)
-    if (!selectedUrls.length) return
-    if (assets?.length) {
-      rememberMediaAssets(assets)
-    }
-    if (mediaPickerMode === 'replace') {
-      addToBank(selectedUrls[0])
-      doReplaceWithUrl(selectedUrls[0])
-    } else if (mediaPickerMode === 'pages') {
-      const result = await addPagesFromUrls(selectedUrls)
-      void refreshMediaBank()
-      return { confirmedCount: result?.confirmedPages.length ?? 0 }
-    } else if (mediaPickerMode === 'svg') {
-      await insertSvgUrls(selectedUrls)
-    } else {
-      for (const url of selectedUrls) {
-        addToBank(url)
-        await addImageFromUrl(url)
+    if (!intent || !selectedUrls.length) return
+
+    try {
+      if (assets?.length) {
+        rememberMediaAssets(assets)
       }
+
+      if (intent.type === 'pages') {
+        const result = await addPagesFromUrls(selectedUrls)
+        void refreshMediaBank()
+        return { confirmedCount: result?.confirmedPages.length ?? 0 }
+      }
+
+      if (intent.type === 'svg') {
+        await insertSvgUrls(selectedUrls)
+        void refreshMediaBank()
+        return
+      }
+
+      if (intent.type === 'insert-images') {
+        if (pageIdRef.current !== intent.pageId) return
+        for (const url of selectedUrls) {
+          addToBank(url)
+          await addImageFromUrl(url)
+        }
+        void refreshMediaBank()
+        return
+      }
+
+      if (intent.type === 'replace-object') {
+        const url = selectFirstMediaPickerUrl({ urls: selectedUrls, assets })
+        if (!url) return
+        const resolved = getIntentCanvasObject(intent)
+        if (!resolved) return
+        const applied = await doReplaceWithUrl(url, resolved.target, resolved.canvas, intent.pageId, intent.elementId)
+        if (applied) void refreshMediaBank()
+        return
+      }
+
+      if (intent.type === 'widget-gallery-add' || intent.type === 'widget-gallery-replace') {
+        const applied = updateWidgetGalleryImagesByIntent(intent, selectedUrls)
+        if (applied) void refreshMediaBank()
+        return
+      }
+
+      if (intent.type === 'action-gallery-add' || intent.type === 'action-gallery-replace') {
+        const applied = updateActionGalleryImagesByIntent(intent, selectedUrls)
+        if (applied) void refreshMediaBank()
+        return
+      }
+
+      if (intent.type === 'widget-image-field') {
+        const applied = updateWidgetImageFieldByIntent(intent, selectedUrls)
+        if (applied) void refreshMediaBank()
+        return
+      }
+
+      if (intent.type === 'action-image-field') {
+        const applied = updateActionImageFieldByIntent(intent, selectedUrls)
+        if (applied) void refreshMediaBank()
+      }
+    } catch (error) {
+      console.warn('[media-picker] selection handler failed', error)
+    } finally {
+      setMediaPickerIntent(null)
+      replaceTargetRef.current = null
     }
-    void refreshMediaBank()
-    setMediaPickerMode(null)
-  }, [mediaPickerMode, addToBank, refreshMediaBank, rememberMediaAssets])
+  }, [mediaPickerIntent, rememberMediaAssets, addPagesFromUrls, refreshMediaBank, insertSvgUrls, addToBank, addImageFromUrl, getIntentCanvasObject, updateWidgetGalleryImagesByIntent, updateActionGalleryImagesByIntent, updateWidgetImageFieldByIntent, updateActionImageFieldByIntent])
 
   // Activar/desactivar sincronización multi-página de un SVG seleccionado.
   // Al activar: marca el objeto con un syncGroupId y crea una copia en cada
@@ -3817,11 +4096,12 @@ export default function EditPublication() {
               addButton={addButton}
               addLinkZone={addLinkZone}
               openImagePicker={() => {
-                setMediaPickerInitialFolderId(mediaBankFolderId)
-                setMediaPickerMode('add')
+                const pageId = pageIdRef.current
+                if (!pageId) return
+                openMediaPicker({ type: 'insert-images', pageId }, mediaBankFolderId)
               }}
-              openPagePicker={() => setMediaPickerMode('pages')}
-              openSvgPicker={() => setMediaPickerMode('svg')}
+              openPagePicker={() => openMediaPicker({ type: 'pages' }, null)}
+              openSvgPicker={() => openMediaPicker({ type: 'svg' })}
               addIcon={addIcon}
               addHotspot={addHotspot}
               addWidget={addWidget}
@@ -3951,7 +4231,7 @@ export default function EditPublication() {
               <div
                 style={{ ...s.canvasEmpty, ...(fileDrag ? { background: 'rgba(79,70,229,0.08)' } : {}) }}
                 onDragOver={onFileDragOver} onDragLeave={onFileDragLeave} onDrop={onFileDrop}
-                onClick={() => setMediaPickerMode('pages')}
+                onClick={() => openMediaPicker({ type: 'pages' }, null)}
               >
                 <div style={{ marginBottom: 16, opacity: 0.35, color: '#374151' }}><Icon name="image" size={52} /></div>
                 <p style={{ color: '#374151', fontSize: 15, fontWeight: 600, textAlign: 'center', maxWidth: 280 }}>
@@ -4010,6 +4290,42 @@ export default function EditPublication() {
               onSyncToggle={handleSvgSyncToggle}
               onReframeImage={startImageReframe}
               onToggleHide={toggleHideInEditor}
+              openObjectImageReplacement={(obj) => {
+                const pageId = pageIdRef.current
+                const canvas = fabricRef.current
+                if (!pageId || !canvas || !canvas.getObjects?.().includes(obj)) return
+                const elementId = ensureFabricElementIdForPicker(obj)
+                openMediaPicker({ type: 'replace-object', pageId, elementId, canvasInstance: canvas })
+              }}
+              openWidgetGalleryMediaPicker={(obj, request) => {
+                const pageId = pageIdRef.current
+                if (!pageId) return
+                const elementId = ensureFabricElementIdForPicker(obj)
+                if (request.type === 'add') {
+                  openMediaPicker({ type: 'widget-gallery-add', pageId, elementId, max: request.max })
+                  return
+                }
+                if (request.type === 'field') {
+                  openMediaPicker({ type: 'widget-image-field', pageId, elementId, field: request.field })
+                  return
+                }
+                openMediaPicker({ type: 'widget-gallery-replace', pageId, elementId, imageIndex: request.imageIndex })
+              }}
+              openActionGalleryMediaPicker={(obj, request) => {
+                const pageId = pageIdRef.current
+                if (!pageId) return
+                const elementId = ensureFabricElementIdForPicker(obj)
+                if (request.type === 'add') {
+                  openMediaPicker({ type: 'action-gallery-add', pageId, elementId, max: request.max })
+                  return
+                }
+                if (request.type === 'field') {
+                  if (request.field !== 'image') return
+                  openMediaPicker({ type: 'action-image-field', pageId, elementId, field: request.field })
+                  return
+                }
+                openMediaPicker({ type: 'action-gallery-replace', pageId, elementId, imageIndex: request.imageIndex })
+              }}
             />
           ) : (
             <div style={s.propsScroll}>
@@ -4044,25 +4360,39 @@ export default function EditPublication() {
       </div>
 
       <MediaPicker
-        open={!!mediaPickerMode}
+        open={Boolean(mediaPickerIntent)}
         publicationId={id ?? ''}
-        initialFolderId={mediaPickerMode === 'add' ? mediaPickerInitialFolderId : undefined}
-        mode={mediaPickerMode === 'pages' ? 'pages' : mediaPickerMode === 'svg' ? 'svg' : 'image'}
-        multiple={mediaPickerMode === 'add' || mediaPickerMode === 'pages' || mediaPickerMode === 'svg'}
+        initialFolderId={mediaPickerIntent?.type === 'pages' ? null : mediaPickerInitialFolderId}
+        mode={mediaPickerIntent?.type === 'pages' ? 'pages' : mediaPickerIntent?.type === 'svg' ? 'svg' : 'image'}
+        multiple={
+          mediaPickerIntent?.type === 'insert-images'
+          || mediaPickerIntent?.type === 'widget-gallery-add'
+          || mediaPickerIntent?.type === 'action-gallery-add'
+          || mediaPickerIntent?.type === 'pages'
+          || mediaPickerIntent?.type === 'svg'
+        }
         title={
-          mediaPickerMode === 'replace'
+          mediaPickerIntent?.type === 'replace-object'
+            || mediaPickerIntent?.type === 'widget-gallery-replace'
+            || mediaPickerIntent?.type === 'action-gallery-replace'
+            || mediaPickerIntent?.type === 'widget-image-field'
+            || mediaPickerIntent?.type === 'action-image-field'
             ? 'Reemplazar imagen'
-            : mediaPickerMode === 'pages'
+            : mediaPickerIntent?.type === 'pages'
               ? 'Agregar páginas'
-              : mediaPickerMode === 'svg'
+              : mediaPickerIntent?.type === 'svg'
                 ? 'Insertar SVG editable'
-                : 'Agregar imagen'
+                : mediaPickerIntent?.type === 'widget-gallery-add'
+                  || mediaPickerIntent?.type === 'action-gallery-add'
+                  ? 'Agregar imágenes'
+                  : 'Agregar imagen'
         }
         legacyUrls={imageBank}
         busyMessage={mediaPickerProgress}
         usedPageUrls={pages.map((page) => page.image_url).filter(Boolean)}
         onClose={() => {
-          setMediaPickerMode(null)
+          setMediaPickerIntent(null)
+          replaceTargetRef.current = null
           void refreshMediaBank()
         }}
         onSelect={handleMediaPickerSelect}
@@ -4072,10 +4402,16 @@ export default function EditPublication() {
           return { confirmedCount: result?.confirmedPages.length ?? 0 }
         }}
         onGoToPages={() => {
-          setMediaPickerMode(null)
+          setMediaPickerIntent(null)
+          replaceTargetRef.current = null
           setActiveTool('pages')
           setPanelOpen(true)
         }}
+        onFolderChange={
+          mediaPickerIntent?.type !== 'pages'
+            ? rememberMediaPickerFolder
+            : undefined
+        }
       />
 
       {/* ── Vista previa de la hoja activa ── */}
@@ -4965,7 +5301,33 @@ function CfgGroup({ label, children }: { label: string; children: React.ReactNod
 
 // ─── Panel de propiedades del elemento seleccionado ───────────────────────────
 // Cambia según el tipo: texto, forma, botón, imagen o zona de enlace.
-function PropsPanel({ obj, canvas, pages, publicationId, pageId, onChange, onSyncToggle, onReframeImage, onToggleHide }: { obj: any; canvas: any; pages: any[]; publicationId?: string; pageId?: string; onChange: () => void; onSyncToggle?: (enabled: boolean) => void; onReframeImage?: (o: any) => void; onToggleHide?: () => void }) {
+function PropsPanel({
+  obj,
+  canvas,
+  pages,
+  publicationId,
+  pageId,
+  onChange,
+  onSyncToggle,
+  onReframeImage,
+  onToggleHide,
+  openObjectImageReplacement,
+  openWidgetGalleryMediaPicker,
+  openActionGalleryMediaPicker,
+}: {
+  obj: any
+  canvas: any
+  pages: any[]
+  publicationId?: string
+  pageId?: string
+  onChange: () => void
+  onSyncToggle?: (enabled: boolean) => void
+  onReframeImage?: (o: any) => void
+  onToggleHide?: () => void
+  openObjectImageReplacement?: (obj: FabricObjectInstance) => void
+  openWidgetGalleryMediaPicker?: (obj: FabricObjectInstance, request: Parameters<OpenWidgetGalleryMediaPicker>[0]) => void
+  openActionGalleryMediaPicker?: (obj: FabricObjectInstance, request: Parameters<OpenWidgetGalleryMediaPicker>[0]) => void
+}) {
   const kind: string = (obj as any).data?.kind
     ?? (obj instanceof fabric.Textbox || obj instanceof fabric.Text ? 'text' : 'shape')
 
@@ -4975,7 +5337,7 @@ function PropsPanel({ obj, canvas, pages, publicationId, pageId, onChange, onSyn
   const ensureElementId = () => {
     const existing = (obj as any).data?.elementId
     if (existing) return existing
-    const elementId = `el_${Math.random().toString(36).slice(2, 9)}`
+    const elementId = createFabricElementId()
     setData({ elementId })
     return elementId
   }
@@ -5105,7 +5467,7 @@ function PropsPanel({ obj, canvas, pages, publicationId, pageId, onChange, onSyn
             onChange={(e) => {
               const name = e.target.value
               const existing = (obj as any).data?.elementId
-              setData({ name, elementId: existing || `el_${Math.random().toString(36).slice(2, 9)}` })
+              setData({ name, elementId: existing || createFabricElementId() })
             }}
           />
           <p style={cp.hint}>Asígnale un nombre para poder mostrarlo u ocultarlo desde un botón o zona (acción "Mostrar / ocultar elemento").</p>
@@ -5286,12 +5648,29 @@ function PropsPanel({ obj, canvas, pages, publicationId, pageId, onChange, onSyn
         {kind === 'image' && (
           <PropGroup label="Imagen">
             <button
+              style={{ width: '100%', padding: '9px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: '#fff', color: '#4338ca', border: '1px solid #c7d2fe', borderRadius: 8, marginBottom: 8 }}
+              onClick={() => openObjectImageReplacement?.(obj)}
+            >
+              Reemplazar imagen
+            </button>
+            <button
               style={{ width: '100%', padding: '9px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: '#eef2ff', color: '#4338ca', border: '1px solid #c7d2fe', borderRadius: 8 }}
               onClick={() => onReframeImage?.(obj)}
             >
               ⤢ Reencuadrar imagen (zoom y posición)
             </button>
             <p style={cp.hint}>Ajusta qué parte de la imagen se ve dentro de su recuadro, sin deformarla — igual que "Ajustar hoja". También puedes usar las esquinas para redimensionar y rotar.</p>
+          </PropGroup>
+        )}
+
+        {kind === 'shape' && (obj.type === 'rect' || obj.type === 'polygon') && (
+          <PropGroup label="Imagen">
+            <button
+              style={{ width: '100%', padding: '9px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: '#eef2ff', color: '#4338ca', border: '1px solid #c7d2fe', borderRadius: 8 }}
+              onClick={() => openObjectImageReplacement?.(obj)}
+            >
+              Reemplazar por imagen
+            </button>
           </PropGroup>
         )}
 
@@ -5329,7 +5708,7 @@ function PropsPanel({ obj, canvas, pages, publicationId, pageId, onChange, onSyn
 
         {/* ── WIDGET: configuración propia según el tipo ── */}
         {kind === 'widget' && (
-          <WidgetProps obj={obj} setData={setData} />
+          <WidgetProps obj={obj} setData={setData} openImageBank={openWidgetGalleryMediaPicker} />
         )}
 
         <button style={s.deleteBtn} onClick={() => { canvas?.remove(obj); canvas?.requestRenderAll(); onChange() }}>Eliminar elemento</button>
@@ -5339,7 +5718,13 @@ function PropsPanel({ obj, canvas, pages, publicationId, pageId, onChange, onSyn
       {insTab === 'actions' && (
       <div style={s.props}>
         <TriggerSelector data={(obj as any).data ?? {}} setData={setData} />
-        <ActionEditor data={(obj as any).data ?? {}} pages={pages} setData={setData} targets={namedTargets} />
+        <ActionEditor
+          data={(obj as any).data ?? {}}
+          pages={pages}
+          setData={setData}
+          targets={namedTargets}
+          openImageBank={(request) => openActionGalleryMediaPicker?.(obj, request)}
+        />
         {isWidget && (
           <p style={{ ...cp.hint, marginTop: 8 }}>
             <b>Nota:</b> para que este widget pueda ser objetivo de "Mostrar / ocultar", asígnale un nombre en la pestaña <b>Propiedades</b>.
@@ -5903,6 +6288,15 @@ function ImageFitToggle({ url, fitMap, setFit, aspect }: { url: string; fitMap: 
   )
 }
 
+function ImageBankUrlField({ value, onChange, onOpenBank }: { value: string; onChange: (url: string) => void; onOpenBank?: () => void }) {
+  return (
+    <div style={{ display: 'flex', gap: 6 }}>
+      <input style={{ ...s.propInput, flex: 1 }} placeholder="https://..." value={value} onChange={(e) => onChange(e.target.value)} />
+      <button type="button" style={{ ...s.alignBtn, flex: 'none' }} onClick={onOpenBank}>Banco</button>
+    </div>
+  )
+}
+
 // PROTECTED: Stable external component with local drafts prevents product action inputs
 // from remounting or updating Fabric data on every keystroke.
 function CtaActionFields({ cfg, setCfg, prefix }: { cfg: any; setCfg: (p: any) => void; prefix: 'primary' | 'secondary' }) {
@@ -6082,12 +6476,9 @@ function CtaActionFields({ cfg, setCfg, prefix }: { cfg: any; setCfg: (p: any) =
 // Panel del widget Galería / Slider: lista de imágenes + opciones de reproducción.
 // Panel de la Ficha de producto: galería (máx. 5), textos, especificaciones y botones CTA.
 // Todos los campos se editan aquí y se ven en vivo con el botón "Vista previa".
-function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) {
+function ProductCardWidgetProps({ cfg, setCfg, openImageBank }: { cfg: any; setCfg: (p: any) => void; openImageBank?: OpenWidgetGalleryMediaPicker }) {
   const MAX = 5
   const images: string[] = cfg.images ?? []
-  const fileRefs = React.useRef<(HTMLInputElement | null)[]>([])
-  const multiRef = React.useRef<HTMLInputElement | null>(null)
-  const [uploading, setUploading] = React.useState(false)
   const fitMap: Record<string, ImgFit> = cfg.fit ?? {}
   const setFit = (url: string, f: ImgFit) => setCfg({ fit: { ...fitMap, [url]: f } })
   const setImages = (next: string[]) => setCfg({ images: next })
@@ -6097,20 +6488,6 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
     const j = i + d; if (j < 0 || j >= images.length) return
     const n = [...images];[n[i], n[j]] = [n[j], n[i]]; setImages(n)
   }
-  const uploadImage = async (i: number, file: File) => {
-    try { const res = await api.upload(file); updateImage(i, res.data.url) } catch (e: any) { alert('Error al subir: ' + (e.message ?? e)) }
-  }
-  const uploadMany = async (files: FileList) => {
-    const list = Array.from(files).slice(0, MAX - images.length)
-    if (!list.length) return
-    setUploading(true)
-    const urls: string[] = []
-    for (const f of list) {
-      try { const res = await api.upload(f); if (res?.data?.url) urls.push(res.data.url) } catch (e: any) { alert('Error al subir ' + f.name + ': ' + (e.message ?? e)) }
-    }
-    if (urls.length) setImages([...images, ...urls])
-    setUploading(false)
-  }
 
   return (
     <>
@@ -6119,8 +6496,7 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
           <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 6 }}>
             {url ? <img src={url} alt="" style={{ width: 30, height: 30, objectFit: 'cover', borderRadius: 4, flex: 'none', border: '1px solid #e5e7eb' }} /> : <div style={{ width: 30, height: 30, borderRadius: 4, background: '#f1f5f9', flex: 'none' }} />}
             <input style={{ ...s.propInput, flex: 1, fontSize: 11 }} placeholder="https://..." value={url} onChange={(e) => updateImage(i, e.target.value)} />
-            <input ref={(el) => { fileRefs.current[i] = el }} type="file" accept={ACCEPT_IMAGE} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(i, f); e.target.value = '' }} />
-            <button type="button" style={{ ...s.alignBtn, fontSize: 11, padding: '4px 8px', flex: 'none' }} onClick={() => fileRefs.current[i]?.click()}>Subir</button>
+            <button type="button" style={{ ...s.alignBtn, fontSize: 11, padding: '4px 8px', flex: 'none' }} onClick={() => openImageBank?.({ type: 'replace', imageIndex: i })}>Banco</button>
             <button type="button" title="Subir en orden (la 1ª es la portada)" style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, padding: '0 2px' }} onClick={() => move(i, -1)}>▲</button>
             <button type="button" title="Bajar en orden" style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, padding: '0 2px' }} onClick={() => move(i, 1)}>▼</button>
             <button type="button" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }} onClick={() => removeImage(i)}>✕</button>
@@ -6129,11 +6505,9 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
         {images.filter(Boolean).map((url) => (
           <ImageFitToggle key={'fit-' + url} url={url} fitMap={fitMap} setFit={setFit} aspect={4 / 3} />
         ))}
-        <input ref={multiRef} type="file" accept={ACCEPT_IMAGE} multiple style={{ display: 'none' }}
-          onChange={(e) => { if (e.target.files?.length) uploadMany(e.target.files); e.target.value = '' }} />
         {images.length < MAX && (
-          <button type="button" style={{ ...s.alignBtn, width: '100%', fontSize: 12, fontWeight: 700, background: '#eef2ff', color: '#4F46E5', borderColor: '#c7d2fe', marginTop: 4 }} disabled={uploading} onClick={() => multiRef.current?.click()}>
-            {uploading ? 'Subiendo…' : `⬆ Subir imágenes (hasta ${MAX})`}
+          <button type="button" style={{ ...s.alignBtn, width: '100%', fontSize: 12, fontWeight: 700, background: '#eef2ff', color: '#4F46E5', borderColor: '#c7d2fe', marginTop: 4 }} onClick={() => openImageBank?.({ type: 'add', max: MAX })}>
+            Agregar imágenes
           </button>
         )}
         <p style={cp.hint}>La primera imagen es la portada. Usa ▲▼ para reordenar. Si subes varias, la ficha muestra una mini-galería con flechas.</p>
@@ -6236,11 +6610,8 @@ function ProductCardWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) =>
   )
 }
 
-function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => void }) {
+function GalleryWidgetProps({ cfg, setCfg, openImageBank }: { cfg: any; setCfg: (p: any) => void; openImageBank?: OpenWidgetGalleryMediaPicker }) {
   const images: string[] = cfg.images ?? []
-  const fileRefs = React.useRef<(HTMLInputElement | null)[]>([])
-  const multiRef = React.useRef<HTMLInputElement | null>(null)
-  const [uploading, setUploading] = React.useState(false)
   const fitMap: Record<string, ImgFit> = cfg.fit ?? {}
   const setFit = (url: string, f: ImgFit) => setCfg({ fit: { ...fitMap, [url]: f } })
   const setImages = (next: string[]) => setCfg({ images: next })
@@ -6251,21 +6622,6 @@ function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => voi
     const j = i + d; if (j < 0 || j >= images.length) return
     const n = [...images];[n[i], n[j]] = [n[j], n[i]]; setImages(n)
   }
-  const uploadImage = async (i: number, file: File) => {
-    try { const res = await api.upload(file); updateImage(i, res.data.url) } catch (e: any) { alert('Error al subir: ' + (e.message ?? e)) }
-  }
-  // Sube varias imágenes a la vez y las agrega al final, en orden.
-  const uploadMany = async (files: FileList) => {
-    const list = Array.from(files).slice(0, 30 - images.length)
-    if (!list.length) return
-    setUploading(true)
-    const urls: string[] = []
-    for (const f of list) {
-      try { const res = await api.upload(f); if (res?.data?.url) urls.push(res.data.url) } catch (e: any) { alert('Error al subir ' + f.name + ': ' + (e.message ?? e)) }
-    }
-    if (urls.length) setImages([...images, ...urls])
-    setUploading(false)
-  }
   return (
     <>
       <PropGroup label={`Imágenes del slider (${images.length}/30)`}>
@@ -6273,8 +6629,7 @@ function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => voi
           <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 6 }}>
             {url ? <img src={url} alt="" style={{ width: 30, height: 30, objectFit: 'cover', borderRadius: 4, flex: 'none', border: '1px solid #e5e7eb' }} /> : <div style={{ width: 30, height: 30, borderRadius: 4, background: '#f1f5f9', flex: 'none' }} />}
             <input style={{ ...s.propInput, flex: 1, fontSize: 11 }} placeholder="https://..." value={url} onChange={(e) => updateImage(i, e.target.value)} />
-            <input ref={(el) => { fileRefs.current[i] = el }} type="file" accept={ACCEPT_IMAGE} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(i, f); e.target.value = '' }} />
-            <button type="button" style={{ ...s.alignBtn, fontSize: 11, padding: '4px 8px', flex: 'none' }} onClick={() => fileRefs.current[i]?.click()}>Subir</button>
+            <button type="button" style={{ ...s.alignBtn, fontSize: 11, padding: '4px 8px', flex: 'none' }} onClick={() => openImageBank?.({ type: 'replace', imageIndex: i })}>Banco</button>
             <button type="button" title="Subir en orden" style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, padding: '0 2px' }} onClick={() => move(i, -1)}>▲</button>
             <button type="button" title="Bajar en orden" style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, padding: '0 2px' }} onClick={() => move(i, 1)}>▼</button>
             <button type="button" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }} onClick={() => removeImage(i)}>✕</button>
@@ -6283,11 +6638,9 @@ function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => voi
         {images.filter(Boolean).map((url) => (
           <ImageFitToggle key={'fit-' + url} url={url} fitMap={fitMap} setFit={setFit} aspect={4 / 3} />
         ))}
-        <input ref={multiRef} type="file" accept={ACCEPT_IMAGE} multiple style={{ display: 'none' }}
-          onChange={(e) => { if (e.target.files?.length) uploadMany(e.target.files); e.target.value = '' }} />
         <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-          <button type="button" style={{ ...s.alignBtn, flex: 1, fontSize: 12, fontWeight: 700, background: '#eef2ff', color: '#4F46E5', borderColor: '#c7d2fe' }} disabled={uploading} onClick={() => multiRef.current?.click()}>
-            {uploading ? 'Subiendo…' : '⬆ Subir varias imágenes'}
+          <button type="button" style={{ ...s.alignBtn, flex: 1, fontSize: 12, fontWeight: 700, background: '#eef2ff', color: '#4F46E5', borderColor: '#c7d2fe' }} onClick={() => openImageBank?.({ type: 'add', max: 30 })}>
+            Agregar imágenes
           </button>
           <button type="button" style={{ ...s.alignBtn, fontSize: 12 }} onClick={addImage}>+ URL</button>
         </div>
@@ -6323,7 +6676,7 @@ function GalleryWidgetProps({ cfg, setCfg }: { cfg: any; setCfg: (p: any) => voi
 }
 
 // Propiedades de un widget: campos de configuración según su tipo
-function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) {
+function WidgetProps({ obj, setData, openImageBank }: { obj: any; setData: (p: any) => void; openImageBank?: (obj: FabricObjectInstance, request: Parameters<OpenWidgetGalleryMediaPicker>[0]) => void }) {
   const widget = (obj as any).data?.widget ?? { type: 'map', config: {} }
   const cfg = widget.config ?? {}
   const type: WidgetType = widget.type
@@ -6392,7 +6745,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
             <FileField value={/^https?:\/\/(www\.)?(youtube|youtu\.be|vimeo)/.test(cfg.url ?? '') ? '' : (cfg.url ?? '')} onChange={(url) => setCfg({ url })} accept={ACCEPT_VIDEO} preview={false} hint="MP4, WebM · máx 50 MB" />
           </WidgetField>
           <WidgetField label="Portada / thumbnail (opcional, para MP4)">
-            <FileField value={cfg.poster ?? ''} onChange={(url) => setCfg({ poster: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP" />
+            <ImageBankUrlField value={cfg.poster ?? ''} onChange={(url) => setCfg({ poster: url })} onOpenBank={() => openImageBank?.(obj, { type: 'field', field: 'poster' })} />
           </WidgetField>
           <WidgetField label="Botón de reproducción — elige un estilo">
             <PlayerGallery value={cfg.playerStyle ?? 'native'} color={cfg.playerColor ?? '#ef4444'} presets={VIDEO_PRESETS} onPick={(id) => setCfg({ playerStyle: id })} />
@@ -6451,9 +6804,9 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
 
       {type === 'social' && <SocialWidgetProps obj={obj} cfg={cfg} setCfg={setCfg} />}
 
-      {type === 'gallery' && <GalleryWidgetProps cfg={cfg} setCfg={setCfg} />}
+      {type === 'gallery' && <GalleryWidgetProps cfg={cfg} setCfg={setCfg} openImageBank={(request) => openImageBank?.(obj, request)} />}
 
-      {type === 'product_card' && <ProductCardWidgetProps cfg={cfg} setCfg={setCfg} />}
+      {type === 'product_card' && <ProductCardWidgetProps cfg={cfg} setCfg={setCfg} openImageBank={(request) => openImageBank?.(obj, request)} />}
 
       {type === 'table' && (
         <WidgetField label="Datos (fila por línea, columnas separadas por coma)">
@@ -6597,7 +6950,7 @@ function WidgetProps({ obj, setData }: { obj: any; setData: (p: any) => void }) 
             <input style={s.propInput} placeholder="https://..." defaultValue={cfg.buttonUrl ?? ''} onChange={(e) => setCfg({ buttonUrl: e.target.value })} />
           </WidgetField>
           <WidgetField label="Imagen (opcional)">
-            <FileField value={cfg.image ?? ''} onChange={(url) => setCfg({ image: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP" />
+            <ImageBankUrlField value={cfg.image ?? ''} onChange={(url) => setCfg({ image: url })} onOpenBank={() => openImageBank?.(obj, { type: 'field', field: 'image' })} />
           </WidgetField>
           {cfg.image && (
             <WidgetField label="Lado de la imagen">
@@ -6747,7 +7100,19 @@ function TriggerSelector({ data, setData }: { data: any; setData: (p: any) => vo
 }
 
 // Editor de acción reutilizable (botones y zonas de enlace)
-function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages: any[]; setData: (p: any) => void; targets?: { id: string; name: string }[] }) {
+function ActionEditor({
+  data,
+  pages,
+  setData,
+  targets = [],
+  openImageBank,
+}: {
+  data: any
+  pages: any[]
+  setData: (p: any) => void
+  targets?: { id: string; name: string }[]
+  openImageBank?: OpenWidgetGalleryMediaPicker
+}) {
   const action = data.action ?? { type: 'link' }
   const setAction = (patch: any) => setData({ action: { ...action, ...patch } })
   const current = action.type ?? 'none'
@@ -6825,7 +7190,7 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
 
       {action.type === 'popup_image' && (
         <PropGroup label="Imagen emergente">
-          <FileField value={action.image ?? ''} onChange={(url) => setAction({ image: url })} accept={ACCEPT_IMAGE} hint="JPG, PNG, WEBP · máx 10 MB" />
+          <ImageBankUrlField value={action.image ?? ''} onChange={(url) => setAction({ image: url })} onOpenBank={() => openImageBank?.({ type: 'field', field: 'image' })} />
           {action.image && (
             <ImageFitToggle
               url={action.image}
@@ -6872,7 +7237,7 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
       )}
 
       {action.type === 'gallery_images' && (
-        <GalleryImagesEditor action={action} setAction={setAction} />
+        <GalleryImagesEditor action={action} setAction={setAction} openImageBank={openImageBank} />
       )}
 
       {action.type === 'gallery_videos' && (
@@ -6966,20 +7331,18 @@ function ActionEditor({ data, pages, setData, targets = [] }: { data: any; pages
 }
 
 // ─── Editor de galería de imágenes ────────────────────────────────────────────
-function GalleryImagesEditor({ action, setAction }: { action: any; setAction: (p: any) => void }) {
+function GalleryImagesEditor({ action, setAction, openImageBank }: { action: any; setAction: (p: any) => void; openImageBank?: OpenWidgetGalleryMediaPicker }) {
   const images: string[] = action.images ?? []
   const cover: string = action.cover ?? images[0] ?? ''
   const fitMap: Record<string, ImgFit> = action.fit ?? {}
   const setFit = (url: string, f: ImgFit) => setAction({ fit: { ...fitMap, [url]: f } })
-  const fileRefs = useRef<(HTMLInputElement | null)[]>([])
 
   function setImages(next: string[]) {
     setAction({ images: next, cover: next.includes(cover) ? cover : (next[0] ?? '') })
   }
 
   function addImage() {
-    if (images.length >= 20) return
-    setImages([...images, ''])
+    openImageBank?.({ type: 'add', max: 20 })
   }
 
   function updateImage(i: number, url: string) {
@@ -6994,15 +7357,6 @@ function GalleryImagesEditor({ action, setAction }: { action: any; setAction: (p
     setImages(next)
   }
 
-  async function uploadImage(i: number, file: File) {
-    try {
-      const res = await api.upload(file)
-      updateImage(i, res.data.url)
-    } catch (e: any) {
-      alert('Error al subir: ' + (e.message ?? e))
-    }
-  }
-
   return (
     <>
       <PropGroup label="Imágenes de la galería (máx. 20)">
@@ -7014,18 +7368,11 @@ function GalleryImagesEditor({ action, setAction }: { action: any; setAction: (p
               value={url}
               onChange={(e) => updateImage(i, e.target.value)}
             />
-            <input
-              ref={(el) => { fileRefs.current[i] = el }}
-              type="file"
-              accept={ACCEPT_IMAGE}
-              style={{ display: 'none' }}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(i, f); e.target.value = '' }}
-            />
             <button
               type="button"
               style={{ ...s.alignBtn, fontSize: 11, padding: '4px 8px', flex: 'none', whiteSpace: 'nowrap' }}
-              onClick={() => fileRefs.current[i]?.click()}
-            >Subir</button>
+              onClick={() => openImageBank?.({ type: 'replace', imageIndex: i })}
+            >Banco</button>
             <button
               type="button"
               style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }}
@@ -7037,7 +7384,7 @@ function GalleryImagesEditor({ action, setAction }: { action: any; setAction: (p
           <ImageFitToggle key={'fit-' + url} url={url} fitMap={fitMap} setFit={setFit} aspect={4 / 3} />
         ))}
         {images.length < 20 && (
-          <button type="button" style={{ ...s.alignBtn, fontSize: 12 }} onClick={addImage}>+ Agregar imagen</button>
+          <button type="button" style={{ ...s.alignBtn, fontSize: 12 }} onClick={addImage}>Agregar imágenes</button>
         )}
       </PropGroup>
       {images.filter(Boolean).length > 0 && (
