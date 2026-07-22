@@ -37,7 +37,9 @@ import {
 } from '../lib/editorClipboard'
 import {
   appendMediaPickerUrls,
+  MEDIA_PICKER_REPLACEMENT_ERROR,
   readMediaPickerFolder,
+  resolveMediaPickerReplacementSource,
   selectFirstMediaPickerUrl,
   shouldOpenImageReplacementForObject,
   writeMediaPickerFolder,
@@ -3748,13 +3750,53 @@ export default function EditPublication() {
     return true
   }, [getIntentCanvasObject, recordCurrentCanvasChange])
 
-  function doReplaceWithUrl(
-    url: string,
+  type ReplacementResult =
+    | { ok: true; cause: 'replacement-applied'; loadedUrl: string; canonicalUrl: string }
+    | { ok: false; cause: 'page-changed' | 'canvas-changed' | 'target-not-found' | 'element-id-changed' | 'image-load-failed' | 'image-invalid'; attemptedUrl?: string }
+  type ReplacementFailure = Extract<ReplacementResult, { ok: false }>
+
+  function safeReplacementDiagnosticUrl(url: string) {
+    try {
+      const parsed = new URL(url)
+      parsed.search = ''
+      parsed.hash = ''
+      return parsed.toString()
+    } catch {
+      return url.split('?')[0].split('#')[0]
+    }
+  }
+
+  function validateReplacementTarget(
     targetObject: FabricObjectInstance,
     canvasInstance: FabricCanvasInstance,
     pageId: string,
     elementId: string,
-  ): Promise<boolean> {
+  ): ReplacementFailure | null {
+    if (pageIdRef.current !== pageId) return { ok: false, cause: 'page-changed' }
+    if (fabricRef.current !== canvasInstance) return { ok: false, cause: 'canvas-changed' }
+    if (!canvasInstance.getObjects?.().includes(targetObject)) return { ok: false, cause: 'target-not-found' }
+    if ((targetObject as any).data?.elementId !== elementId) return { ok: false, cause: 'element-id-changed' }
+    return null
+  }
+
+  function loadFabricImageCandidate(url: string): Promise<{ img?: any; error?: unknown }> {
+    return new Promise((resolve) => {
+      try {
+        fabric.Image.fromURL(url, (img: any) => resolve({ img }), (message) => resolve({ error: message }))
+      } catch (error) {
+        resolve({ error })
+      }
+    })
+  }
+
+  async function doReplaceWithUrl(
+    canonicalUrl: string,
+    loadCandidates: string[],
+    targetObject: FabricObjectInstance,
+    canvasInstance: FabricCanvasInstance,
+    pageId: string,
+    elementId: string,
+  ): Promise<ReplacementResult> {
     const c = canvasInstance
     const o = targetObject
     // Recuadro mostrado actual (ancho y alto ya escalados) que debemos replicar.
@@ -3764,141 +3806,189 @@ export default function EditPublication() {
     const prevAngle = o.angle ?? 0
     const prevFlipX = !!o.flipX, prevFlipY = !!o.flipY
     const prevOriginX = o.originX ?? 'left', prevOriginY = o.originY ?? 'top'
-    const prevData = { ...(o.data ?? {}), kind: 'image', src: url }
+    const prevData = { ...(o.data ?? {}), kind: 'image', src: canonicalUrl }
     const idx = c.getObjects().indexOf(o)
 
-    return new Promise((resolve) => {
-      try {
-        fabric.Image.fromURL(url, (img: any) => {
-          try {
-            if (!img || !img.width || !img.height) {
-              alert('No se pudo cargar la imagen de reemplazo')
-              resolve(false)
-              return
-            }
-            if (pageIdRef.current !== pageId) { resolve(false); return }
-            if (fabricRef.current !== c) { resolve(false); return }
-            if (!c.getObjects?.().includes(o)) { resolve(false); return }
-            if ((o as any).data?.elementId !== elementId) { resolve(false); return }
+    const initialInvalid = validateReplacementTarget(o, c, pageId, elementId)
+    if (initialInvalid) return initialInvalid
 
-            const iw = img.width, ih = img.height
-            // Modo "cubrir": recorta el sobrante para que la región mostrada tenga la misma
-            // proporción que el recuadro destino, centrando el recorte.
-            const targetAspect = targetH > 0 ? targetW / targetH : iw / ih
-            let cropW = iw, cropH = ih, cropX = 0, cropY = 0
-            if (iw / ih > targetAspect) {
-              // Imagen más ancha que el recuadro → recortar lados
-              cropW = ih * targetAspect; cropX = (iw - cropW) / 2
-            } else {
-              // Imagen más alta → recortar arriba/abajo
-              cropH = iw / targetAspect; cropY = (ih - cropH) / 2
-            }
-            const scale = cropW > 0 ? targetW / cropW : 1
-            img.set({
-              cropX, cropY, width: cropW, height: cropH,
-              left: prevLeft, top: prevTop, scaleX: scale, scaleY: scale, angle: prevAngle,
-              flipX: prevFlipX, flipY: prevFlipY, originX: prevOriginX, originY: prevOriginY,
-            })
-            img.data = prevData
-            const previousUndoRedo = isUndoRedoRef.current
-            isUndoRedoRef.current = true
-            try {
-              c.remove(o)
-              c.add(img)
-            } finally {
-              isUndoRedoRef.current = previousUndoRedo
-            }
-            if (idx >= 0 && img.moveTo) img.moveTo(idx)
-            c.setActiveObject(img)
-            img.setCoords(); c.requestRenderAll()
-            setSelected(img); setSelectVersion((v) => v + 1)
-            recordCurrentCanvasChange()
-            addToBank(url)
-            resolve(true)
-          } catch (error) {
-            console.warn('[media-picker] image replacement failed', error)
-            resolve(false)
-          }
-        }, (message) => {
-          alert(message)
-          resolve(false)
+    for (let candidateIndex = 0; candidateIndex < loadCandidates.length; candidateIndex += 1) {
+      const attemptedUrl = loadCandidates[candidateIndex]
+      const loaded = await loadFabricImageCandidate(attemptedUrl)
+      if (loaded.error) {
+        console.warn('[media-picker] image replacement candidate failed', {
+          reason: 'image-load-failed',
+          candidateIndex,
+          url: safeReplacementDiagnosticUrl(attemptedUrl),
+          pageId,
+          elementId,
         })
-      } catch (error) {
-        console.warn('[media-picker] image replacement failed', error)
-        resolve(false)
+        continue
       }
-    })
+      const img = loaded.img
+      if (!img || !img.width || !img.height) {
+        console.warn('[media-picker] image replacement candidate failed', {
+          reason: 'image-invalid',
+          candidateIndex,
+          url: safeReplacementDiagnosticUrl(attemptedUrl),
+          pageId,
+          elementId,
+        })
+        continue
+      }
+
+      const asyncInvalid = validateReplacementTarget(o, c, pageId, elementId)
+      if (asyncInvalid) return { ...asyncInvalid, attemptedUrl }
+
+      try {
+        const iw = img.width, ih = img.height
+        // Modo "cubrir": recorta el sobrante para que la región mostrada tenga la misma
+        // proporción que el recuadro destino, centrando el recorte.
+        const targetAspect = targetH > 0 ? targetW / targetH : iw / ih
+        let cropW = iw, cropH = ih, cropX = 0, cropY = 0
+        if (iw / ih > targetAspect) {
+          // Imagen más ancha que el recuadro → recortar lados
+          cropW = ih * targetAspect; cropX = (iw - cropW) / 2
+        } else {
+          // Imagen más alta → recortar arriba/abajo
+          cropH = iw / targetAspect; cropY = (ih - cropH) / 2
+        }
+        const scale = cropW > 0 ? targetW / cropW : 1
+        img.set({
+          cropX, cropY, width: cropW, height: cropH,
+          left: prevLeft, top: prevTop, scaleX: scale, scaleY: scale, angle: prevAngle,
+          flipX: prevFlipX, flipY: prevFlipY, originX: prevOriginX, originY: prevOriginY,
+        })
+        img.data = prevData
+        const previousUndoRedo = isUndoRedoRef.current
+        isUndoRedoRef.current = true
+        try {
+          c.remove(o)
+          c.add(img)
+        } finally {
+          isUndoRedoRef.current = previousUndoRedo
+        }
+        if (idx >= 0 && img.moveTo) img.moveTo(idx)
+        c.setActiveObject(img)
+        img.setCoords(); c.requestRenderAll()
+        setSelected(img); setSelectVersion((v) => v + 1)
+        recordCurrentCanvasChange()
+        addToBank(canonicalUrl)
+        return { ok: true, cause: 'replacement-applied', loadedUrl: attemptedUrl, canonicalUrl }
+      } catch (error) {
+        console.warn('[media-picker] image replacement candidate failed', {
+          reason: error instanceof Error ? error.message : 'replacement-error',
+          candidateIndex,
+          url: safeReplacementDiagnosticUrl(attemptedUrl),
+          pageId,
+          elementId,
+        })
+      }
+    }
+
+    return { ok: false, cause: 'image-load-failed', attemptedUrl: loadCandidates[loadCandidates.length - 1] }
   }
 
   const handleMediaPickerSelect = useCallback(async (urls: string[], assets?: MediaAsset[]) => {
     const intent = mediaPickerIntent
     const selectedUrls = urls.filter(Boolean)
     if (!intent || !selectedUrls.length) return
+    const clearPickerIntent = () => {
+      setMediaPickerIntent(null)
+      replaceTargetRef.current = null
+    }
 
     try {
-      if (assets?.length) {
-        rememberMediaAssets(assets)
-      }
-
       if (intent.type === 'pages') {
         const result = await addPagesFromUrls(selectedUrls)
+        if (assets?.length) rememberMediaAssets(assets)
+        clearPickerIntent()
         void refreshMediaBank()
         return { confirmedCount: result?.confirmedPages.length ?? 0 }
       }
 
       if (intent.type === 'svg') {
         await insertSvgUrls(selectedUrls)
+        if (assets?.length) rememberMediaAssets(assets)
+        clearPickerIntent()
         void refreshMediaBank()
         return
       }
 
       if (intent.type === 'insert-images') {
-        if (pageIdRef.current !== intent.pageId) return
+        if (pageIdRef.current !== intent.pageId) throw new Error('No se pudo aplicar la selección en la página actual.')
         for (const url of selectedUrls) {
           addToBank(url)
           await addImageFromUrl(url)
         }
+        if (assets?.length) rememberMediaAssets(assets)
+        clearPickerIntent()
         void refreshMediaBank()
         return
       }
 
       if (intent.type === 'replace-object') {
-        const url = selectFirstMediaPickerUrl({ urls: selectedUrls, assets })
-        if (!url) return
+        const selectedIndex = selectedUrls.findIndex(Boolean)
+        const selectedUrl = selectFirstMediaPickerUrl({ urls: selectedUrls, assets })
+        const selectedAsset = selectedIndex >= 0 ? assets?.[selectedIndex] : assets?.[0]
+        if (!selectedUrl) throw new Error(MEDIA_PICKER_REPLACEMENT_ERROR)
         const resolved = getIntentCanvasObject(intent)
-        if (!resolved) return
-        const applied = await doReplaceWithUrl(url, resolved.target, resolved.canvas, intent.pageId, intent.elementId)
-        if (applied) void refreshMediaBank()
+        if (!resolved) throw new Error(MEDIA_PICKER_REPLACEMENT_ERROR)
+        const source = resolveMediaPickerReplacementSource(selectedUrl, selectedAsset)
+        if (!source.canonicalUrl || !source.loadCandidates.length) throw new Error(MEDIA_PICKER_REPLACEMENT_ERROR)
+        const applied = await doReplaceWithUrl(source.canonicalUrl, source.loadCandidates, resolved.target, resolved.canvas, intent.pageId, intent.elementId)
+        if (!applied.ok) {
+          console.warn('[media-picker] image replacement did not apply', {
+            reason: applied.cause,
+            url: applied.attemptedUrl ? safeReplacementDiagnosticUrl(applied.attemptedUrl) : undefined,
+            pageId: intent.pageId,
+            elementId: intent.elementId,
+          })
+          throw new Error(MEDIA_PICKER_REPLACEMENT_ERROR)
+        }
+        if (selectedAsset) rememberMediaAssets([selectedAsset])
+        clearPickerIntent()
+        void refreshMediaBank()
         return
       }
 
       if (intent.type === 'widget-gallery-add' || intent.type === 'widget-gallery-replace') {
         const applied = updateWidgetGalleryImagesByIntent(intent, selectedUrls)
-        if (applied) void refreshMediaBank()
+        if (!applied) throw new Error('No se pudo aplicar la selección a la galería.')
+        if (assets?.length) rememberMediaAssets(assets)
+        clearPickerIntent()
+        void refreshMediaBank()
         return
       }
 
       if (intent.type === 'action-gallery-add' || intent.type === 'action-gallery-replace') {
         const applied = updateActionGalleryImagesByIntent(intent, selectedUrls)
-        if (applied) void refreshMediaBank()
+        if (!applied) throw new Error('No se pudo aplicar la selección a la galería.')
+        if (assets?.length) rememberMediaAssets(assets)
+        clearPickerIntent()
+        void refreshMediaBank()
         return
       }
 
       if (intent.type === 'widget-image-field') {
         const applied = updateWidgetImageFieldByIntent(intent, selectedUrls)
-        if (applied) void refreshMediaBank()
+        if (!applied) throw new Error('No se pudo aplicar la imagen seleccionada.')
+        if (assets?.length) rememberMediaAssets(assets)
+        clearPickerIntent()
+        void refreshMediaBank()
         return
       }
 
       if (intent.type === 'action-image-field') {
         const applied = updateActionImageFieldByIntent(intent, selectedUrls)
-        if (applied) void refreshMediaBank()
+        if (!applied) throw new Error('No se pudo aplicar la imagen seleccionada.')
+        if (assets?.length) rememberMediaAssets(assets)
+        clearPickerIntent()
+        void refreshMediaBank()
       }
     } catch (error) {
       console.warn('[media-picker] selection handler failed', error)
-    } finally {
-      setMediaPickerIntent(null)
-      replaceTargetRef.current = null
+      throw error
     }
   }, [mediaPickerIntent, rememberMediaAssets, addPagesFromUrls, refreshMediaBank, insertSvgUrls, addToBank, addImageFromUrl, getIntentCanvasObject, updateWidgetGalleryImagesByIntent, updateActionGalleryImagesByIntent, updateWidgetImageFieldByIntent, updateActionImageFieldByIntent])
 
