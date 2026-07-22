@@ -53,3 +53,8 @@ export function appendMediaPickerUrls(current: string[], selection: MediaPickerS
   const additions = selection.urls.filter(Boolean).slice(0, remaining)
   return additions.length ? [...current, ...additions] : current
 }
+
+export function shouldOpenImageReplacementForObject(input: { kind?: string | null; type?: string | null }) {
+  if (input.kind === 'image' || input.type === 'image') return true
+  return input.kind === 'shape' && (input.type === 'rect' || input.type === 'polygon')
+}

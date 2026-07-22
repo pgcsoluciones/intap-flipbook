@@ -39,6 +39,7 @@ import {
   appendMediaPickerUrls,
   readMediaPickerFolder,
   selectFirstMediaPickerUrl,
+  shouldOpenImageReplacementForObject,
   writeMediaPickerFolder,
   type MediaPickerFolderId,
 } from '../lib/mediaPickerIntent'
@@ -3597,8 +3598,8 @@ export default function EditPublication() {
     const c = fabricRef.current; const o = c?.getActiveObject()
     if (!o) return
     const kind = o.data?.kind
-    // Imágenes → selector del banco de imágenes
-    if (kind === 'image' || o.type === 'image') {
+    // Imágenes y placeholders rectangulares/poligonales → selector del banco de imágenes.
+    if (shouldOpenImageReplacementForObject({ kind, type: o.type })) {
       const pageId = pageIdRef.current
       if (!pageId || !c) return
       const elementId = ensureFabricElementIdForPicker(o)
