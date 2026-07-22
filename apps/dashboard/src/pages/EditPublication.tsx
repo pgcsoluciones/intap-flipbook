@@ -4028,6 +4028,7 @@ export default function EditPublication() {
               <>
                 <div style={{ padding: '8px 12px', color: '#9ca3af', fontSize: 12 }}>Selecciona un elemento</div>
                 <div style={s.ctxSep} />
+                {editorClipboardCount > 0 && <CtxItem icon="paste" label="Pegar" onClick={() => { void pasteFromEditorClipboard(); setCtxMenu(null) }} />}
                 <CtxItem icon="eye" label="Mostrar todos los ocultos" onClick={() => { setCtxMenu(null); showAllHiddenInEditor() }} />
               </>
             )}
