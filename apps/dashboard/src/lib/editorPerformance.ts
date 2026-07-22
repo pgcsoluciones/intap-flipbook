@@ -24,14 +24,6 @@ export function normalizeCanvasTextBaseline(value: unknown) {
   return value === 'alphabetical' ? 'alphabetic' : value
 }
 
-export function fabricCanvasDisposeMode(
-  kind: 'editor' | 'thumbnail',
-  deserializationSettled: boolean,
-) {
-  if (kind === 'thumbnail') return 'garbage-collect' as const
-  return deserializationSettled ? 'immediate' as const : 'after-load' as const
-}
-
 export function pageThumbnailCacheKey(page: PageLike) {
   return [
     page.id,
