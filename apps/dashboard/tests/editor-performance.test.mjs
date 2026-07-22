@@ -34,6 +34,18 @@ function pages(count) {
   }))
 }
 
+test('ciclo Fabric espera loadFromJSON y no destruye snapshots temporales', async () => {
+  const perf = await loadPerf()
+  try {
+    assert.equal(perf.fabricCanvasDisposeMode('editor', true), 'immediate')
+    assert.equal(perf.fabricCanvasDisposeMode('editor', false), 'after-load')
+    assert.equal(perf.fabricCanvasDisposeMode('thumbnail', true), 'garbage-collect')
+    assert.equal(perf.fabricCanvasDisposeMode('thumbnail', false), 'garbage-collect')
+  } finally {
+    await perf.cleanup()
+  }
+})
+
 test('normaliza textBaseline legacy sin modificar valores validos', async () => {
   const perf = await loadPerf()
   try {
