@@ -9,6 +9,7 @@ import { optimizeImageFile, type OptimizedImageResult } from '../lib/imageOptimi
 import {
   buildDisplayLookup,
   buildThumbnailLookup,
+  fabricCanvasDisposeMode,
   firstVisibleIndexes,
   mergeThumbnailLookup,
   mergeSavedPagePreservingThumbnailVersion,
@@ -514,28 +515,14 @@ async function renderPageThumbnailSnapshot(snapshot: { image_url: string; canvas
   } finally {
     disposed = true
 
-    // Fabric puede dejar operaciones internas de imágenes/filtros terminando
-    // después del snapshot. Cancelamos renders pendientes y damos un breve margen
-    // antes de destruir el canvas para evitar clearRect sobre un contexto nulo.
-    try {
-      ;(sc as any).cancelRequestedRender?.()
-    } catch {}
-
-    const disposeWhenIdle = () => {
+    // StaticCanvas es temporal y no está montado en el DOM. Fabric 5 puede seguir
+    // completando filtros después del callback de loadFromJSON; llamar dispose()
+    // aquí deja contextContainer en null y la operación tardía intenta clearRect.
+    // Cancelamos renders y dejamos el canvas sin referencias para recolección de GC.
+    if (fabricCanvasDisposeMode('thumbnail', true) === 'garbage-collect') {
       try {
-        const target = sc as any
-        if (!target.lowerCanvasEl || !target.contextContainer) return
-        target.cancelRequestedRender?.()
-        target.dispose()
-      } catch (error) {
-        console.warn('[thumbnail] canvas dispose skipped', error)
-      }
-    }
-
-    if (typeof window !== 'undefined') {
-      window.setTimeout(disposeWhenIdle, 250)
-    } else {
-      disposeWhenIdle()
+        ;(sc as any).cancelRequestedRender?.()
+      } catch {}
     }
   }
 }
@@ -2026,7 +2013,10 @@ export default function EditPublication() {
     const loadingPageId = activePage.id
     canvasReadyRef.current = false
     pageIdRef.current = activePage.id
-    if (fabricRef.current) { fabricRef.current.dispose(); fabricRef.current = null }
+    if (fabricRef.current) {
+      try { fabricRef.current.cancelRequestedRender?.() } catch {}
+      fabricRef.current = null
+    }
     selectedRef.current = null
     setSelected(null)
     // Cancela cualquier reemplazo in-situ pendiente y el modo "Ajustar hoja" al cambiar de página
@@ -2064,6 +2054,34 @@ export default function EditPublication() {
     // Sin esto, `object:added` dispara por cada objeto durante `loadFromJSON` y
     // el timer de 1.2s expira con el canvas a medio cargar, sobreescribiendo datos.
     let isLoading = true
+    let deserializationSettled = !activePage.canvas_json
+    let disposeRequested = false
+    let canvasDisposed = false
+
+    const disposeEditorCanvas = () => {
+      if (canvasDisposed) return
+      canvasDisposed = true
+
+      try {
+        ;(canvas as any).cancelRequestedRender?.()
+      } catch {}
+
+      try {
+        const target = canvas as any
+        if (!target.lowerCanvasEl || !target.contextContainer) return
+        target.dispose()
+      } catch (error) {
+        console.warn('[editor] canvas dispose skipped', error)
+      }
+    }
+
+    const scheduleEditorCanvasDispose = () => {
+      if (typeof window !== 'undefined') {
+        window.setTimeout(disposeEditorCanvas, 0)
+      } else {
+        disposeEditorCanvas()
+      }
+    }
 
     // Carga el fondo DESPUÉS de loadFromJSON porque loadFromJSON llama canvas.clear()
     // internamente, lo que borra cualquier backgroundImage ya puesta. Llamar fromURL
@@ -2149,7 +2167,13 @@ export default function EditPublication() {
         : activePage.canvas_json
       const jsonWithoutBg = stripBackgroundImage(normalizeFabricAssetJson(pageJson, (url) => resolveDisplayUrl(url, displayUrlByPublicUrl, toCanvasSafeAssetUrl)))
       canvas.loadFromJSON(jsonWithoutBg, () => {
-        if (!isCurrentLoad()) return
+        deserializationSettled = true
+
+        if (disposeRequested || !isCurrentLoad()) {
+          scheduleEditorCanvasDispose()
+          return
+        }
+
         isLoading = false
         canvas.getObjects().forEach((o: any) => {
           if (o.data?.hiddenInEditor) {
@@ -2318,13 +2342,22 @@ export default function EditPublication() {
       canvasGenerationRef.current += 1
       canvasReadyRef.current = false
       setCanvasLoading(false)
-      cleanupCanvas.dispose()
+
+      const disposeMode = fabricCanvasDisposeMode('editor', deserializationSettled)
+      if (disposeMode === 'immediate') {
+        scheduleEditorCanvasDispose()
+      } else {
+        // loadFromJSON sigue reconstruyendo objetos o filtros. Su propio callback
+        // realizará la eliminación cuando Fabric haya terminado internamente.
+        disposeRequested = true
+      }
+
       if (fabricRef.current === cleanupCanvas) {
         fabricRef.current = null
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage?.id, activePageDisplayUrl, displayUrlByPublicUrl])
+  }, [activePage?.id, activePageDisplayUrl])
 
   useEffect(() => {
     if (!activePage || !pages.length) return
@@ -3734,7 +3767,10 @@ export default function EditPublication() {
                 style={{ position: 'relative', transform: `scale(${zoom / 100})`, transformOrigin: 'top center', boxShadow: '0 8px 32px rgba(0,0,0,0.18)', ...(adjustMode ? { outline: '2px solid #4F46E5', outlineOffset: 2 } : {}) }}
                 onContextMenu={onCanvasContextMenu}
               >
-                <canvas ref={canvasRef} />
+                <canvas
+                  key={`${activePage.id}:${activePageDisplayUrl}`}
+                  ref={canvasRef}
+                />
                 {canvasLoading && (
                   <div style={s.canvasLoadingOverlay}>
                     <span style={s.canvasLoadingText}>Cargando página...</span>
