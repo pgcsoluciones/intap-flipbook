@@ -23,6 +23,18 @@ import {
   shouldLoadPageThumbnail,
   upsertPageById,
 } from '../lib/editorPerformance'
+import {
+  FABRIC_CLONE_CUSTOM_PROPS,
+  clonePlainValue,
+  collectFabricElementIds,
+  editorClipboardCountLabel,
+  getFabricSelectionObjects,
+  prepareClipboardObjectsForPaste,
+  resetDuplicateTree,
+  serializeFabricSelectionForClipboard,
+  shouldIgnoreEditorClipboardShortcut,
+  stripDynamicAssociations,
+} from '../lib/editorClipboard'
 import FileField from '../components/FileField'
 import MediaPicker, { resolveExistingMediaFolderFilter } from '../components/MediaPicker'
 import WidgetPreview from '../components/WidgetPreview'
@@ -253,80 +265,7 @@ async function loadFabricImageCached(url: string) {
   return new fabric.Image(img)
 }
 
-const FABRIC_CLONE_CUSTOM_PROPS = ['data']
 const DUPLICATE_OFFSET = 20
-const DYNAMIC_ASSOCIATION_KEYS = new Set([
-  'dynamicMarkerId',
-  'dynamic_marker_id',
-  'dynamicMarker',
-  'dynamic_marker',
-  'markerId',
-  'marker_id',
-  'marker',
-  'targetObjectId',
-  'target_object_id',
-  'syncGroupId',
-  'sync_group_id',
-  'booking_calendar_id',
-  'hiddenInEditor',
-  'originalOpacity',
-])
-
-function clonePlainValue(value: any): any {
-  if (value == null || typeof value !== 'object') return value
-  try {
-    return JSON.parse(JSON.stringify(value))
-  } catch {
-    if (Array.isArray(value)) return value.map((item) => clonePlainValue(item))
-    return { ...value }
-  }
-}
-
-function makeElementId(existing = new Set<string>()) {
-  let id = ''
-  do {
-    id = `el_${Math.random().toString(36).slice(2, 9)}`
-  } while (existing.has(id))
-  existing.add(id)
-  return id
-}
-
-function collectFabricElementIds(objects: any[], out = new Set<string>()) {
-  for (const obj of objects) {
-    const elementId = obj?.data?.elementId
-    if (typeof elementId === 'string' && elementId) out.add(elementId)
-    const children = typeof obj?.getObjects === 'function' ? obj.getObjects() : obj?._objects
-    if (Array.isArray(children)) collectFabricElementIds(children, out)
-  }
-  return out
-}
-
-function stripDynamicAssociations(value: any): any {
-  if (Array.isArray(value)) return value.map((item) => stripDynamicAssociations(item))
-  if (!value || typeof value !== 'object') return value
-  const next: any = {}
-  for (const [key, child] of Object.entries(value)) {
-    if (DYNAMIC_ASSOCIATION_KEYS.has(key)) continue
-    next[key] = stripDynamicAssociations(child)
-  }
-  return next
-}
-
-function resetDuplicateData(obj: any, existingElementIds: Set<string>) {
-  const sourceData = clonePlainValue(obj?.data ?? {})
-  const cleanData = stripDynamicAssociations(sourceData)
-  cleanData.elementId = makeElementId(existingElementIds)
-  obj.data = cleanData
-}
-
-function resetDuplicateTree(obj: any, existingElementIds: Set<string>) {
-  for (const key of DYNAMIC_ASSOCIATION_KEYS) delete obj?.[key]
-  resetDuplicateData(obj, existingElementIds)
-  const children = typeof obj?.getObjects === 'function' ? obj.getObjects() : (obj?._objects ?? obj?.objects)
-  if (Array.isArray(children)) {
-    children.forEach((child: any) => resetDuplicateTree(child, existingElementIds))
-  }
-}
 
 function emptyFabricCanvasJson() {
   return { version: fabric.version, objects: [] }
@@ -417,6 +356,19 @@ function cloneFabricObject(obj: any) {
   return new Promise<any>((resolve, reject) => {
     try {
       const maybePromise = obj.clone((clone: any) => resolve(clone), FABRIC_CLONE_CUSTOM_PROPS)
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise.then(resolve).catch(reject)
+      }
+    } catch (error) {
+      reject(error)
+    }
+  })
+}
+
+function enlivenFabricObjects(objects: any[]) {
+  return new Promise<any[]>((resolve, reject) => {
+    try {
+      const maybePromise = fabric.util.enlivenObjects(objects, (enlivened: any[]) => resolve(enlivened))
       if (maybePromise && typeof maybePromise.then === 'function') {
         maybePromise.then(resolve).catch(reject)
       }
@@ -604,6 +556,9 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
     case 'uploads':   return <svg {...p}><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 20h14"/></svg>
     case 'trash':     return <svg {...p}><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13"/></svg>
     case 'duplicate': return <svg {...p}><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V5a1 1 0 0 1 1-1h11"/></svg>
+    case 'copy':      return <svg {...p}><rect x="8" y="7" width="11" height="13" rx="2"/><path d="M5 16V6a2 2 0 0 1 2-2h8"/></svg>
+    case 'cut':       return <svg {...p}><circle cx="6" cy="7" r="3"/><circle cx="6" cy="17" r="3"/><path d="M8.6 8.6 19 19M8.6 15.4 19 5"/></svg>
+    case 'paste':     return <svg {...p}><path d="M9 4h6l1 2h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2z"/><path d="M9 4h6v4H9z"/></svg>
     case 'front':     return <svg {...p}><rect x="7" y="7" width="10" height="10" rx="1"/><path d="M3 12h2M19 12h2M12 3v2M12 19v2"/></svg>
     case 'back':      return <svg {...p}><rect x="4" y="4" width="10" height="10" rx="1"/><rect x="10" y="10" width="10" height="10" rx="1"/></svg>
     case 'chevron':   return <svg {...p}><path d="m9 6 6 6-6 6"/></svg>
@@ -1204,6 +1159,10 @@ export default function EditPublication() {
   const [publishing, setPublishing] = useState(false)
   const [selected, setSelected] = useState<any>(null)
   const selectedRef = useRef<any>(null)
+  const editorClipboardRef = useRef<{ publicationId: string; mode: 'copy' | 'cut'; objects: any[] } | null>(null)
+  const [editorClipboardCount, setEditorClipboardCount] = useState(0)
+  const [editorClipboardNotice, setEditorClipboardNotice] = useState('')
+  const editorClipboardNoticeTimer = useRef<any>(null)
   const [defaultFont, setDefaultFont] = useState<string>(FONTS[0].family) // tipografía para texto nuevo
   const [imageBank, setImageBank] = useState<string[]>([]) // banco de imágenes subidas en este proyecto
   const [mediaBankAssets, setMediaBankAssets] = useState<MediaAsset[]>([])
@@ -1357,6 +1316,24 @@ export default function EditPublication() {
     setCanUndo(historyIndexRef.current > 0)
     setCanRedo(historyIndexRef.current < historyRef.current.length - 1)
   }, [])
+
+  const showEditorClipboardNotice = useCallback((message: string) => {
+    setEditorClipboardNotice(message)
+    clearTimeout(editorClipboardNoticeTimer.current)
+    editorClipboardNoticeTimer.current = window.setTimeout(() => {
+      setEditorClipboardNotice('')
+    }, 1600)
+  }, [])
+
+  useEffect(() => {
+    editorClipboardRef.current = null
+    setEditorClipboardCount(0)
+    setEditorClipboardNotice('')
+    return () => {
+      editorClipboardRef.current = null
+      clearTimeout(editorClipboardNoticeTimer.current)
+    }
+  }, [id])
 
   const pushHistory = useCallback((json: string) => {
     // Descarta cualquier redo pendiente y agrega el nuevo estado
@@ -2221,13 +2198,35 @@ export default function EditPublication() {
     // Tecla Supr / Delete para eliminar el objeto seleccionado
     // Ctrl+Z = deshacer, Ctrl+Y / Ctrl+Shift+Z = rehacer
     const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      const clipboardShortcutBlocked = shouldIgnoreEditorClipboardShortcut(e, isTextEditingRef.current)
+      const key = e.key.toLowerCase()
+      if ((e.ctrlKey || e.metaKey) && !clipboardShortcutBlocked) {
+        if (!e.shiftKey && key === 'c') {
+          const o = canvas.getActiveObject()
+          if (o && copySelectedToEditorClipboard()) e.preventDefault()
+          return
+        }
+        if (!e.shiftKey && key === 'x') {
+          const o = canvas.getActiveObject()
+          if (o && cutSelectedToEditorClipboard()) e.preventDefault()
+          return
+        }
+        if (!e.shiftKey && key === 'v') {
+          const payload = editorClipboardRef.current
+          const canPasteInternalClipboard = !!payload && payload.publicationId === id && payload.objects.length > 0
+          if (canPasteInternalClipboard) {
+            e.preventDefault()
+            void pasteFromEditorClipboard()
+          }
+          return
+        }
+      }
+      if (shouldIgnoreEditorClipboardShortcut({ target: e.target, altKey: false, repeat: false }, isTextEditingRef.current)) return
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const o = canvas.getActiveObject()
         if (o) { canvas.remove(o); setSelected(null); scheduleAutosave() }
       }
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && key === 'z') {
         e.preventDefault()
         if (historyIndexRef.current > 0) {
           historyIndexRef.current--
@@ -2235,7 +2234,7 @@ export default function EditPublication() {
           applyHistory(historyRef.current[historyIndexRef.current])
         }
       }
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
+      if ((e.ctrlKey || e.metaKey) && (key === 'y' || (e.shiftKey && key === 'z'))) {
         e.preventDefault()
         if (historyIndexRef.current < historyRef.current.length - 1) {
           historyIndexRef.current++
@@ -2243,7 +2242,7 @@ export default function EditPublication() {
           applyHistory(historyRef.current[historyIndexRef.current])
         }
       }
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'd') {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && key === 'd') {
         e.preventDefault()
         void duplicateSelected()
       }
@@ -3135,6 +3134,88 @@ export default function EditPublication() {
     const o = c?.getActiveObject()
     if (o) { c!.remove(o); setSelected(null); scheduleAutosave() }
   }
+
+  function copySelectedToEditorClipboard() {
+    const c = fabricRef.current
+    const o = c?.getActiveObject()
+    if (!id || !c || !o || isTextEditingRef.current) return false
+    const objects = serializeFabricSelectionForClipboard(o, c.getObjects())
+    if (!objects.length) return false
+    editorClipboardRef.current = { publicationId: id, mode: 'copy', objects }
+    setEditorClipboardCount(objects.length)
+    showEditorClipboardNotice(editorClipboardCountLabel(objects.length, 'copiado'))
+    return true
+  }
+
+  function cutSelectedToEditorClipboard() {
+    const c = fabricRef.current
+    const o = c?.getActiveObject()
+    if (!id || !c || !o || isTextEditingRef.current) return false
+    const objects = serializeFabricSelectionForClipboard(o, c.getObjects())
+    const selectedObjects = getFabricSelectionObjects(o, c.getObjects())
+    if (!objects.length || !selectedObjects.length) return false
+    editorClipboardRef.current = { publicationId: id, mode: 'cut', objects }
+    setEditorClipboardCount(objects.length)
+    replaceTargetRef.current = null
+    c.discardActiveObject()
+    selectedObjects.forEach((obj) => c.remove(obj))
+    setSelected(null)
+    selectedRef.current = null
+    setSelectVersion((v) => v + 1)
+    c.requestRenderAll()
+    scheduleAutosave()
+    showEditorClipboardNotice(editorClipboardCountLabel(objects.length, 'cortado'))
+    return true
+  }
+
+  async function pasteFromEditorClipboard() {
+    const c = fabricRef.current
+    const payload = editorClipboardRef.current
+    if (!id || !c || !payload || payload.publicationId !== id || !payload.objects.length || isTextEditingRef.current) return false
+    let addedObjects: any[] = []
+    try {
+      const prepared = prepareClipboardObjectsForPaste(payload.objects, c.getObjects())
+      const enlivened = await enlivenFabricObjects(prepared)
+      if (!enlivened.length || enlivened.length !== prepared.length) throw new Error('No se pudieron reconstruir todos los elementos.')
+
+      replaceTargetRef.current = null
+      c.discardActiveObject()
+      enlivened.forEach((obj) => {
+        obj.setCoords?.()
+        c.add(obj)
+        addedObjects.push(obj)
+      })
+
+      if (addedObjects.length === 1) {
+        c.setActiveObject(addedObjects[0])
+        setSelected(addedObjects[0])
+      } else {
+        const selection = new fabric.ActiveSelection(addedObjects, { canvas: c })
+        selection.setCoords()
+        c.setActiveObject(selection)
+        setSelected(selection)
+      }
+      selectedRef.current = c.getActiveObject?.() ?? null
+      setSelectVersion((v) => v + 1)
+      c.requestRenderAll()
+      scheduleAutosave()
+      editorClipboardRef.current = { ...payload, mode: 'copy' }
+      setEditorClipboardCount(payload.objects.length)
+      showEditorClipboardNotice(editorClipboardCountLabel(payload.objects.length, 'pegado'))
+      return true
+    } catch (error) {
+      for (const obj of addedObjects) c.remove(obj)
+      c.discardActiveObject()
+      setSelected(null)
+      selectedRef.current = null
+      setSelectVersion((v) => v + 1)
+      c.requestRenderAll()
+      console.error('[editor] paste from editor clipboard failed', error)
+      alert('No se pudieron pegar los elementos. El portapapeles interno se mantiene intacto.')
+      return false
+    }
+  }
+
   async function duplicateSelected() {
     const c = fabricRef.current
     const o = c?.getActiveObject()
@@ -3592,6 +3673,9 @@ export default function EditPublication() {
       {deepLinkNotice && (
         <div style={s.deepLinkNotice}>{deepLinkNotice}</div>
       )}
+      {editorClipboardNotice && (
+        <div style={s.editorClipboardNotice}>{editorClipboardNotice}</div>
+      )}
 
       <div style={s.body}>
         {/* ── Icon rail ── */}
@@ -3685,6 +3769,10 @@ export default function EditPublication() {
             <ToolbarBtn icon="undo"      title="Deshacer (Ctrl+Z)" onClick={undo}             disabled={!canUndo} />
             <ToolbarBtn icon="redo"      title="Rehacer (Ctrl+Y)"  onClick={redo}             disabled={!canRedo} />
             <ToolbarBtn icon="crop"      title="Ajustar hoja (zoom y posición)" onClick={toggleBgAdjust} active={adjustMode && adjustTarget === 'bg'} disabled={!activePage} />
+            <div style={s.toolSep} />
+            <ToolbarBtn icon="copy"      title="Copiar"            onClick={copySelectedToEditorClipboard} disabled={!selected} />
+            <ToolbarBtn icon="cut"       title="Cortar"            onClick={cutSelectedToEditorClipboard} disabled={!selected} />
+            <ToolbarBtn icon="paste"     title="Pegar"             onClick={() => { void pasteFromEditorClipboard() }} disabled={editorClipboardCount <= 0} />
             <div style={s.toolSep} />
             <ToolbarBtn icon="duplicate" title="Duplicar"          onClick={duplicateSelected} disabled={!selected} />
             <ToolbarBtn icon="trash"     title="Eliminar"          onClick={deleteSelected}   disabled={!selected} />
@@ -3910,6 +3998,10 @@ export default function EditPublication() {
           <div style={{ ...s.ctxMenu, left: ctxMenu.x, top: ctxMenu.y }}>
             {selected ? (
               <>
+                <CtxItem icon="copy" label="Copiar" onClick={() => { copySelectedToEditorClipboard(); setCtxMenu(null) }} />
+                <CtxItem icon="cut" label="Cortar" onClick={() => { cutSelectedToEditorClipboard(); setCtxMenu(null) }} />
+                {editorClipboardCount > 0 && <CtxItem icon="paste" label="Pegar" onClick={() => { void pasteFromEditorClipboard(); setCtxMenu(null) }} />}
+                <div style={s.ctxSep} />
                 <CtxItem icon="duplicate" label="Duplicar"        onClick={() => { duplicateSelected(); setCtxMenu(null) }} />
                 <CtxItem icon="trash"     label="Eliminar"        onClick={() => { deleteSelected(); setCtxMenu(null) }} />
                 <div style={s.ctxSep} />
@@ -7225,6 +7317,7 @@ const s: Record<string, React.CSSProperties> = {
   btnOutlineWhite: { background: 'transparent', border: '1px solid rgba(255,255,255,0.4)', color: '#fff', borderRadius: 6, padding: '6px 14px', fontSize: 13, cursor: 'pointer', fontWeight: 500 },
   btnPublish: { border: 'none', color: '#fff', borderRadius: 6, padding: '6px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 600 },
   deepLinkNotice: { flexShrink: 0, borderBottom: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', padding: '8px 16px', fontSize: 12, fontWeight: 700 },
+  editorClipboardNotice: { flexShrink: 0, borderBottom: '1px solid #bbf7d0', background: '#f0fdf4', color: '#166534', padding: '8px 16px', fontSize: 12, fontWeight: 700 },
 
   body: { display: 'flex', flex: 1, overflow: 'hidden' },
 
