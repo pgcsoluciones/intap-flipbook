@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, toCanvasSafeAssetUrl, type MediaAsset } from '../lib/api'
+import { api, toCanvasSafeAssetUrl, type MediaAsset, type MediaFolder } from '../lib/api'
 import { optimizeImageFile, type OptimizedImageResult } from '../lib/imageOptimization'
 
 const ACCEPT_IMAGE = 'image/jpeg,image/png,image/webp,image/svg+xml,image/gif'
@@ -80,6 +80,16 @@ type DeletePrompt = {
   mode: 'in-use' | 'unused'
   items: DeletePromptItem[]
   totalUses: number
+}
+
+type ActiveFolderId = undefined | null | string
+
+export function shouldShowLegacyForFolder(folderId: ActiveFolderId) {
+  return folderId === undefined || folderId === null
+}
+
+export function canMoveMediaPickerSelection(items: Array<{ asset?: MediaAsset }>) {
+  return items.length > 0 && items.every((item) => !!item.asset)
 }
 
 export function getCombinedMediaPage<TAsset, TLegacy>({
@@ -233,6 +243,14 @@ export default function MediaPicker({
   const [tab, setTab] = useState<'bank' | 'upload' | 'pdf'>('bank')
   const [q, setQ] = useState('')
   const [assets, setAssets] = useState<MediaAsset[]>([])
+  const [folders, setFolders] = useState<MediaFolder[]>([])
+  const [activeFolderId, setActiveFolderId] = useState<ActiveFolderId>(undefined)
+  const [uploadFolderId, setUploadFolderId] = useState<string | null>(null)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [uploadFolderName, setUploadFolderName] = useState('')
+  const [folderBusy, setFolderBusy] = useState(false)
+  const [folderError, setFolderError] = useState('')
+  const [deleteFolderPrompt, setDeleteFolderPrompt] = useState<MediaFolder | null>(null)
   const [knownAssetUrls, setKnownAssetUrls] = useState<string[]>([])
   const [pageNumber, setPageNumber] = useState(1)
   const [pageInfo, setPageInfo] = useState({ page: 1, total: 0, total_pages: 1, has_more: false })
@@ -256,6 +274,7 @@ export default function MediaPicker({
   const [successNotice, setSuccessNotice] = useState<{ count: number } | null>(null)
   const [deletePrompt, setDeletePrompt] = useState<DeletePrompt | null>(null)
   const loadSeqRef = useRef(0)
+  const folderSeqRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const pdfInputRef = useRef<HTMLInputElement | null>(null)
   const isMulti = multiple ?? mode !== 'image'
@@ -272,6 +291,15 @@ export default function MediaPicker({
     setTab('bank')
     setQ('')
     setPageNumber(1)
+    setAssets([])
+    setFolders([])
+    setActiveFolderId(undefined)
+    setUploadFolderId(null)
+    setNewFolderName('')
+    setUploadFolderName('')
+    setFolderBusy(false)
+    setFolderError('')
+    setDeleteFolderPrompt(null)
     setFiles([])
     setPreviewUrls((prev) => {
       for (const url of Object.values(prev)) URL.revokeObjectURL(url)
@@ -294,6 +322,20 @@ export default function MediaPicker({
     setNotice('')
   }, [open, mode])
 
+  const loadFolders = useCallback(async () => {
+    if (!open || !publicationId) return
+    const seq = folderSeqRef.current + 1
+    folderSeqRef.current = seq
+    setFolderError('')
+    try {
+      const res = await api.mediaFolders.list(publicationId)
+      if (seq !== folderSeqRef.current) return
+      setFolders(res.data ?? [])
+    } catch (err: any) {
+      if (seq === folderSeqRef.current) setFolderError(err?.message ?? 'No se pudieron cargar las carpetas.')
+    }
+  }, [open, publicationId])
+
   const loadAssets = useCallback(async (nextPage: number) => {
     if (!open || !publicationId) return
     const seq = loadSeqRef.current + 1
@@ -308,6 +350,7 @@ export default function MediaPicker({
         q,
         limit: BANK_PAGE_SIZE,
         page: nextPage,
+        folder_id: activeFolderId,
       })
       if (seq !== loadSeqRef.current) return
       setAssets(res.data ?? [])
@@ -325,7 +368,7 @@ export default function MediaPicker({
     } finally {
       if (seq === loadSeqRef.current) setLoading(false)
     }
-  }, [open, publicationId, q])
+  }, [activeFolderId, open, publicationId, q])
 
   useEffect(() => {
     if (!open) return
@@ -335,7 +378,13 @@ export default function MediaPicker({
     return () => window.clearTimeout(handle)
   }, [loadAssets, open])
 
+  useEffect(() => {
+    if (!open) return
+    void loadFolders()
+  }, [loadFolders, open])
+
   const legacyItems = useMemo(() => {
+    if (!shouldShowLegacyForFolder(activeFolderId)) return []
     const seen = new Set<string>()
     const query = q.trim().toLowerCase()
     const known = new Set(knownAssetUrls.map(normalizeUrlForCompare))
@@ -355,7 +404,7 @@ export default function MediaPicker({
       })
     }
     return result
-  }, [knownAssetUrls, legacyUrls, mode, q])
+  }, [activeFolderId, knownAssetUrls, legacyUrls, mode, q])
 
   const items = useMemo(() => {
     const assetItems: PickerItem[] = []
@@ -385,6 +434,11 @@ export default function MediaPicker({
   }), [legacyItems, pageInfo.total, pageNumber])
   const combinedTotal = combinedPage.total
   const combinedTotalPages = combinedPage.totalPages
+  const activeFolder = typeof activeFolderId === 'string' ? folders.find((folder) => folder.id === activeFolderId) ?? null : null
+  const uploadTargetFolderId = uploadFolderId
+  const selectedCanMove = canMoveMediaPickerSelection(selectedItems)
+  const selectedHasLegacy = selectedItems.some((item) => !item.asset)
+  const activeFolderLabel = activeFolderId === undefined ? 'Todas' : activeFolderId === null ? 'Banco general' : activeFolder?.name ?? 'Carpeta'
 
   if (!open) return null
 
@@ -411,6 +465,115 @@ export default function MediaPicker({
   const clearSelection = () => {
     setSelectedItems([])
     setSelectedUploads([])
+  }
+
+  const refreshBank = async (nextPage = 1) => {
+    await Promise.all([loadFolders(), loadAssets(nextPage)])
+  }
+
+  const selectFolder = (folderId: ActiveFolderId) => {
+    setActiveFolderId(folderId)
+    setPageNumber(1)
+    setSelectedItems([])
+    setError('')
+    setNotice('')
+  }
+
+  const createFolder = async (name: string, target: 'bank' | 'upload') => {
+    const trimmed = name.trim()
+    if (!trimmed || folderBusy) {
+      setFolderError('Escribe un nombre para la carpeta.')
+      return
+    }
+    setFolderBusy(true)
+    setFolderError('')
+    setError('')
+    try {
+      const res = await api.mediaFolders.create({ publication_id: publicationId, name: trimmed })
+      await loadFolders()
+      if (target === 'bank') selectFolder(res.data.id)
+      if (target === 'upload') setUploadFolderId(res.data.id)
+      setNewFolderName('')
+      setUploadFolderName('')
+      setNotice(`Carpeta "${res.data.name}" creada.`)
+    } catch (err: any) {
+      setFolderError(err?.message ?? 'No se pudo crear la carpeta.')
+    } finally {
+      setFolderBusy(false)
+    }
+  }
+
+  const renameActiveFolder = async () => {
+    if (!activeFolder || folderBusy) return
+    const trimmed = newFolderName.trim()
+    if (!trimmed) {
+      setFolderError('Escribe un nombre para renombrar la carpeta.')
+      return
+    }
+    setFolderBusy(true)
+    setFolderError('')
+    try {
+      await api.mediaFolders.rename(activeFolder.id, trimmed)
+      await loadFolders()
+      setNewFolderName('')
+      setNotice('Carpeta renombrada.')
+    } catch (err: any) {
+      setFolderError(err?.message ?? 'No se pudo renombrar la carpeta.')
+    } finally {
+      setFolderBusy(false)
+    }
+  }
+
+  const deleteActiveFolder = async () => {
+    if (!activeFolder || folderBusy) return
+    setDeleteFolderPrompt(activeFolder)
+  }
+
+  const confirmDeleteFolder = async () => {
+    if (!deleteFolderPrompt || folderBusy) return
+    setFolderBusy(true)
+    setFolderError('')
+    try {
+      const res = await api.mediaFolders.remove(deleteFolderPrompt.id)
+      selectFolder(null)
+      if (uploadFolderId === deleteFolderPrompt.id) setUploadFolderId(null)
+      setDeleteFolderPrompt(null)
+      await Promise.all([loadFolders(), loadAssets(1)])
+      setNotice(`${res.data.moved_count} imagen(es) volvieron a Banco general.`)
+    } catch (err: any) {
+      setFolderError(err?.message ?? 'No se pudo eliminar la carpeta.')
+    } finally {
+      setFolderBusy(false)
+    }
+  }
+
+  const moveSelectedAssets = async (folderId: string | null) => {
+    const assetsToMove = selectedItems.flatMap((item) => item.asset ? [item.asset] : [])
+    if (!assetsToMove.length) {
+      setError('Selecciona imágenes del banco para moverlas.')
+      return
+    }
+    if (assetsToMove.length !== selectedItems.length) {
+      setError('Las imágenes anteriores sin registro de asset no se pueden mover.')
+      return
+    }
+    setLoading(true)
+    setError('')
+    setNotice('')
+    try {
+      const res = await api.mediaAssets.move({
+        publication_id: publicationId,
+        asset_ids: assetsToMove.map((asset) => asset.id),
+        folder_id: folderId,
+      })
+      clearSelection()
+      await refreshBank(pageNumber)
+      setNotice(`${res.data.moved_count} imagen(es) movida(s).`)
+    } catch (err: any) {
+      setError(err?.message ?? 'No se pudieron mover las imágenes.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const deleteSelectedFromBank = async () => {
@@ -633,6 +796,7 @@ export default function MediaPicker({
           setOptimizationStatus(`Subiendo ${index + 1} de ${files.length}`)
           const res = await api.mediaAssets.upload({
             publication_id: publicationId,
+            folder_id: uploadTargetFolderId,
             file: optimized.displayFile,
             thumbnail: optimized.thumbnailFile,
             width: optimized.metadata.optimized_width,
@@ -651,6 +815,7 @@ export default function MediaPicker({
       }
       setUploadResults(results)
       setSelectedUploads(results.filter((item) => !item.error).map((item) => fileKey(item.file)))
+      await Promise.all([loadFolders(), loadAssets(1)])
     } finally {
       setOptimizing(false)
       setOptimizationStatus('')
@@ -858,6 +1023,31 @@ export default function MediaPicker({
     )
   }
 
+  if (deleteFolderPrompt) {
+    return (
+      <div style={styles.overlay} onClick={() => setDeleteFolderPrompt(null)}>
+        <div style={styles.modalSmall} onClick={(event) => event.stopPropagation()}>
+          <div style={styles.header}>
+            <h3 style={styles.title}>Eliminar carpeta</h3>
+            <button type="button" style={styles.close} onClick={() => setDeleteFolderPrompt(null)}>x</button>
+          </div>
+          <div style={styles.body}>
+            <div style={styles.warning}>
+              La carpeta "{deleteFolderPrompt.name}" se eliminará. Sus imágenes regresarán a Banco general.
+            </div>
+            {folderError && <div style={styles.error}>{folderError}</div>}
+            <div style={styles.actions}>
+              <button type="button" style={styles.secondary} disabled={folderBusy} onClick={() => setDeleteFolderPrompt(null)}>Cancelar</button>
+              <button type="button" style={styles.primary} disabled={folderBusy} onClick={() => void confirmDeleteFolder()}>
+                {folderBusy ? 'Eliminando...' : 'Eliminar carpeta'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={styles.overlay} onClick={onClose}>
       <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
@@ -882,6 +1072,51 @@ export default function MediaPicker({
 
         {tab === 'bank' && (
           <div style={styles.body}>
+            <div style={styles.folderPanel}>
+              <div style={styles.folderHeader}>
+                <span style={styles.folderTitle}>Carpeta activa: {activeFolderLabel}</span>
+                <span style={styles.meta}>{folders.length} carpeta(s)</span>
+              </div>
+              <div style={styles.folderNav}>
+                <button type="button" style={{ ...styles.folderButton, ...(activeFolderId === undefined ? styles.folderButtonActive : {}) }} onClick={() => selectFolder(undefined)}>
+                  Todas
+                </button>
+                <button type="button" style={{ ...styles.folderButton, ...(activeFolderId === null ? styles.folderButtonActive : {}) }} onClick={() => selectFolder(null)}>
+                  Banco general
+                </button>
+                {folders.map((folder) => (
+                  <button key={folder.id} type="button" style={{ ...styles.folderButton, ...(activeFolderId === folder.id ? styles.folderButtonActive : {}) }} onClick={() => selectFolder(folder.id)}>
+                    {folder.name} ({folder.asset_count})
+                  </button>
+                ))}
+              </div>
+              {folderError && <div style={styles.error}>{folderError}</div>}
+              <div style={styles.inlineForm}>
+                <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder={activeFolder ? 'Nuevo nombre de carpeta' : 'Nombre de carpeta'} style={styles.inlineInput} maxLength={80} />
+                <button type="button" style={styles.secondary} disabled={folderBusy || !newFolderName.trim()} onClick={() => void (activeFolder ? renameActiveFolder() : createFolder(newFolderName, 'bank'))}>
+                  {folderBusy ? 'Guardando...' : activeFolder ? 'Renombrar' : 'Crear'}
+                </button>
+                {activeFolder && (
+                  <button type="button" style={styles.remove} disabled={folderBusy} onClick={() => void deleteActiveFolder()}>
+                    Eliminar carpeta
+                  </button>
+                )}
+              </div>
+              {selectedCanMove && (
+                <div style={styles.inlineForm}>
+                  <span style={styles.meta}>Mover a</span>
+                  <button type="button" style={styles.secondary} disabled={loading} onClick={() => void moveSelectedAssets(null)}>Banco general</button>
+                  {folders.map((folder) => (
+                    <button key={folder.id} type="button" style={styles.secondary} disabled={loading} onClick={() => void moveSelectedAssets(folder.id)}>
+                      {folder.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {selectedHasLegacy && selectedItems.length > 0 && (
+                <div style={styles.warning}>Las imágenes anteriores sin registro de asset no se pueden mover.</div>
+              )}
+            </div>
             <input value={q} onChange={(event) => { setQ(event.target.value); setPageNumber(1) }} placeholder="Buscar por nombre" style={styles.search} />
             {error && <div style={styles.error}>{error}</div>}
             {notice && <div style={styles.success}>{notice}</div>}
@@ -928,6 +1163,22 @@ export default function MediaPicker({
 
         {tab === 'upload' && (
           <div style={styles.body}>
+            <div style={styles.folderPanel}>
+              <label style={styles.fieldLabel}>
+                Guardar en
+                <select value={uploadFolderId ?? 'unfiled'} onChange={(event) => setUploadFolderId(event.target.value === 'unfiled' ? null : event.target.value)} style={styles.select}>
+                  <option value="unfiled">Banco general</option>
+                  {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                </select>
+              </label>
+              <div style={styles.inlineForm}>
+                <input value={uploadFolderName} onChange={(event) => setUploadFolderName(event.target.value)} placeholder="Crear carpeta para esta subida" style={styles.inlineInput} maxLength={80} />
+                <button type="button" style={styles.secondary} disabled={folderBusy || !uploadFolderName.trim()} onClick={() => void createFolder(uploadFolderName, 'upload')}>
+                  {folderBusy ? 'Creando...' : 'Crear y seleccionar'}
+                </button>
+              </div>
+              {folderError && <div style={styles.error}>{folderError}</div>}
+            </div>
             <label style={styles.drop}>
               <input
                 ref={fileInputRef}
@@ -1069,6 +1320,7 @@ function normalizeUrlForCompare(url: string) {
 const styles: Record<string, React.CSSProperties> = {
   overlay: { position: 'fixed', inset: 0, zIndex: 5200, background: 'rgba(17, 24, 39, 0.58)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 },
   modal: { width: 760, maxWidth: '100%', height: '86vh', maxHeight: '86vh', background: '#fff', borderRadius: 8, boxShadow: '0 22px 70px rgba(15, 23, 42, 0.32)', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  modalSmall: { width: 460, maxWidth: '100%', background: '#fff', borderRadius: 8, boxShadow: '0 22px 70px rgba(15, 23, 42, 0.32)', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 18px', borderBottom: '1px solid #e5e7eb' },
   title: { margin: 0, fontSize: 16, fontWeight: 750, color: '#111827' },
   close: { border: 'none', background: 'transparent', fontSize: 18, color: '#6b7280', cursor: 'pointer', width: 30, height: 30 },
@@ -1077,6 +1329,16 @@ const styles: Record<string, React.CSSProperties> = {
   tabActive: { background: '#fff', color: '#111827', boxShadow: 'inset 0 -2px 0 #4F46E5' },
   body: { padding: 18, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minHeight: 0 },
   search: { height: 38, border: '1px solid #d1d5db', borderRadius: 7, padding: '0 12px', fontSize: 13, outline: 'none' },
+  folderPanel: { display: 'flex', flexDirection: 'column', gap: 10, border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, background: '#fff' },
+  folderHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  folderTitle: { fontSize: 13, fontWeight: 800, color: '#111827' },
+  folderNav: { display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 },
+  folderButton: { border: '1px solid #d1d5db', background: '#fff', color: '#374151', borderRadius: 7, padding: '7px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
+  folderButtonActive: { borderColor: '#4F46E5', background: '#eef2ff', color: '#3730a3' },
+  inlineForm: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  inlineInput: { height: 36, minWidth: 190, flex: '1 1 190px', border: '1px solid #d1d5db', borderRadius: 7, padding: '0 10px', fontSize: 13, outline: 'none' },
+  fieldLabel: { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, fontWeight: 800, color: '#374151' },
+  select: { height: 38, border: '1px solid #d1d5db', borderRadius: 7, padding: '0 10px', fontSize: 13, background: '#fff', color: '#111827' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(142px, 1fr))', gap: 10 },
   card: { border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', padding: 8, cursor: 'pointer', textAlign: 'left', minWidth: 0 },
   cardSelected: { borderColor: '#4F46E5', boxShadow: '0 0 0 2px rgba(79, 70, 229, 0.12)' },

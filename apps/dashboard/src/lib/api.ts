@@ -374,6 +374,7 @@ export type MediaAsset = {
   id: string
   tenant_id: string
   publication_id: string
+  folder_id?: string | null
   storage_bucket: string
   storage_key: string
   public_url: string
@@ -406,6 +407,16 @@ export type MediaAsset = {
   optimized_at?: string | null
   is_hidden?: number | null
   deleted_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type MediaFolder = {
+  id: string
+  tenant_id: string
+  publication_id: string
+  name: string
+  asset_count: number
   created_at: string
   updated_at: string
 }
@@ -834,13 +845,14 @@ export const api = {
   },
 
   mediaAssets: {
-    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number; needs_thumbnail?: boolean; needs_optimization?: boolean }) => {
+    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number; folder_id?: string | null; needs_thumbnail?: boolean; needs_optimization?: boolean }) => {
       const qs = new URLSearchParams()
       qs.set('publication_id', params.publication_id)
       if (params.q) qs.set('q', params.q)
       if (params.limit != null) qs.set('limit', String(params.limit))
       if (params.cursor) qs.set('cursor', params.cursor)
       if (params.page != null) qs.set('page', String(params.page))
+      if (params.folder_id !== undefined) qs.set('folder_id', params.folder_id ?? 'unfiled')
       if (params.needs_thumbnail) qs.set('needs_thumbnail', 'true')
       if (params.needs_optimization) qs.set('needs_optimization', 'true')
       return request<{
@@ -859,9 +871,15 @@ export const api = {
         if (data?.data?.url) data.data.url = toCanvasSafeAssetUrl(data.data.url)
         return data
       }),
+    move: (input: { publication_id: string; asset_ids: string[]; folder_id: string | null }) =>
+      request<{ success: true; data: { moved_count: number; folder_id: string | null } }>('/api/upload/media-assets/move', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
     upload: (input: {
       publication_id: string
       file: File
+      folder_id?: string | null
       thumbnail?: File | null
       width?: number | null
       height?: number | null
@@ -871,6 +889,7 @@ export const api = {
       const form = new FormData()
       form.append('publication_id', input.publication_id)
       form.append('file', input.file)
+      if (input.folder_id !== undefined) form.append('folder_id', input.folder_id ?? 'unfiled')
       if (input.thumbnail) form.append('thumbnail', input.thumbnail)
       if (input.width != null) form.append('width', String(input.width))
       if (input.height != null) form.append('height', String(input.height))
@@ -1006,6 +1025,27 @@ export const api = {
         method: 'DELETE',
       })
     },
+  },
+
+  mediaFolders: {
+    list: (publicationId: string) => {
+      const qs = new URLSearchParams({ publication_id: publicationId })
+      return request<{ success: true; data: MediaFolder[] }>(`/api/upload/media-folders?${qs}`)
+    },
+    create: (input: { publication_id: string; name: string }) =>
+      request<{ success: true; data: MediaFolder }>('/api/upload/media-folders', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    rename: (folderId: string, name: string) =>
+      request<{ success: true; data: MediaFolder }>(`/api/upload/media-folders/${encodeURIComponent(folderId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      }),
+    remove: (folderId: string) =>
+      request<{ success: true; data: { deleted: true; moved_count: number } }>(`/api/upload/media-folders/${encodeURIComponent(folderId)}`, {
+        method: 'DELETE',
+      }),
   },
 
   upload: (file: File) => {
