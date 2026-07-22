@@ -120,3 +120,63 @@ test('rectangulos y poligonos shape abren reemplazo de imagen', async () => {
     await h.cleanup()
   }
 })
+
+test('reemplazo fallido no cierra la intencion y exitoso si la limpia', async () => {
+  const h = await loadMediaPickerIntent()
+  try {
+    assert.equal(h.shouldClearMediaPickerIntentAfterSelection({ intentType: 'replace-object', applied: false }), false)
+    assert.equal(h.shouldClearMediaPickerIntentAfterSelection({ intentType: 'replace-object', applied: true }), true)
+    assert.equal(h.shouldClearMediaPickerIntentAfterSelection({ intentType: 'insert-images', applied: true }), true)
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('fallback de reemplazo intenta display antes de public_url', async () => {
+  const h = await loadMediaPickerIntent()
+  try {
+    const source = h.resolveMediaPickerReplacementSource('selected-url', {
+      display_url: 'display-url',
+      optimized_url: 'optimized-url',
+      public_url: 'public-url',
+      original_url: 'original-url',
+    })
+    assert.deepEqual(source.loadCandidates, ['display-url', 'optimized-url', 'public-url', 'original-url', 'selected-url'])
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('data.src conserva URL canonica de reemplazo', async () => {
+  const h = await loadMediaPickerIntent()
+  try {
+    const source = h.resolveMediaPickerReplacementSource('selected-display-url', {
+      display_url: 'selected-display-url',
+      public_url: 'canonical-public-url',
+      original_url: 'original-url',
+    })
+    assert.equal(source.canonicalUrl, 'canonical-public-url')
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('rememberMediaAssets ocurre solo despues del exito de reemplazo', async () => {
+  const h = await loadMediaPickerIntent()
+  try {
+    assert.equal(h.shouldRememberMediaAssetsAfterSelection({ intentType: 'replace-object', applied: false }), false)
+    assert.equal(h.shouldRememberMediaAssetsAfterSelection({ intentType: 'replace-object', applied: true }), true)
+    assert.equal(h.shouldRememberMediaAssetsAfterSelection({ intentType: 'widget-gallery-add', applied: true }), true)
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('error de reemplazo queda disponible para mostrar en MediaPicker', async () => {
+  const h = await loadMediaPickerIntent()
+  try {
+    assert.equal(h.MEDIA_PICKER_REPLACEMENT_ERROR, 'No se pudo aplicar la imagen seleccionada al objeto.')
+  } finally {
+    await h.cleanup()
+  }
+})
