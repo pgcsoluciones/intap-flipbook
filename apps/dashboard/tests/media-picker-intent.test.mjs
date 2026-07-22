@@ -108,3 +108,15 @@ test('fallo de sessionStorage no rompe los helpers del selector', async () => {
     await h.cleanup()
   }
 })
+
+test('rectangulos y poligonos shape abren reemplazo de imagen', async () => {
+  const h = await loadMediaPickerIntent()
+  try {
+    assert.equal(h.shouldOpenImageReplacementForObject({ kind: 'shape', type: 'rect' }), true)
+    assert.equal(h.shouldOpenImageReplacementForObject({ kind: 'shape', type: 'polygon' }), true)
+    assert.equal(h.shouldOpenImageReplacementForObject({ kind: 'shape', type: 'circle' }), false)
+    assert.equal(h.shouldOpenImageReplacementForObject({ kind: 'image', type: 'image' }), true)
+  } finally {
+    await h.cleanup()
+  }
+})
