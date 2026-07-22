@@ -1,5 +1,5 @@
 export const EDITOR_HISTORY_VERSION = 1
-export const MAX_UNDO_STEPS = 10
+export const MAX_UNDO_STEPS = 20
 export const MAX_HISTORY_ENTRIES = MAX_UNDO_STEPS + 1
 
 export type EditorHistory = {

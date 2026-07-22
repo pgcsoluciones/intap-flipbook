@@ -58,27 +58,38 @@ test('historial nuevo contiene el estado inicial', async () => {
   }
 })
 
-test('guarda maximo 11 snapshots', async () => {
+test('guarda maximo 21 snapshots', async () => {
   const h = await loadHistory()
   try {
     let history = h.createEditorHistory('pub1', 'page1', snap(0))
-    for (let i = 1; i <= 14; i++) history = h.appendEditorHistorySnapshot(history, snap(i))
-    assert.equal(history.entries.length, 11)
-    assert.equal(history.entries[0], snap(4))
-    assert.equal(history.index, 10)
+    for (let i = 1; i <= 25; i++) history = h.appendEditorHistorySnapshot(history, snap(i))
+    assert.equal(history.entries.length, 21)
+    assert.equal(history.entries[0], snap(5))
+    assert.equal(history.index, 20)
   } finally {
     await h.cleanup()
   }
 })
 
-test('permite 10 pasos de Deshacer', async () => {
+test('permite 20 pasos de Deshacer y Rehacer', async () => {
   const h = await loadHistory()
   try {
     let history = h.createEditorHistory('pub1', 'page1', snap(0))
-    for (let i = 1; i <= 10; i++) history = h.appendEditorHistorySnapshot(history, snap(i))
-    for (let i = 0; i < 10; i++) history = h.moveEditorHistoryIndex(history, -1)
+    for (let i = 1; i <= 25; i++) history = h.appendEditorHistorySnapshot(history, snap(i))
+    assert.equal(history.entries.length, 21)
+    assert.equal(history.index, 20)
+
+    for (let i = 0; i < 20; i++) history = h.moveEditorHistoryIndex(history, -1)
     assert.equal(history.index, 0)
-    assert.equal(h.getEditorHistoryCurrentSnapshot(history), snap(0))
+    assert.equal(h.getEditorHistoryCurrentSnapshot(history), snap(5))
+
+    const afterExtraUndo = h.moveEditorHistoryIndex(history, -1)
+    assert.equal(afterExtraUndo.index, 0)
+    assert.equal(h.getEditorHistoryCurrentSnapshot(afterExtraUndo), snap(5))
+
+    for (let i = 0; i < 20; i++) history = h.moveEditorHistoryIndex(history, 1)
+    assert.equal(history.index, 20)
+    assert.equal(h.getEditorHistoryCurrentSnapshot(history), snap(25))
   } finally {
     await h.cleanup()
   }
