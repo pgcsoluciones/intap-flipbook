@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, toCanvasSafeAssetUrl, type MediaAsset, type MediaFolder } from '../lib/api'
 import { optimizeImageFile, type OptimizedImageResult } from '../lib/imageOptimization'
+import { normalizeMediaPickerFolderId, type MediaPickerFolderId } from '../lib/mediaPickerIntent'
 
 const ACCEPT_IMAGE = 'image/jpeg,image/png,image/webp,image/svg+xml,image/gif'
 const ACCEPT_SVG = '.svg,image/svg+xml'
@@ -48,6 +49,7 @@ type MediaPickerProps = {
   onRemoveLegacyUrls?: (urls: string[]) => void | Promise<void>
   onPdfSelect?: (file: File, onProgress?: (message: string) => void) => void | { confirmedCount?: number } | Promise<void | { confirmedCount?: number }>
   onGoToPages?: () => void
+  onFolderChange?: (folderId: MediaPickerFolderId) => void
 }
 
 type PickerItem = {
@@ -282,6 +284,7 @@ export default function MediaPicker({
   onRemoveLegacyUrls,
   onPdfSelect,
   onGoToPages,
+  onFolderChange,
 }: MediaPickerProps) {
   const [tab, setTab] = useState<'bank' | 'upload' | 'pdf'>('bank')
   const [q, setQ] = useState('')
@@ -324,10 +327,17 @@ export default function MediaPicker({
   const loadSeqRef = useRef(0)
   const folderSeqRef = useRef(0)
   const dragMoveAssetIdsRef = useRef<string[]>([])
+  const onFolderChangeRef = useRef<typeof onFolderChange>(onFolderChange)
+  const requestedAssetPageRef = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const pdfInputRef = useRef<HTMLInputElement | null>(null)
+  const [foldersLoaded, setFoldersLoaded] = useState(false)
   const isMulti = multiple ?? mode !== 'image'
   const accept = mode === 'svg' ? ACCEPT_SVG : ACCEPT_IMAGE
+
+  useEffect(() => {
+    onFolderChangeRef.current = onFolderChange
+  }, [onFolderChange])
 
   useEffect(() => {
     return () => {
@@ -342,6 +352,7 @@ export default function MediaPicker({
     setPageNumber(1)
     setAssets([])
     setFolders([])
+    setFoldersLoaded(false)
     setActiveFolderId(initialFolderId)
     setUploadFolderId(null)
     setNewFolderName('')
@@ -381,6 +392,7 @@ export default function MediaPicker({
     if (!open || !publicationId) return
     const seq = folderSeqRef.current + 1
     folderSeqRef.current = seq
+    setFoldersLoaded(false)
     setFolderError('')
     try {
       const [res, totalRes] = await Promise.all([
@@ -388,15 +400,29 @@ export default function MediaPicker({
         api.mediaAssets.list({ publication_id: publicationId, limit: 1, page: 1 }),
       ])
       if (seq !== folderSeqRef.current) return
-      setFolders(res.data ?? [])
+      const nextFolders = res.data ?? []
+      setFolders(nextFolders)
       setAllAssetTotal(totalRes.page?.total ?? 0)
+      setActiveFolderId((current) => {
+        const normalized = normalizeMediaPickerFolderId(current, nextFolders)
+        if (normalized !== current) {
+          setPageNumber(1)
+          onFolderChangeRef.current?.(normalized)
+        }
+        return normalized
+      })
+      setFoldersLoaded(true)
     } catch (err: any) {
-      if (seq === folderSeqRef.current) setFolderError(err?.message ?? 'No se pudieron cargar las carpetas.')
+      if (seq === folderSeqRef.current) {
+        setFolderError(err?.message ?? 'No se pudieron cargar las carpetas.')
+        setActiveFolderId(null)
+        setFoldersLoaded(true)
+      }
     }
   }, [open, publicationId])
 
   const loadAssets = useCallback(async (nextPage: number) => {
-    if (!open || !publicationId) return
+    if (!open || !publicationId || !foldersLoaded) return
     const seq = loadSeqRef.current + 1
     loadSeqRef.current = seq
     setLoading(true)
@@ -427,12 +453,14 @@ export default function MediaPicker({
     } finally {
       if (seq === loadSeqRef.current) setLoading(false)
     }
-  }, [activeFolderId, open, publicationId, q])
+  }, [activeFolderId, foldersLoaded, open, publicationId, q])
 
   useEffect(() => {
     if (!open) return
     const handle = window.setTimeout(() => {
-      void loadAssets(1)
+      const nextPage = requestedAssetPageRef.current
+      requestedAssetPageRef.current = 1
+      void loadAssets(nextPage)
     }, 200)
     return () => window.clearTimeout(handle)
   }, [loadAssets, open])
@@ -530,7 +558,8 @@ export default function MediaPicker({
   }
 
   const refreshBank = async (nextPage = 1) => {
-    await Promise.all([loadFolders(), loadAssets(nextPage)])
+    requestedAssetPageRef.current = nextPage
+    await loadFolders()
   }
 
   const selectFolder = (folderId: ActiveFolderId) => {
@@ -540,6 +569,7 @@ export default function MediaPicker({
     setError('')
     setNotice('')
     setRenameFolderName('')
+    onFolderChangeRef.current?.(folderId)
   }
 
   const createFolder = async (name: string, target: 'bank' | 'upload') => {
@@ -601,7 +631,7 @@ export default function MediaPicker({
       selectFolder(null)
       if (uploadFolderId === deleteFolderPrompt.id) setUploadFolderId(null)
       setDeleteFolderPrompt(null)
-      await Promise.all([loadFolders(), loadAssets(1)])
+      await refreshBank(1)
       setNotice(`${res.data.moved_count} imagen(es) volvieron a Banco general.`)
     } catch (err: any) {
       setFolderError(err?.message ?? 'No se pudo eliminar la carpeta.')
