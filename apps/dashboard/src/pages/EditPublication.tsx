@@ -3604,7 +3604,9 @@ export default function EditPublication() {
     if (shouldOpenImageReplacementForObject({ kind, type: o.type })) {
       const pageId = pageIdRef.current
       if (!pageId || !c) return
+      const hadElementId = typeof o.data?.elementId === 'string' && !!o.data.elementId
       const elementId = ensureFabricElementIdForPicker(o)
+      if (!hadElementId) recordCurrentCanvasChange()
       openMediaPicker({ type: 'replace-object', pageId, elementId, canvasInstance: c })
       return
     }
@@ -3626,7 +3628,9 @@ export default function EditPublication() {
     replaceTargetRef.current = null
     const pageId = pageIdRef.current
     if (!pageId || !c) return
+    const hadElementId = typeof o.data?.elementId === 'string' && !!o.data.elementId
     const elementId = ensureFabricElementIdForPicker(o)
+    if (!hadElementId) recordCurrentCanvasChange()
     openMediaPicker({ type: 'replace-object', pageId, elementId, canvasInstance: c })
   }
 
@@ -3798,7 +3802,7 @@ export default function EditPublication() {
     elementId: string,
   ): Promise<ReplacementResult> {
     const c = canvasInstance
-    const o = targetObject
+    let o = targetObject
     // Recuadro mostrado actual (ancho y alto ya escalados) que debemos replicar.
     const targetW = o.getScaledWidth?.() ?? (o.width ?? 0) * (o.scaleX ?? 1)
     const targetH = o.getScaledHeight?.() ?? (o.height ?? 0) * (o.scaleY ?? 1)
@@ -3807,7 +3811,7 @@ export default function EditPublication() {
     const prevFlipX = !!o.flipX, prevFlipY = !!o.flipY
     const prevOriginX = o.originX ?? 'left', prevOriginY = o.originY ?? 'top'
     const prevData = { ...(o.data ?? {}), kind: 'image', src: canonicalUrl }
-    const idx = c.getObjects().indexOf(o)
+    let idx = c.getObjects().indexOf(o)
 
     const initialInvalid = validateReplacementTarget(o, c, pageId, elementId)
     if (initialInvalid) return initialInvalid
@@ -3836,6 +3840,16 @@ export default function EditPublication() {
         })
         continue
       }
+
+      // Fabric puede rehidratar el objeto mientras la imagen se descarga.
+      // Se vuelve a localizar por elementId para no depender de la instancia anterior.
+      const currentTarget = findCanvasObjectByElementId(c, elementId)
+      if (!currentTarget) {
+        return { ok: false, cause: 'target-not-found', attemptedUrl }
+      }
+
+      o = currentTarget
+      idx = c.getObjects().indexOf(o)
 
       const asyncInvalid = validateReplacementTarget(o, c, pageId, elementId)
       if (asyncInvalid) return { ...asyncInvalid, attemptedUrl }
@@ -4385,7 +4399,9 @@ export default function EditPublication() {
                 const pageId = pageIdRef.current
                 const canvas = fabricRef.current
                 if (!pageId || !canvas || !canvas.getObjects?.().includes(obj)) return
+                const hadElementId = typeof obj.data?.elementId === 'string' && !!obj.data.elementId
                 const elementId = ensureFabricElementIdForPicker(obj)
+                if (!hadElementId) recordCurrentCanvasChange()
                 openMediaPicker({ type: 'replace-object', pageId, elementId, canvasInstance: canvas })
               }}
               openWidgetGalleryMediaPicker={(obj, request) => {
