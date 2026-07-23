@@ -2220,11 +2220,51 @@ export default function EditPublication() {
 
     const publicationId = id ?? ''
     const pageHistoryKey = publicationId ? editorHistoryStorageKey(publicationId, activePage.id) : null
-    const restoredHistory = pageHistoryKey
-      ? historyByKeyRef.current[pageHistoryKey] ?? loadEditorHistoryFromSession(getEditorHistorySessionStorage(), publicationId, activePage.id)
+    const restoredHistoryCandidate = pageHistoryKey
+      ? historyByKeyRef.current[pageHistoryKey]
+        ?? loadEditorHistoryFromSession(
+          getEditorHistorySessionStorage(),
+          publicationId,
+          activePage.id,
+        )
       : null
+
+    const serverSnapshot = activePage.canvas_json
+      ? (
+          typeof activePage.canvas_json === 'string'
+            ? activePage.canvas_json
+            : JSON.stringify(activePage.canvas_json)
+        )
+      : null
+
+    const restoredSnapshotCandidate =
+      getEditorHistoryCurrentSnapshot(restoredHistoryCandidate)
+
+    // El historial solo se restaura cuando representa exactamente el mismo
+    // canvas que confirmó el servidor. Un snapshot distinto es obsoleto.
+    const restoredHistory =
+      restoredHistoryCandidate
+      && restoredSnapshotCandidate === serverSnapshot
+        ? restoredHistoryCandidate
+        : null
+
+    if (
+      pageHistoryKey
+      && restoredHistoryCandidate
+      && !restoredHistory
+    ) {
+      delete historyByKeyRef.current[pageHistoryKey]
+
+      removeEditorHistoryFromSession(
+        getEditorHistorySessionStorage(),
+        publicationId,
+        activePage.id,
+      )
+    }
+
     syncActiveHistory(restoredHistory, !!restoredHistory)
-    const restoredSnapshot = getEditorHistoryCurrentSnapshot(restoredHistory)
+    const restoredSnapshot =
+      getEditorHistoryCurrentSnapshot(restoredHistory)
 
     const W = CANVAS_W
     const H = CANVAS_H

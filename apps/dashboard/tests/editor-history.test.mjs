@@ -58,37 +58,37 @@ test('historial nuevo contiene el estado inicial', async () => {
   }
 })
 
-test('guarda maximo 21 snapshots', async () => {
+test('guarda maximo 11 snapshots', async () => {
   const h = await loadHistory()
   try {
     let history = h.createEditorHistory('pub1', 'page1', snap(0))
     for (let i = 1; i <= 25; i++) history = h.appendEditorHistorySnapshot(history, snap(i))
-    assert.equal(history.entries.length, 21)
-    assert.equal(history.entries[0], snap(5))
-    assert.equal(history.index, 20)
+    assert.equal(history.entries.length, 11)
+    assert.equal(history.entries[0], snap(15))
+    assert.equal(history.index, 10)
   } finally {
     await h.cleanup()
   }
 })
 
-test('permite 20 pasos de Deshacer y Rehacer', async () => {
+test('permite 10 pasos de Deshacer y Rehacer', async () => {
   const h = await loadHistory()
   try {
     let history = h.createEditorHistory('pub1', 'page1', snap(0))
     for (let i = 1; i <= 25; i++) history = h.appendEditorHistorySnapshot(history, snap(i))
-    assert.equal(history.entries.length, 21)
-    assert.equal(history.index, 20)
+    assert.equal(history.entries.length, 11)
+    assert.equal(history.index, 10)
 
-    for (let i = 0; i < 20; i++) history = h.moveEditorHistoryIndex(history, -1)
+    for (let i = 0; i < 10; i++) history = h.moveEditorHistoryIndex(history, -1)
     assert.equal(history.index, 0)
-    assert.equal(h.getEditorHistoryCurrentSnapshot(history), snap(5))
+    assert.equal(h.getEditorHistoryCurrentSnapshot(history), snap(15))
 
     const afterExtraUndo = h.moveEditorHistoryIndex(history, -1)
     assert.equal(afterExtraUndo.index, 0)
-    assert.equal(h.getEditorHistoryCurrentSnapshot(afterExtraUndo), snap(5))
+    assert.equal(h.getEditorHistoryCurrentSnapshot(afterExtraUndo), snap(15))
 
-    for (let i = 0; i < 20; i++) history = h.moveEditorHistoryIndex(history, 1)
-    assert.equal(history.index, 20)
+    for (let i = 0; i < 10; i++) history = h.moveEditorHistoryIndex(history, 1)
+    assert.equal(history.index, 10)
     assert.equal(h.getEditorHistoryCurrentSnapshot(history), snap(25))
   } finally {
     await h.cleanup()
@@ -361,7 +361,7 @@ test('historial v1 anterior no puede sustituir el canvas actual del servidor', a
     )
 
     assert.equal(
-      h.editorHistoryStorageKey('pub1', 'page1').includes('_v2:'),
+      h.editorHistoryStorageKey('pub1', 'page1').includes('_v3:'),
       true,
     )
   } finally {
@@ -397,4 +397,84 @@ test('persistCanvas sincroniza el snapshot antes de encolar el guardado', async 
   assert.notEqual(syncIndex, -1)
   assert.notEqual(queueIndex, -1)
   assert.equal(syncIndex < queueIndex, true)
+})
+
+
+test('el historial queda limitado a 10 pasos de Deshacer', async () => {
+  const h = await loadHistory()
+  try {
+    assert.equal(h.MAX_UNDO_STEPS, 10)
+    assert.equal(h.MAX_HISTORY_ENTRIES, 11)
+
+    let history = h.createEditorHistory('pub1', 'page1', snap(0))
+
+    for (let index = 1; index <= 30; index += 1) {
+      history = h.appendEditorHistorySnapshot(
+        history,
+        snap(index),
+      )
+    }
+
+    assert.equal(history.entries.length, 11)
+    assert.equal(history.index, 10)
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('fallo de cuota elimina la copia obsoleta de sessionStorage', async () => {
+  const h = await loadHistory()
+  try {
+    const removed = []
+    const storage = {
+      getItem() {
+        return null
+      },
+      setItem() {
+        throw new Error('quota')
+      },
+      removeItem(key) {
+        removed.push(key)
+      },
+    }
+
+    const history = h.createEditorHistory(
+      'pub1',
+      'page1',
+      snap(1),
+    )
+
+    assert.equal(
+      h.saveEditorHistoryToSession(storage, history),
+      false,
+    )
+
+    assert.deepEqual(
+      removed,
+      [h.editorHistoryStorageKey('pub1', 'page1')],
+    )
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('el Editor descarta historial local que no coincide con servidor', async () => {
+  const source = await readFile(
+    'apps/dashboard/src/pages/EditPublication.tsx',
+    'utf8',
+  )
+
+  assert.equal(
+    source.includes(
+      'restoredSnapshotCandidate === serverSnapshot',
+    ),
+    true,
+  )
+
+  assert.equal(
+    source.includes(
+      'removeEditorHistoryFromSession(',
+    ),
+    true,
+  )
 })

@@ -1,5 +1,5 @@
-export const EDITOR_HISTORY_VERSION = 2
-export const MAX_UNDO_STEPS = 20
+export const EDITOR_HISTORY_VERSION = 3
+export const MAX_UNDO_STEPS = 10
 export const MAX_HISTORY_ENTRIES = MAX_UNDO_STEPS + 1
 
 export type EditorHistory = {
@@ -142,6 +142,18 @@ export function saveEditorHistoryToSession(
     storage.setItem(editorHistoryStorageKey(history.publicationId, history.pageId), JSON.stringify(history))
     return true
   } catch (error) {
+    // Una clave vieja no puede permanecer disponible después de que falle
+    // el guardado de la versión nueva. De lo contrario, al regresar al
+    // Editor podría sustituir el canvas confirmado por el servidor.
+    try {
+      storage.removeItem(
+        editorHistoryStorageKey(
+          history.publicationId,
+          history.pageId,
+        ),
+      )
+    } catch {}
+
     warnStorageFailure(error)
     return false
   }
