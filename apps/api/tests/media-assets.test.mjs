@@ -56,9 +56,14 @@ async function loadUploadRouter() {
 }
 
 class FakeR2 {
-  constructor() {
+  constructor(seed = {}) {
     this.puts = []
     this.deletes = []
+    this.objects = new Map(seed.objects ?? [])
+  }
+
+  async get(key) {
+    return this.objects.get(key) ?? null
   }
 
   async put(key, body, options) {
@@ -84,6 +89,7 @@ class FakeD1 {
     this.mediaAssets = seed.mediaAssets ?? []
     this.mediaFolders = seed.mediaFolders ?? []
     this.addUsageOnSecondUsageCheck = seed.addUsageOnSecondUsageCheck ?? false
+    this.maxBoundParams = seed.maxBoundParams ?? null
     this.pageUsageQueryCount = 0
   }
 
@@ -100,6 +106,9 @@ class FakeStatement {
   }
 
   bind(...params) {
+    if (this.db.maxBoundParams && params.length > this.db.maxBoundParams) {
+      throw new Error(`too many bound SQL parameters: ${params.length}`)
+    }
     this.params = params
     return this
   }
@@ -576,6 +585,39 @@ async function requestUpload(db, r2, path, init = {}, userId = 'user-1') {
   }
 }
 
+async function requestPublicUpload(r2, path, method = 'GET') {
+  const { upload, cleanup } = await loadUploadRouter()
+
+  try {
+    const response = await upload.request(path, { method }, {
+      DB: new FakeD1(),
+      MEDIA: r2,
+      JWT_SECRET: SECRET,
+      R2_PUBLIC_BASE_URL: 'https://media.example.test',
+    })
+
+    const body = new Uint8Array(await response.arrayBuffer())
+
+    return {
+      status: response.status,
+      body,
+      contentType: response.headers.get('content-type'),
+      etag: response.headers.get('etag'),
+      accessControlAllowOrigin: response.headers.get(
+        'access-control-allow-origin',
+      ),
+      crossOriginResourcePolicy: response.headers.get(
+        'cross-origin-resource-policy',
+      ),
+      timingAllowOrigin: response.headers.get('timing-allow-origin'),
+      cacheControl: response.headers.get('cache-control'),
+      contentTypeOptions: response.headers.get('x-content-type-options'),
+    }
+  } finally {
+    await cleanup()
+  }
+}
+
 function form(publicationId, file) {
   const data = new FormData()
   data.append('publication_id', publicationId)
@@ -631,6 +673,55 @@ function multiForm(publicationId, files) {
 function pngFile(name, content) {
   return new File([content], name, { type: 'image/png' })
 }
+
+test('public upload allows cross-origin Fabric rendering and immutable cache', async () => {
+  const key = 'uploads/user-1/public-image.webp'
+
+  const object = {
+    body: new Uint8Array([1, 2, 3, 4]),
+    httpEtag: '"public-etag"',
+    writeHttpMetadata(headers) {
+      headers.set('content-type', 'image/webp')
+      headers.set('content-length', '4')
+    },
+  }
+
+  const r2 = new FakeR2({
+    objects: [[key, object]],
+  })
+
+  const getResult = await requestPublicUpload(
+    r2,
+    '/uploads/user-1/public-image.webp',
+  )
+
+  assert.equal(getResult.status, 200)
+  assert.equal(getResult.contentType, 'image/webp')
+  assert.equal(getResult.etag, '"public-etag"')
+  assert.equal(getResult.accessControlAllowOrigin, '*')
+  assert.equal(getResult.crossOriginResourcePolicy, 'cross-origin')
+  assert.equal(getResult.timingAllowOrigin, '*')
+  assert.equal(
+    getResult.cacheControl,
+    'public, max-age=31536000, immutable',
+  )
+  assert.equal(getResult.contentTypeOptions, 'nosniff')
+  assert.deepEqual([...getResult.body], [1, 2, 3, 4])
+
+  const headResult = await requestPublicUpload(
+    r2,
+    '/uploads/user-1/public-image.webp',
+    'HEAD',
+  )
+
+  assert.equal(headResult.status, 200)
+  assert.equal(headResult.accessControlAllowOrigin, '*')
+  assert.equal(
+    headResult.cacheControl,
+    'public, max-age=31536000, immutable',
+  )
+  assert.equal(headResult.body.byteLength, 0)
+})
 
 test('first upload creates media_asset, puts once and returns reused false', async () => {
   const db = new FakeD1()
@@ -1054,6 +1145,49 @@ test('resolve thumbnails returns visible current publication assets without R2 r
   })
   assert.equal(result.body.data.variants['https://media.example.test/uploads/user-1/ready-1.png'].display_url, 'https://media.example.test/uploads/user-1/ready-1.png')
   assert.deepEqual(result.body.data.assets.map((asset) => asset.id).sort(), ['pending-1', 'ready-1'])
+  assert.equal(r2.puts.length, 0)
+})
+
+test('resolve thumbnails divide 120 URLs sin superar 100 parametros enlazados', async () => {
+  const mediaAssets = Array.from({ length: 120 }, (_, index) => {
+    const number = index + 1
+    const publicUrl = `https://media.example.test/uploads/user-1/batch-${number}.jpg`
+    return {
+      id: `batch-${number}`,
+      tenant_id: 'user-1',
+      publication_id: 'pub-1',
+      storage_bucket: 'MEDIA',
+      storage_key: `uploads/user-1/batch-${number}.jpg`,
+      public_url: publicUrl,
+      original_name: `batch-${number}.jpg`,
+      mime_type: 'image/jpeg',
+      size_bytes: 1,
+      sha256: `batch-sha-${number}`,
+      width: null,
+      height: null,
+      thumbnail_url: `https://media.example.test/uploads/user-1/batch-${number}-thumb.webp`,
+      created_at: '2026-07-23T00:00:00.000Z',
+      updated_at: '2026-07-23T00:00:00.000Z',
+    }
+  })
+
+  const db = new FakeD1({
+    mediaAssets,
+    maxBoundParams: 100,
+  })
+  const r2 = new FakeR2()
+
+  const result = await requestUpload(db, r2, '/media-assets/resolve-thumbnails', {
+    method: 'POST',
+    body: JSON.stringify({
+      publication_id: 'pub-1',
+      public_urls: mediaAssets.map((asset) => asset.public_url),
+    }),
+  })
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.data.assets.length, 120)
+  assert.equal(Object.keys(result.body.data.thumbnails).length, 120)
   assert.equal(r2.puts.length, 0)
 })
 

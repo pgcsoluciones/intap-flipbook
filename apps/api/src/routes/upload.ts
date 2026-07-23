@@ -30,6 +30,15 @@ async function servePublicUpload(c: any) {
   obj.writeHttpMetadata(headers)
   headers.set('etag', obj.httpEtag)
 
+  // Los assets usan claves únicas e inmutables. Fabric.js los solicita con
+  // crossOrigin="anonymous", por lo que la respuesta debe autorizar lectura
+  // desde Viewer, Dashboard, Preview, dominios personalizados y desarrollo local.
+  headers.set('Access-Control-Allow-Origin', '*')
+  headers.set('Cross-Origin-Resource-Policy', 'cross-origin')
+  headers.set('Timing-Allow-Origin', '*')
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable')
+  headers.set('X-Content-Type-Options', 'nosniff')
+
   if (c.req.method === 'HEAD') {
     return new Response(null, { status: 200, headers })
   }
@@ -1001,18 +1010,28 @@ upload.post('/media-assets/resolve-thumbnails', async (c) => {
   if (!publication) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
   if (!urls.length) return c.json({ success: true, data: { thumbnails: {}, displays: {}, variants: {}, assets: [] } })
 
-  const placeholders = urls.map(() => '?').join(',')
-  const result = await c.env.DB.prepare(
-    `SELECT *
-     FROM media_assets
-     WHERE tenant_id = ?
-       AND publication_id = ?
-       AND public_url IN (${placeholders})
-       AND (is_hidden IS NULL OR is_hidden = 0)
-       AND deleted_at IS NULL`,
-  ).bind(userId, publicationId, ...urls).all<MediaAssetRow>()
+  // D1 limita la cantidad de parámetros por sentencia. Se procesan lotes
+  // suficientemente pequeños para conservar margen para tenant y publicación.
+  const URL_BATCH_SIZE = 80
+  const rows: MediaAssetRow[] = []
 
-  const assets = (result.results ?? []).map(mediaAssetResponse)
+  for (let offset = 0; offset < urls.length; offset += URL_BATCH_SIZE) {
+    const batch = urls.slice(offset, offset + URL_BATCH_SIZE)
+    const placeholders = batch.map(() => '?').join(',')
+    const result = await c.env.DB.prepare(
+      `SELECT *
+       FROM media_assets
+       WHERE tenant_id = ?
+         AND publication_id = ?
+         AND public_url IN (${placeholders})
+         AND (is_hidden IS NULL OR is_hidden = 0)
+         AND deleted_at IS NULL`,
+    ).bind(userId, publicationId, ...batch).all<MediaAssetRow>()
+
+    rows.push(...(result.results ?? []))
+  }
+
+  const assets = rows.map(mediaAssetResponse)
   const thumbnails: Record<string, string> = {}
   const displays: Record<string, string> = {}
   const variants: Record<string, { original_url: string; display_url: string; thumbnail_url: string | null; optimized_url: string | null }> = {}

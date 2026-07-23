@@ -60,7 +60,9 @@ if (!slug) {
 const viewerRuntime = window.IntapViewerRuntime || {
   selectPageImageUrl: (page) => page?.optimized_url || page?.display_url || page?.image_url || '',
   nearbyRealPageNumbers: (currentRealPage, totalPages) => [currentRealPage - 1, currentRealPage, currentRealPage + 1].filter((pageNumber) => pageNumber >= 1 && pageNumber <= totalPages),
-  createImagePreloader: () => ({ preload: () => null, has: () => false, size: () => 0 }),
+  startupRealPageNumbers: (totalPages, portrait) => Array.from({ length: Math.min(totalPages, portrait ? 2 : 3) }, (_, index) => index + 1),
+  targetRealPageNumbers: (targetRealPage, totalPages) => [targetRealPage, targetRealPage + 1].filter((pageNumber) => pageNumber >= 1 && pageNumber <= totalPages),
+  createImagePreloader: () => ({ preload: () => Promise.resolve(null), has: () => false, size: () => 0 }),
 }
 const imagePreloader = viewerRuntime.createImagePreloader(Image)
 
@@ -2087,7 +2089,7 @@ async function init() {
     // se recorta a su caja, sin excepción 3D. El recorte/zoom se replica con
     // background-size + background-position (idéntico a computeCover del editor).
     const sheet = document.createElement('div')
-    sheet.style.cssText = 'position:absolute;inset:0;overflow:hidden;background-repeat:no-repeat;background-position:center;background-size:cover;'
+    sheet.style.cssText = 'position:absolute;inset:0;overflow:hidden;background-color:#fff;background-repeat:no-repeat;background-position:center;background-size:cover;'
     div.__pageSheet = sheet
     pageContent.appendChild(sheet)
     pageDivs.push(div)
@@ -2132,14 +2134,9 @@ async function init() {
   pageFlip.loadFromHTML(container.querySelectorAll('.page'))
   installDesktopEdgeFlipGuard()
 
-  // Ocultar la pantalla de carga. El flipbook-container siempre estuvo visible
-  // debajo (necesario para que StPageFlip pueda medir sus dimensiones con size:'stretch');
-  // el loading-screen es un overlay fixed que lo tapaba mientras se construía.
+  // Se conserva el overlay hasta que el primer pliego tenga fondos descargados
+  // y decodificados. StPageFlip necesita permanecer medible debajo del overlay.
   const loadingScreen = document.getElementById('loading-screen')
-  if (loadingScreen) {
-    loadingScreen.classList.add('hidden')
-    setTimeout(() => loadingScreen.remove(), 450)
-  }
 
   // ── Flechas laterales de navegación (escritorio + móvil/tablet) ────────────
   // Discretas, centradas verticalmente, una a cada lado. Independientes de la barra
@@ -2593,7 +2590,7 @@ async function init() {
         if (a.url) window.open(a.url, a.target === '_self' ? '_self' : '_blank')
         break
       case 'page':
-        if (a.page) pageFlip.flip(Number(a.page))
+        if (a.page) void goToPageIndex(Number(a.page))
         break
       case 'call':
         if (a.phone) window.location.href = 'tel:' + String(a.phone).replace(/\s+/g, '')
@@ -3905,32 +3902,152 @@ async function init() {
     const realPage = pageNumOf(pageIndex)
     const realIdx = realPage - 1
     const div = pageDivs[realIdx]
-    if (!div || div.__pageBackgroundLoaded) return
+
+    if (!div) return Promise.resolve(null)
+    if (div.__pageBackgroundLoaded) return Promise.resolve(div.__pageSheet || null)
+    if (div.__pageBackgroundLoading) return div.__pageBackgroundLoading
+
     const page = div.__pageData
     const sheet = div.__pageSheet
     const pageImageUrl = viewerRuntime.selectPageImageUrl(page)
+
     if (!pageImageUrl || !sheet) {
       div.__pageBackgroundLoaded = true
-      return
+      return Promise.resolve(sheet || null)
     }
-    imagePreloader.preload(pageImageUrl)
+
+    // Se asigna desde el inicio para permitir que el navegador comparta su caché
+    // con el Image de precarga. La hoja conserva fondo blanco mientras responde.
+    sheet.style.backgroundColor = '#fff'
     sheet.style.backgroundImage = `url("${pageImageUrl}")`
     applyCoverStyle(sheet, page.cover_json, pageImageUrl, pageWidth / pageHeight)
-    div.__pageBackgroundLoaded = true
+
+    const task = Promise.resolve(imagePreloader.preload(pageImageUrl))
+      .catch((error) => {
+        console.warn('[viewer] page background preload failed', pageImageUrl, error)
+        return null
+      })
+      .then((image) => {
+        div.__pageBackgroundLoaded = true
+        div.__pageBackgroundLoading = null
+        return image
+      })
+
+    div.__pageBackgroundLoading = task
+    return task
+  }
+
+  function delayViewer(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  function ensureRealPageBackgrounds(pageNumbers) {
+    const uniquePageNumbers = Array.from(new Set(pageNumbers))
+      .filter((pageNumber) => pageNumber >= 1 && pageNumber <= realCount)
+
+    return Promise.allSettled(
+      uniquePageNumbers.map((pageNumber) => (
+        ensurePageBackgroundLoaded(lead + pageNumber - 1)
+      )),
+    )
   }
 
   function ensureNearbyPageBackgrounds(pageIndex) {
     const realPage = pageNumOf(pageIndex)
-    viewerRuntime.nearbyRealPageNumbers(realPage, realCount).forEach((pageNumber) => {
-      ensurePageBackgroundLoaded(lead + pageNumber - 1)
+    return ensureRealPageBackgrounds(
+      viewerRuntime.nearbyRealPageNumbers(realPage, realCount),
+    )
+  }
+
+
+  const DEFERRED_BACKGROUND_CONCURRENCY = 2
+  const deferredBackgroundQueue = []
+  const deferredBackgroundQueued = new Set()
+  let deferredBackgroundActive = 0
+  let deferredBackgroundPumpScheduled = false
+
+  function scheduleDeferredBackgroundPump() {
+    if (deferredBackgroundPumpScheduled) return
+    deferredBackgroundPumpScheduled = true
+
+    const run = () => {
+      deferredBackgroundPumpScheduled = false
+      pumpDeferredBackgroundQueue()
+    }
+
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(run, { timeout: 700 })
+    } else {
+      window.setTimeout(run, 30)
+    }
+  }
+
+  function queueDeferredBackgrounds(pageNumbers, options = {}) {
+    const candidates = []
+
+    pageNumbers.forEach((pageNumber) => {
+      if (pageNumber < 1 || pageNumber > realCount) return
+
+      const div = pageDivs[pageNumber - 1]
+      if (!div) return
+      if (isRealPageReady(pageNumber)) return
+      if (deferredBackgroundQueued.has(pageNumber)) return
+
+      deferredBackgroundQueued.add(pageNumber)
+      candidates.push(pageNumber)
     })
+
+    if (options.front === true) {
+      candidates.reverse().forEach((pageNumber) => {
+        deferredBackgroundQueue.unshift(pageNumber)
+      })
+    } else {
+      deferredBackgroundQueue.push(...candidates)
+    }
+
+    scheduleDeferredBackgroundPump()
+  }
+
+  function pumpDeferredBackgroundQueue() {
+    while (
+      deferredBackgroundActive < DEFERRED_BACKGROUND_CONCURRENCY
+      && deferredBackgroundQueue.length
+    ) {
+      const pageNumber = deferredBackgroundQueue.shift()
+      deferredBackgroundQueued.delete(pageNumber)
+
+      const div = pageDivs[pageNumber - 1]
+      if (!div || isRealPageReady(pageNumber)) continue
+
+      deferredBackgroundActive += 1
+
+      Promise.resolve(
+        ensureRealPagesReady([pageNumber]),
+      ).finally(() => {
+        deferredBackgroundActive -= 1
+        scheduleDeferredBackgroundPump()
+      })
+    }
   }
 
   function buildOverlay(div, canvasJson, pageIndex) {
-    if (!canvasJson || typeof fabric === 'undefined') return
+    if (!canvasJson || typeof fabric === 'undefined') {
+      return Promise.resolve(null)
+    }
+
     let parsed
-    try { parsed = typeof canvasJson === 'string' ? JSON.parse(canvasJson) : canvasJson } catch { return }
-    if (!parsed || !parsed.objects || !parsed.objects.length) return
+
+    try {
+      parsed = typeof canvasJson === 'string'
+        ? JSON.parse(canvasJson)
+        : canvasJson
+    } catch {
+      return Promise.resolve(null)
+    }
+
+    if (!parsed || !parsed.objects || !parsed.objects.length) {
+      return Promise.resolve(null)
+    }
 
     const overlayHost = div.__zoomContent || div
     const wrap = document.createElement('div')
@@ -3958,7 +4075,8 @@ async function init() {
     const elementDomMap = {}
     // Sin fondo: la imagen de la página ya está debajo
     const objectsOnly = Object.assign({}, parsed, { background: '', backgroundImage: null })
-    fcanvas.loadFromJSON(objectsOnly, () => {
+    return new Promise((resolve) => {
+      fcanvas.loadFromJSON(objectsOnly, () => {
       let widgetIdx = 0
       // slice(): vamos a remover widgets del canvas mientras iteramos
       fcanvas.getObjects().slice().forEach((obj) => {
@@ -4104,7 +4222,11 @@ async function init() {
       fcanvas.renderAll()
       // Fade-in del overlay una vez que Fabric.js terminó de renderizar —
       // evita el "flash" de elementos que aparecen de golpe sobre la imagen.
-      requestAnimationFrame(() => { wrap.style.opacity = '1' })
+      requestAnimationFrame(() => {
+        wrap.style.opacity = '1'
+        resolve(wrap)
+      })
+      })
     })
   }
 
@@ -4114,26 +4236,146 @@ async function init() {
     const realPage = pageNumOf(pageIndex)
     const realIdx = realPage - 1
     const div = pageDivs[realIdx]
-    if (!div || div.__overlayBuilt || div.__overlayBuilding) return
-    div.__overlayBuilding = true
-    try {
-      buildOverlay(div, data.pages[realIdx] && data.pages[realIdx].canvas_json, lead + realIdx)
-      div.__overlayBuilt = true
-    } finally {
-      div.__overlayBuilding = false
-    }
+
+    if (!div) return Promise.resolve(null)
+    if (div.__overlayBuilt) return Promise.resolve(div)
+    if (div.__overlayBuilding) return div.__overlayBuilding
+
+    const task = Promise.resolve(
+      buildOverlay(
+        div,
+        data.pages[realIdx] && data.pages[realIdx].canvas_json,
+        lead + realIdx,
+      ),
+    )
+      .catch((error) => {
+        console.warn(
+          '[viewer] overlay build failed',
+          data.pages[realIdx]?.id,
+          error,
+        )
+        return null
+      })
+      .then(() => {
+        div.__overlayBuilt = true
+        return div
+      })
+      .finally(() => {
+        div.__overlayBuilding = null
+      })
+
+    div.__overlayBuilding = task
+    return task
   }
 
   function ensureNearbyOverlays(pageIndex) {
     const realPage = pageNumOf(pageIndex)
+    const jobs = []
+
     ;[realPage - 1, realPage, realPage + 1].forEach((pageNumber) => {
       if (pageNumber < 1 || pageNumber > realCount) return
-      ensureOverlayBuilt(lead + pageNumber - 1)
+
+      jobs.push(
+        ensureOverlayBuilt(lead + pageNumber - 1),
+      )
     })
+
+    return Promise.allSettled(jobs)
   }
 
-  ensureNearbyPageBackgrounds(pageFlip.getCurrentPageIndex())
-  ensureNearbyOverlays(pageFlip.getCurrentPageIndex())
+  function ensureRealPageOverlays(pageNumbers) {
+    const uniquePageNumbers = Array.from(new Set(pageNumbers))
+      .filter((pageNumber) => pageNumber >= 1 && pageNumber <= realCount)
+
+    return Promise.allSettled(
+      uniquePageNumbers.map((pageNumber) => (
+        ensureOverlayBuilt(lead + pageNumber - 1)
+      )),
+    )
+  }
+
+  function ensureRealPagesReady(pageNumbers) {
+    return Promise.all([
+      ensureRealPageBackgrounds(pageNumbers),
+      ensureRealPageOverlays(pageNumbers),
+    ])
+  }
+
+  function isRealPageReady(pageNumber) {
+    if (pageNumber < 1 || pageNumber > realCount) return true
+
+    const div = pageDivs[pageNumber - 1]
+
+    return !!(
+      div
+      && div.__pageBackgroundLoaded
+      && div.__overlayBuilt
+    )
+  }
+
+  function areRealPagesReady(pageNumbers) {
+    return pageNumbers.every(isRealPageReady)
+  }
+
+  function scheduleNearbyOverlays(pageIndex) {
+    const work = () => ensureNearbyOverlays(pageIndex)
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(work, { timeout: 700 })
+    } else {
+      window.setTimeout(work, 0)
+    }
+  }
+
+  const initialPageIndex = pageFlip.getCurrentPageIndex()
+  const startupRealPages = viewerRuntime.startupRealPageNumbers(
+    realCount,
+    portrait,
+  )
+
+  let loadingStatus = null
+
+  if (loadingScreen) {
+    loadingStatus = document.createElement('div')
+    loadingStatus.dataset.intapLoadingStatus = 'true'
+    loadingStatus.textContent = 'Preparando tu catálogo…'
+    loadingStatus.style.cssText = [
+      'margin-top:14px',
+      'color:#fff',
+      'font-family:Inter,system-ui,sans-serif',
+      'font-size:14px',
+      'font-weight:700',
+      'letter-spacing:.01em',
+      'text-align:center',
+    ].join(';')
+
+    loadingScreen.appendChild(loadingStatus)
+  }
+
+  // Una página se considera lista únicamente cuando terminaron su fondo
+  // y su composición Fabric. Se priorizan portada y primer pliego.
+  const startupLoad = ensureRealPagesReady(startupRealPages)
+
+  await Promise.race([
+    startupLoad,
+    delayViewer(3500),
+  ])
+
+  scheduleNearbyOverlays(initialPageIndex)
+
+  if (loadingScreen) {
+    if (loadingStatus) loadingStatus.textContent = 'Catálogo listo'
+    loadingScreen.classList.add('hidden')
+    setTimeout(() => loadingScreen.remove(), 450)
+  }
+
+  // El resto continúa en segundo plano, en orden y con dos descargas simultáneas.
+  const startupSet = new Set(startupRealPages)
+  const remainingRealPages = Array.from(
+    { length: realCount },
+    (_, index) => index + 1,
+  ).filter((pageNumber) => !startupSet.has(pageNumber))
+
+  queueDeferredBackgrounds(remainingRealPages)
 
   // Centrado dinámico: cubre/contraportada centradas, spreads interiores sin desplazamiento
   let currentShift = 0
@@ -4553,8 +4795,13 @@ async function init() {
     applyCenter()
     updateNavButtons()
     updateActiveThumbnail()
-    ensureNearbyPageBackgrounds(idx)
-    ensureNearbyOverlays(idx)
+    const nearbyRealPages = viewerRuntime.nearbyRealPageNumbers(
+      pageNumOf(idx),
+      realCount,
+    )
+
+    queueDeferredBackgrounds(nearbyRealPages, { front: true })
+    scheduleNearbyOverlays(idx)
     startPageTimer(pageNumOf(idx))
     triggerEntrances(idx)
     firePendingBannersForPage(idx)
@@ -4595,10 +4842,230 @@ async function init() {
     item.appendChild(img)
     item.appendChild(label)
     item.addEventListener('click', () => {
-      pageFlip.flip(lead + i)
+      void goToPageIndex(lead + i)
       document.getElementById('thumbnail-panel').classList.remove('open')
     })
     thumbList.appendChild(item)
+  })
+
+  // La navegación conserva una cola corta. Cada petición prepara primero
+  // el pliego destino y permanece ocupada hasta finalizar el giro completo.
+  let navigationPending = false
+  const navigationQueue = []
+  let preparingHintTimer = null
+
+  function showPreparingHint(message = 'Preparando páginas…') {
+    let hint = document.getElementById('intap-page-preparing')
+
+    if (!hint) {
+      hint = document.createElement('div')
+      hint.id = 'intap-page-preparing'
+      hint.style.cssText = [
+        'position:fixed',
+        'left:50%',
+        'bottom:82px',
+        'transform:translateX(-50%)',
+        'z-index:99990',
+        'background:rgba(15,23,42,.92)',
+        'color:#fff',
+        'padding:9px 14px',
+        'border-radius:999px',
+        'font-family:Inter,system-ui,sans-serif',
+        'font-size:12px',
+        'font-weight:800',
+        'box-shadow:0 8px 24px rgba(0,0,0,.28)',
+        'pointer-events:none',
+      ].join(';')
+
+      document.body.appendChild(hint)
+    }
+
+    hint.textContent = message
+    hint.style.display = 'block'
+
+    clearTimeout(preparingHintTimer)
+    preparingHintTimer = setTimeout(() => {
+      hint.style.display = 'none'
+    }, 1400)
+  }
+
+  async function waitUntilPageFlipRead(timeoutMs = 1800) {
+    const startedAt = Date.now()
+
+    while (
+      pageFlip.getState() !== 'read'
+      && Date.now() - startedAt < timeoutMs
+    ) {
+      await delayViewer(35)
+    }
+  }
+
+  async function waitForPageFlipCycle(timeoutMs = 2200) {
+    const startedAt = Date.now()
+    let movementDetected = false
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const state = pageFlip.getState()
+
+      if (state !== 'read') movementDetected = true
+      if (movementDetected && state === 'read') return
+
+      await delayViewer(35)
+    }
+  }
+
+  function enqueueNavigation(request) {
+    if (request.type === 'target') {
+      navigationQueue.length = 0
+      navigationQueue.push(request)
+      return
+    }
+
+    if (navigationQueue.length < 6) {
+      navigationQueue.push(request)
+    }
+  }
+
+  function requestNavigation(request) {
+    enqueueNavigation(request)
+    void drainNavigationQueue()
+  }
+
+  async function drainNavigationQueue() {
+    if (navigationPending) return
+
+    const request = navigationQueue.shift()
+    if (!request) return
+
+    navigationPending = true
+
+    try {
+      await waitUntilPageFlipRead()
+
+      const currentIndex = pageFlip.getCurrentPageIndex()
+      let targetIndex = currentIndex
+      let executeFlip = null
+
+      if (request.type === 'target') {
+        targetIndex = Math.max(
+          firstIdx,
+          Math.min(lastIdx, request.targetIndex),
+        )
+
+        if (targetIndex === currentIndex) return
+        executeFlip = () => pageFlip.flip(targetIndex)
+      }
+
+      if (request.type === 'next') {
+        if (currentIndex >= lastIdx) return
+
+        const step = portrait ? 1 : 2
+        targetIndex = Math.min(lastIdx, currentIndex + step)
+        executeFlip = () => pageFlip.flipNext()
+      }
+
+      if (request.type === 'previous') {
+        if (currentIndex <= firstIdx) return
+
+        const step = portrait ? 1 : 2
+        targetIndex = Math.max(firstIdx, currentIndex - step)
+        executeFlip = () => pageFlip.flipPrev()
+      }
+
+      if (!executeFlip) return
+
+      const targetRealPages = viewerRuntime.targetRealPageNumbers(
+        pageNumOf(targetIndex),
+        realCount,
+      )
+
+      if (!areRealPagesReady(targetRealPages)) {
+        showPreparingHint(
+          request.type === 'target'
+            ? 'Preparando sección…'
+            : 'Preparando páginas…',
+        )
+      }
+
+      queueDeferredBackgrounds(targetRealPages, { front: true })
+      await ensureRealPagesReady(targetRealPages)
+      await waitUntilPageFlipRead()
+
+      executeFlip()
+      await waitForPageFlipCycle()
+    } finally {
+      navigationPending = false
+
+      if (navigationQueue.length) {
+        setTimeout(() => {
+          void drainNavigationQueue()
+        }, 0)
+      }
+    }
+  }
+
+  function goToPageIndex(targetIndex) {
+    requestNavigation({
+      type: 'target',
+      targetIndex,
+    })
+
+    return Promise.resolve()
+  }
+
+  function goNextPage() {
+    requestNavigation({ type: 'next' })
+    return Promise.resolve()
+  }
+
+  function goPreviousPage() {
+    requestNavigation({ type: 'previous' })
+    return Promise.resolve()
+  }
+
+  // El arrastre nativo también queda protegido. Si el pliego próximo no está
+  // preparado, se prioriza y se pide al usuario repetir el gesto unos instantes después.
+  function guardUnpreparedNativeFlip(event) {
+    if (navigationPending) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      return
+    }
+
+    const currentRealPage = pageNumOf(
+      pageFlip.getCurrentPageIndex(),
+    )
+
+    const interactionPages = viewerRuntime.targetRealPageNumbers(
+      currentRealPage,
+      realCount,
+    )
+
+    if (areRealPagesReady(interactionPages)) return
+
+    const target = event.target
+
+    if (
+      target instanceof Element
+      && target.closest('[data-flip-interactive="true"]')
+    ) {
+      return
+    }
+
+    queueDeferredBackgrounds(interactionPages, { front: true })
+    void ensureRealPagesReady(interactionPages)
+    showPreparingHint()
+
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
+  ;['pointerdown', 'mousedown', 'touchstart'].forEach((eventName) => {
+    container.addEventListener(
+      eventName,
+      guardUnpreparedNativeFlip,
+      { capture: true, passive: false },
+    )
   })
 
   // Autoplay
@@ -4608,7 +5075,7 @@ async function init() {
     autoplayTimer = setInterval(() => {
       const idx = pageFlip.getCurrentPageIndex()
       if (idx >= lastIdx) { stopAutoplay(); return }
-      pageFlip.flipNext()
+      void goNextPage()
     }, 3000)
     document.getElementById('btn-autoplay').textContent = '⏸'
     document.getElementById('btn-autoplay').classList.add('playing')
@@ -4628,17 +5095,20 @@ async function init() {
     cyclePageZoom(rect.left + rect.width / 2, rect.top + rect.height / 2)
   })
 
-  document.getElementById('btn-first').addEventListener('click', () => pageFlip.flip(firstIdx))
-  document.getElementById('btn-last').addEventListener('click', () => pageFlip.flip(lastIdx))
+  document.getElementById('btn-first').addEventListener('click', () => {
+    void goToPageIndex(firstIdx)
+  })
+
+  document.getElementById('btn-last').addEventListener('click', () => {
+    void goToPageIndex(lastIdx)
+  })
 
   document.getElementById('btn-prev').addEventListener('click', () => {
-    const idx = pageFlip.getCurrentPageIndex()
-    if (idx > firstIdx) pageFlip.flipPrev()
+    void goPreviousPage()
   })
 
   document.getElementById('btn-next').addEventListener('click', () => {
-    const idx = pageFlip.getCurrentPageIndex()
-    if (idx < lastIdx) pageFlip.flipNext()
+    void goNextPage()
   })
 
   document.getElementById('btn-autoplay').addEventListener('click', () => {

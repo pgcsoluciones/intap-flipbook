@@ -41,8 +41,8 @@ name = "intap-flipbook-api-preview"
 
 [env.preview.vars]
 APP_ENV = "preview"
-CORS_ORIGIN = "https://studio.flip.intaprd.com,https://flip.intaprd.com,http://localhost:5174,https://fix-page-lifecycle-safe-dele.intap-flipbook-dashboard.pages.dev,https://media-library-dedup-phase1.intap-flipbook-dashboard.pages.dev"
-ALLOWED_WRITE_ORIGINS = "https://studio.flip.intaprd.com,https://flip.intaprd.com,http://localhost:5174,https://fix-page-lifecycle-safe-dele.intap-flipbook-dashboard.pages.dev,https://media-library-dedup-phase1.intap-flipbook-dashboard.pages.dev"
+CORS_ORIGIN = "https://studio.flip.intaprd.com,https://flip.intaprd.com,http://localhost:5174,https://fix-page-lifecycle-safe-dele.intap-flipbook-dashboard.pages.dev,https://media-library-dedup-phase1.intap-flipbook-dashboard.pages.dev,https://perf-viewer-editor-0723.intap-flipbook-viewer.pages.dev,https://perf-viewer-editor-0723.intap-flipbook-dashboard.pages.dev"
+ALLOWED_WRITE_ORIGINS = "https://studio.flip.intaprd.com,https://flip.intaprd.com,http://localhost:5174,https://fix-page-lifecycle-safe-dele.intap-flipbook-dashboard.pages.dev,https://media-library-dedup-phase1.intap-flipbook-dashboard.pages.dev,https://perf-viewer-editor-0723.intap-flipbook-viewer.pages.dev,https://perf-viewer-editor-0723.intap-flipbook-dashboard.pages.dev"
 JWT_EXPIRY_DAYS = "7"
 R2_PUBLIC_BASE_URL = "https://pub-b720f233e0f84125b246181d82f993da.r2.dev"
 

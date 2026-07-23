@@ -2193,6 +2193,12 @@ export default function EditPublication() {
     const canvas = new fabric.Canvas(canvasRef.current, { width: W, height: H, backgroundColor: bgColor, preserveObjectStacking: true })
     canvas.uniformScaling = true   // escalado uniforme por defecto: las esquinas no deforman
     fabricRef.current = canvas
+
+    // Evita que objetos y fondo aparezcan por etapas. El wrapper completo se hace
+    // visible cuando JSON y fondo terminaron de preparar el primer render útil.
+    const loadingWrapper = (canvas as any).wrapperEl as HTMLElement | undefined
+    if (loadingWrapper) loadingWrapper.style.visibility = 'hidden'
+
     const isCurrentLoad = () =>
       generation === canvasGenerationRef.current &&
       pageIdRef.current === loadingPageId &&
@@ -2213,48 +2219,60 @@ export default function EditPublication() {
     // el timer de 1.2s expira con el canvas a medio cargar, sobreescribiendo datos.
     let isLoading = true
 
-    // Carga el fondo DESPUÉS de loadFromJSON porque loadFromJSON llama canvas.clear()
-    // internamente, lo que borra cualquier backgroundImage ya puesta. Llamar fromURL
-    // antes del clear hace que el fondo desaparezca.
+    // La descarga/decodificación del fondo comienza en paralelo con loadFromJSON.
+    // La asignación a Fabric continúa después del JSON porque loadFromJSON limpia el canvas.
+    const backgroundImagePromise = activePageDisplayUrl
+      ? loadFabricImageCached(activePageDisplayUrl).catch((error) => {
+          console.warn('[editor] background image failed', activePageDisplayUrl, error)
+          return null
+        })
+      : Promise.resolve(null)
+
     const loadBg = (onDone: () => void) => {
       const finishReady = () => {
         if (!isCurrentLoad()) return
         canvasReadyRef.current = true
+        if (loadingWrapper) loadingWrapper.style.visibility = 'visible'
         setCanvasLoading(false)
         perfMark('canvas-first-useful-render', { pageId: activePage.id })
         perfMeasure('canvas-time-to-first-useful-render', 'canvas-load-start', undefined, { pageId: activePage.id })
         onDone()
       }
-      if (!activePageDisplayUrl) {
+
+      backgroundImagePromise.then((img: any) => {
         if (!isCurrentLoad()) return
-        canvas.renderAll()
-        finishReady()
-        return
-      }
-      loadFabricImageCached(activePageDisplayUrl).then((img: any) => {
-        if (!isCurrentLoad()) return
+
         if (!img) {
           canvas.renderAll()
           finishReady()
           return
         }
+
         img.set({ selectable: false, evented: false })
-        if (img && img.width && img.height) {
+
+        if (img.width && img.height) {
           bgNatRef.current = { iw: img.width, ih: img.height }
           const { cropX, cropY, cropW, cropH, scaleX, scaleY } = computeCover(img.width, img.height, coverRef.current)
-          img.set({ cropX, cropY, width: cropW, height: cropH, scaleX, scaleY, originX: 'left', originY: 'top', left: 0, top: 0 })
+          img.set({
+            cropX,
+            cropY,
+            width: cropW,
+            height: cropH,
+            scaleX,
+            scaleY,
+            originX: 'left',
+            originY: 'top',
+            left: 0,
+            top: 0,
+          })
         }
+
         canvas.setBackgroundImage(img, () => {
           if (!isCurrentLoad()) return
           bgImgRef.current = canvas.backgroundImage ?? img
           canvas.renderAll()
           finishReady()
         })
-      }).catch((error) => {
-        if (!isCurrentLoad()) return
-        console.warn('[editor] background image failed', activePageDisplayUrl, error)
-        canvas.renderAll()
-        finishReady()
       })
     }
 
