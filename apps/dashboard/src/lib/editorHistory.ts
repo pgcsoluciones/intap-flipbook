@@ -1,4 +1,4 @@
-export const EDITOR_HISTORY_VERSION = 1
+export const EDITOR_HISTORY_VERSION = 2
 export const MAX_UNDO_STEPS = 20
 export const MAX_HISTORY_ENTRIES = MAX_UNDO_STEPS + 1
 

@@ -184,7 +184,7 @@ test('dos publicaciones tienen claves independientes', async () => {
 test('normalizacion rechaza datos corruptos', async () => {
   const h = await loadHistory()
   try {
-    assert.equal(h.normalizeEditorHistory({ version: 1, publicationId: 'pub1', pageId: 'page1', entries: ['not-json'], index: 0 }, 'pub1', 'page1'), null)
+    assert.equal(h.normalizeEditorHistory({ version: h.EDITOR_HISTORY_VERSION, publicationId: 'pub1', pageId: 'page1', entries: ['not-json'], index: 0 }, 'pub1', 'page1'), null)
     assert.equal(h.parseEditorHistory('{bad json', 'pub1', 'page1'), null)
   } finally {
     await h.cleanup()
@@ -194,7 +194,7 @@ test('normalizacion rechaza datos corruptos', async () => {
 test('normalizacion corrige indices invalidos', async () => {
   const h = await loadHistory()
   try {
-    const history = h.normalizeEditorHistory({ version: 1, publicationId: 'pub1', pageId: 'page1', entries: [snap(0), snap(1)], index: 99 }, 'pub1', 'page1')
+    const history = h.normalizeEditorHistory({ version: h.EDITOR_HISTORY_VERSION, publicationId: 'pub1', pageId: 'page1', entries: [snap(0), snap(1)], index: 99 }, 'pub1', 'page1')
     assert.equal(history.index, 1)
   } finally {
     await h.cleanup()
@@ -204,7 +204,7 @@ test('normalizacion corrige indices invalidos', async () => {
 test('snapshot actual es entries[index]', async () => {
   const h = await loadHistory()
   try {
-    const history = { version: 1, publicationId: 'pub1', pageId: 'page1', entries: [snap(0), snap(1)], index: 1 }
+    const history = { version: h.EDITOR_HISTORY_VERSION, publicationId: 'pub1', pageId: 'page1', entries: [snap(0), snap(1)], index: 1 }
     assert.equal(h.getEditorHistoryCurrentSnapshot(history), snap(1))
   } finally {
     await h.cleanup()
@@ -341,4 +341,60 @@ test('editar despues de Undo invalida Redo', async () => {
   } finally {
     await h.cleanup()
   }
+})
+
+
+test('historial v1 anterior no puede sustituir el canvas actual del servidor', async () => {
+  const h = await loadHistory()
+  try {
+    const legacy = {
+      version: 1,
+      publicationId: 'pub1',
+      pageId: 'page1',
+      entries: [snap(0)],
+      index: 0,
+    }
+
+    assert.equal(
+      h.normalizeEditorHistory(legacy, 'pub1', 'page1'),
+      null,
+    )
+
+    assert.equal(
+      h.editorHistoryStorageKey('pub1', 'page1').includes('_v2:'),
+      true,
+    )
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('persistCanvas sincroniza el snapshot antes de encolar el guardado', async () => {
+  const source = await readFile(
+    'apps/dashboard/src/pages/EditPublication.tsx',
+    'utf8',
+  )
+
+  const start = source.indexOf(
+    'const persistCanvas = useCallback',
+  )
+  const end = source.indexOf(
+    '// Programa un guardado diferido',
+    start,
+  )
+
+  assert.notEqual(start, -1)
+  assert.notEqual(end, -1)
+
+  const block = source.slice(start, end)
+  const syncIndex = block.indexOf(
+    'persistEditorHistorySnapshot(pageId, json)',
+  )
+  const queueIndex = block.indexOf(
+    'const run = async () =>',
+  )
+
+  assert.notEqual(syncIndex, -1)
+  assert.notEqual(queueIndex, -1)
+  assert.equal(syncIndex < queueIndex, true)
 })

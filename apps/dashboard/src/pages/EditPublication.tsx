@@ -2044,6 +2044,40 @@ export default function EditPublication() {
     return items
   }, [displayUrlByPublicUrl, imageBank, mediaBankAssets, mediaBankFolderId, mediaBankFolders, thumbnailUrlByPublicUrl])
 
+  // Mantiene sessionStorage alineado con el JSON exacto que se enviará al
+  // servidor. Esto evita que, al volver desde Vista previa, un snapshot anterior
+  // del historial sustituya el canvas recién guardado.
+  const persistEditorHistorySnapshot = useCallback((pageId: string, json: string) => {
+    const publicationId = id ?? ''
+    if (!publicationId || !pageId || !json) return
+
+    const historyKey = editorHistoryStorageKey(publicationId, pageId)
+    const existingHistory =
+      historyByKeyRef.current[historyKey]
+      ?? loadEditorHistoryFromSession(
+        getEditorHistorySessionStorage(),
+        publicationId,
+        pageId,
+      )
+      ?? createEditorHistory(publicationId, pageId, json)
+
+    const nextHistory = appendEditorHistorySnapshot(existingHistory, json)
+
+    historyByKeyRef.current[historyKey] = nextHistory
+    saveEditorHistoryToSession(
+      getEditorHistorySessionStorage(),
+      nextHistory,
+    )
+
+    // Actualiza también las refs activas sin provocar setState durante el
+    // desmontaje del Editor.
+    if (activeHistoryKeyRef.current === historyKey) {
+      activeHistoryRef.current = nextHistory
+      historyRef.current = nextHistory.entries
+      historyIndexRef.current = nextHistory.index
+    }
+  }, [id])
+
   // ── Autoguardado: guarda el canvas actual en segundo plano ──
   // Se llama tras cada cambio (debounce) y al cambiar de página.
   const persistCanvas = useCallback(async (pageId: string, canvas: any, flash = true) => {
@@ -2065,6 +2099,10 @@ export default function EditPublication() {
       })
     }
     const json = JSON.stringify(rawJson)
+
+    // Debe ejecutarse antes de la cola y antes de que el canvas sea destruido
+    // durante la navegación hacia Vista previa u otra ruta.
+    persistEditorHistorySnapshot(pageId, json)
 
     const run = async () => {
       if (deletingPageIdsRef.current.has(pageId) || deletedPageIdsRef.current.has(pageId)) return
@@ -2130,7 +2168,7 @@ export default function EditPublication() {
     })
     saveChainRef.current[pageId] = queued
     return queued
-  }, [requestThumbnailUpdate])
+  }, [persistEditorHistorySnapshot, requestThumbnailUpdate])
 
   // Programa un guardado diferido tras el último cambio confirmado.
   const scheduleAutosave = useCallback(() => {
