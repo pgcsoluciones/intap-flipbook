@@ -2578,7 +2578,344 @@ async function init() {
     return entry
   }
 
-  function runAction(a, fcanvas, selfObj, elementDomMap) {
+
+  const productDetailCache = new Map()
+  const productDetailPending = new Map()
+
+  function normalizeProductDetailAccent(value) {
+    const color = typeof value === 'string' ? value.trim() : ''
+    return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#5E6F59'
+  }
+
+  function formatViewerProductDetailPrice(value) {
+    const cleaned = String(value ?? '')
+      .trim()
+      .replace(/^(?:(?:dop|rd)\$?\s*)+/i, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (!cleaned) return ''
+
+    const numeric = cleaned.replace(/,/g, '')
+    if (!/^\d+(?:\.\d+)?$/.test(numeric)) return `RD$${cleaned}`
+
+    const [integerPart, decimalPart] = numeric.split('.')
+    const formattedInteger = Number(integerPart).toLocaleString('en-US')
+    return `RD$${decimalPart ? `${formattedInteger}.${decimalPart}` : formattedInteger}`
+  }
+
+  function resolveProductDetailImageUrl(value) {
+    if (!value || typeof value !== 'string') return ''
+    try {
+      const url = new URL(value, `${API_BASE}/`)
+      if (!['http:', 'https:'].includes(url.protocol)) return ''
+      return url.toString()
+    } catch (e) {
+      return ''
+    }
+  }
+
+  function productDetailCta(detail) {
+    const type = String(detail?.cta_type || '').trim()
+    const label = String(detail?.cta_label || '').trim()
+    const target = String(detail?.cta_target || '').trim()
+
+    if (!type || type === 'sin_accion' || type === 'none') return null
+    if (!label || !target) return null
+
+    if (type === 'enlace_externo' || type === 'external_url') {
+      try {
+        const url = new URL(target)
+        if (!['http:', 'https:'].includes(url.protocol)) return null
+        return {
+          href: url.toString(),
+          label,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+        }
+      } catch (e) {
+        return null
+      }
+    }
+
+    if (type === 'whatsapp') {
+      const digits = target.replace(/\D/g, '')
+      if (digits.length < 8) return null
+      return {
+        href: `https://wa.me/${digits}`,
+        label,
+        target: '_blank',
+        rel: 'noopener noreferrer',
+      }
+    }
+
+    if (type === 'llamar' || type === 'phone') {
+      const phone = target.replace(/[^\d+]/g, '')
+      if ((phone.match(/\d/g) || []).length < 7) return null
+      return { href: `tel:${phone}`, label, target: '_self', rel: '' }
+    }
+
+    if (type === 'correo' || type === 'email') {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) return null
+      return { href: `mailto:${target}`, label, target: '_self', rel: '' }
+    }
+
+    return null
+  }
+
+  function showProductDetailModal(detail, opener) {
+    const previous = document.getElementById('intap-product-detail-overlay')
+    if (previous && typeof previous.__closeProductDetail === 'function') {
+      previous.__closeProductDetail()
+    } else {
+      previous?.remove()
+    }
+
+    const previousOverflow = document.body.style.overflow
+    let closed = false
+
+    const overlay = document.createElement('div')
+    overlay.id = 'intap-product-detail-overlay'
+    overlay.dataset.flipInteractive = 'true'
+    overlay.style.cssText = [
+      'position:fixed',
+      'inset:0',
+      'z-index:5000',
+      'background:rgba(7,10,18,.72)',
+      'backdrop-filter:blur(5px)',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'padding:18px',
+      'font-family:Inter,system-ui,sans-serif',
+      'opacity:0',
+      'transition:opacity .18s ease',
+      'box-sizing:border-box',
+    ].join(';')
+
+    const card = document.createElement('div')
+    card.setAttribute('role', 'dialog')
+    card.setAttribute('aria-modal', 'true')
+    card.tabIndex = -1
+    card.style.cssText = [
+      'width:min(520px,calc(100vw - 36px))',
+      'max-height:min(820px,calc(100dvh - 36px))',
+      'overflow:auto',
+      'overscroll-behavior:contain',
+      'background:#fff',
+      'border-radius:24px',
+      'box-shadow:0 30px 90px rgba(15,23,42,.42)',
+      'position:relative',
+      'display:flex',
+      'flex-direction:column',
+      'color:#111827',
+      'transform:translateY(10px) scale(.985)',
+      'transition:transform .18s ease',
+    ].join(';')
+
+    const accent = normalizeProductDetailAccent(detail?.accent_color)
+
+    const close = document.createElement('button')
+    close.type = 'button'
+    close.setAttribute('aria-label', 'Cerrar detalle')
+    close.textContent = '×'
+    close.style.cssText = [
+      'position:absolute',
+      'top:13px',
+      'right:14px',
+      'z-index:3',
+      'width:36px',
+      'height:36px',
+      'border:1px solid rgba(255,255,255,.55)',
+      'border-radius:999px',
+      'background:rgba(255,255,255,.94)',
+      'color:#111827',
+      'font-size:22px',
+      'line-height:1',
+      'cursor:pointer',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'box-shadow:0 8px 20px rgba(15,23,42,.18)',
+    ].join(';')
+
+    const header = document.createElement('div')
+    header.style.cssText = `height:54px;flex:0 0 auto;background:${accent};border-radius:24px 24px 0 0;position:relative;`
+
+    const headerMark = document.createElement('span')
+    headerMark.style.cssText = 'position:absolute;top:18px;left:24px;width:54px;height:12px;border-radius:999px;background:rgba(255,255,255,.36);'
+    header.appendChild(headerMark)
+
+    const imageUrl = resolveProductDetailImageUrl(detail?.image_url)
+    if (imageUrl) {
+      const media = document.createElement('div')
+      media.style.cssText = 'width:100%;background:#f3f4f6;max-height:320px;overflow:hidden;'
+
+      const image = document.createElement('img')
+      image.src = imageUrl
+      image.alt = detail?.title || 'Detalle de producto'
+      image.loading = 'lazy'
+      image.style.cssText = 'width:100%;height:min(320px,42vh);display:block;object-fit:cover;'
+      image.addEventListener('error', () => media.remove())
+
+      media.appendChild(image)
+      card.appendChild(header)
+      card.appendChild(media)
+    } else {
+      card.appendChild(header)
+    }
+
+    const body = document.createElement('div')
+    body.style.cssText = 'padding:30px 30px 32px;display:flex;flex-direction:column;align-items:center;gap:16px;text-align:center;'
+
+    const title = document.createElement('h2')
+    title.textContent = detail?.title || 'Detalle de producto'
+    title.style.cssText = 'margin:0;color:#111827;font-size:30px;line-height:1.1;font-weight:900;max-width:100%;overflow-wrap:anywhere;'
+    body.appendChild(title)
+
+    const price = formatViewerProductDetailPrice(detail?.price)
+    if (price) {
+      const priceElement = document.createElement('div')
+      priceElement.textContent = price
+      priceElement.style.cssText = `font-size:19px;font-weight:900;color:${accent};border:1px solid #e5e7eb;border-radius:999px;padding:10px 16px;background:#fff;box-shadow:0 8px 20px rgba(15,23,42,.06);`
+      body.appendChild(priceElement)
+    }
+
+    if (detail?.description) {
+      const description = document.createElement('p')
+      description.textContent = detail.description
+      description.style.cssText = 'margin:0;color:#111827;font-size:17px;line-height:1.78;white-space:pre-wrap;max-width:42rem;overflow-wrap:anywhere;'
+      body.appendChild(description)
+    }
+
+    const cta = productDetailCta(detail)
+    if (cta) {
+      const link = document.createElement('a')
+      link.href = cta.href
+      link.textContent = cta.label
+      link.target = cta.target
+      if (cta.rel) link.rel = cta.rel
+      link.style.cssText = `width:100%;margin-top:4px;border:0;border-radius:14px;color:#fff;padding:13px 18px;font-size:15px;font-weight:900;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-height:48px;box-shadow:0 14px 28px rgba(15,23,42,.16);box-sizing:border-box;background:${accent};`
+      body.appendChild(link)
+    }
+
+    card.appendChild(close)
+    card.appendChild(body)
+    overlay.appendChild(card)
+
+    function closeModal() {
+      if (closed) return
+      closed = true
+      document.removeEventListener('keydown', onKeyDown, true)
+      document.body.style.overflow = previousOverflow
+      overlay.style.opacity = '0'
+      card.style.transform = 'translateY(10px) scale(.985)'
+      setTimeout(() => {
+        overlay.remove()
+        try {
+          opener?.focus?.({ preventScroll: true })
+        } catch (e) {}
+      }, 180)
+    }
+
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeModal()
+        return
+      }
+
+      if (event.key !== 'Tab') return
+      const focusables = Array.from(
+        card.querySelectorAll(
+          'button,a[href],input,select,textarea,[tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((node) => !node.disabled && node.offsetParent !== null)
+
+      if (!focusables.length) return
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    overlay.__closeProductDetail = closeModal
+    close.addEventListener('click', closeModal)
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) closeModal()
+    })
+    card.addEventListener('click', (event) => event.stopPropagation())
+
+    document.body.style.overflow = 'hidden'
+    document.body.appendChild(overlay)
+    document.addEventListener('keydown', onKeyDown, true)
+
+    requestAnimationFrame(() => {
+      overlay.style.opacity = '1'
+      card.style.transform = 'translateY(0) scale(1)'
+      close.focus({ preventScroll: true })
+    })
+  }
+
+  async function fetchProductDetail(detailId) {
+    if (productDetailCache.has(detailId)) {
+      return productDetailCache.get(detailId)
+    }
+
+    if (productDetailPending.has(detailId)) {
+      return productDetailPending.get(detailId)
+    }
+
+    const endpoint = isPreview && previewToken
+      ? `${API_BASE}/view/preview/${encodeURIComponent(previewToken)}/product-details/${detailId}`
+      : `${API_BASE}/view/${encodeURIComponent(slug)}/product-details/${detailId}`
+
+    const request = fetch(endpoint)
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null)
+        if (!response.ok || !payload?.data) {
+          throw new Error(payload?.error || 'Detalle no disponible')
+        }
+        productDetailCache.set(detailId, payload.data)
+        return payload.data
+      })
+      .finally(() => {
+        productDetailPending.delete(detailId)
+      })
+
+    productDetailPending.set(detailId, request)
+    return request
+  }
+
+  async function openProductDetail(rawDetailId, opener) {
+    const detailId =
+      typeof rawDetailId === 'number' ? rawDetailId : Number(rawDetailId)
+
+    if (!Number.isInteger(detailId) || detailId <= 0) {
+      showToast('Este detalle de producto no está disponible.', 'warning', 3500)
+      return
+    }
+
+    try {
+      const detail = await fetchProductDetail(detailId)
+      showProductDetailModal(detail, opener)
+    } catch (error) {
+      console.warn('[viewer] product detail unavailable', detailId, error)
+      showToast(
+        'No pudimos abrir este detalle de producto. Inténtalo nuevamente.',
+        'warning',
+        4000,
+      )
+    }
+  }
+
+  function runAction(a, fcanvas, selfObj, elementDomMap, opener = null) {
     if (!a || !a.type || a.type === 'none') return
     // Extraer la URL destino según el tipo de acción (para analítica)
     const urlDest = a.url || a.phone || a.email || a.whatsapp || null
@@ -2590,6 +2927,9 @@ async function init() {
         break
       case 'page':
         if (a.page) void goToPageIndex(Number(a.page))
+        break
+      case 'open_product_detail':
+        void openProductDetail(a.detail_id, opener)
         break
       case 'call':
         if (a.phone) window.location.href = 'tel:' + String(a.phone).replace(/\s+/g, '')
@@ -4126,7 +4466,12 @@ async function init() {
           hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;pointer-events:auto;`
           hs.dataset.flipInteractive = 'true'
           hs.innerHTML = `<div class="${animClass}" style="width:36px;height:36px;border-radius:50%;background:${color}44;border:2.5px solid ${color};display:flex;align-items:center;justify-content:center;"><div style="width:14px;height:14px;border-radius:50%;background:${color};"></div></div>`
-          if (d.action) hs.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(d.action, fcanvas, obj, elementDomMap) })
+          const hotspotAction = d.action || obj.action
+          if (hotspotAction) hs.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            runAction(hotspotAction, fcanvas, obj, elementDomMap, hs)
+          })
           blockFlipDrag(hs)
           wrap.appendChild(hs)
           fcanvas.remove(obj)
@@ -4154,14 +4499,18 @@ async function init() {
         }
 
         // Acción al hacer clic (botones, zonas de enlace, cualquier elemento)
-        const action = d.action
+        const action = d.action || obj.action
         if (!action) return
         const hot = document.createElement('a')
         hot.href = 'javascript:void(0)'
         hot.title = ''
         hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;pointer-events:auto;`
         hot.dataset.flipInteractive = 'true'
-        hot.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); runAction(action, fcanvas, obj, elementDomMap) })
+        hot.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          runAction(action, fcanvas, obj, elementDomMap, hot)
+        })
         blockFlipDrag(hot)
         wrap.appendChild(hot)
        } catch (err) {
@@ -4182,7 +4531,7 @@ async function init() {
       // (nunca lo oculte), sin requerir que el diseñador marque "Empieza oculto" manualmente.
       const showHideTargetIds = new Set()
       ;(parsed.objects || []).forEach((o) => {
-        const a = (o.data || {}).action
+        const a = (o.data || {}).action || o.action
         if (a && a.type === 'show_hide' && a.target) showHideTargetIds.add(a.target)
       })
       if (showHideTargetIds.size) {

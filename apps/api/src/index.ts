@@ -623,6 +623,89 @@ async function publicationUsesProductDetail(
   )
 }
 
+
+app.get('/view/preview/:token/product-details/:detailId', async (c) => {
+  if ((c.env.APP_ENV ?? 'production') !== 'preview') {
+    return c.json({ success: false, error: 'Detalle no disponible' }, 404)
+  }
+
+  const detailId = cleanPublicProductDetailId(c.req.param('detailId'))
+  if (!detailId) {
+    return c.json({ success: false, error: 'Detalle no disponible' }, 404)
+  }
+
+  let payload: any
+  try {
+    payload = await verifyJwt(c.req.param('token'), c.env.JWT_SECRET)
+  } catch {
+    return c.json({ success: false, error: 'Detalle no disponible' }, 404)
+  }
+
+  if (
+    payload.kind !== 'publication_preview' ||
+    !payload.publication_id ||
+    !payload.sub
+  ) {
+    return c.json({ success: false, error: 'Detalle no disponible' }, 404)
+  }
+
+  const publication = await c.env.DB.prepare(
+    `SELECT id, user_id
+     FROM publications
+     WHERE id = ?
+       AND user_id = ?
+       AND deleted_at IS NULL
+     LIMIT 1`,
+  ).bind(
+    payload.publication_id,
+    payload.sub,
+  ).first<{ id: string; user_id: string }>()
+
+  if (!publication) {
+    return c.json({ success: false, error: 'Detalle no disponible' }, 404)
+  }
+
+  const isLinked = await publicationUsesProductDetail(
+    c.env.DB,
+    publication.id,
+    detailId,
+  )
+
+  if (!isLinked) {
+    return c.json({ success: false, error: 'Detalle no disponible' }, 404)
+  }
+
+  const detail = await c.env.DB.prepare(
+    `SELECT
+       id,
+       title,
+       description,
+       price,
+       image_url,
+       accent_color,
+       cta_type,
+       cta_label,
+       cta_target
+     FROM product_details
+     WHERE id = ?
+       AND tenant_id = ?
+       AND status = 'active'
+     LIMIT 1`,
+  ).bind(
+    detailId,
+    publication.user_id,
+  ).first<PublicProductDetailRow>()
+
+  if (!detail) {
+    return c.json({ success: false, error: 'Detalle no disponible' }, 404)
+  }
+
+  return c.json({
+    success: true,
+    data: publicProductDetailPayload(detail),
+  })
+})
+
 app.get('/view/:slug/product-details/:detailId', async (c) => {
   const slug = c.req.param('slug')
   const detailId = cleanPublicProductDetailId(c.req.param('detailId'))
