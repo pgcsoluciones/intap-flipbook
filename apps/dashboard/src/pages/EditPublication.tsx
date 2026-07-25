@@ -113,6 +113,14 @@ function createFabricElementId() {
   return `el_${Math.random().toString(36).slice(2, 9)}`
 }
 
+function productDetailActionForObject(obj: any) {
+  const nestedAction = obj?.data?.action
+  if (nestedAction?.type === 'open_product_detail') return nestedAction
+
+  const directAction = obj?.action
+  return directAction?.type === 'open_product_detail' ? directAction : null
+}
+
 function getEditorHistorySessionStorage() {
   if (typeof window === 'undefined') return null
   try {
@@ -1416,8 +1424,8 @@ export default function EditPublication() {
     const objects = canvas.getObjects?.() ?? []
     const entries: Array<{ key: string; id: number; x: number; y: number }> = []
     objects.forEach((obj: any, index: number) => {
-      const action = obj?.data?.action
-      if (action?.type !== 'open_product_detail') return
+      const action = productDetailActionForObject(obj)
+      if (!action) return
       const detailId = typeof action.detail_id === 'number' ? action.detail_id : Number(action.detail_id)
       if (!Number.isInteger(detailId) || detailId <= 0) return
       const rect = obj.getBoundingRect?.(true, true)
@@ -1587,6 +1595,7 @@ export default function EditPublication() {
           selectedRef.current = active
           setSelected(active)
           setSelectVersion((v) => v + 1)
+          queueProductDetailIndicatorRefresh()
           scheduleAutosaveRef.current()
         } catch (error) {
           console.error('[editor] apply history failed', error)
@@ -1599,7 +1608,7 @@ export default function EditPublication() {
       isUndoRedoRef.current = false
       console.error('[editor] apply history failed', error)
     }
-  }, [activePage, displayUrlByPublicUrl, restoreCanvasBackground])
+  }, [activePage, displayUrlByPublicUrl, queueProductDetailIndicatorRefresh, restoreCanvasBackground])
 
   useEffect(() => {
     pagesRef.current = pages
@@ -2262,9 +2271,10 @@ export default function EditPublication() {
     if (c && !isTextEditingRef.current && !isUndoRedoRef.current) {
       pushHistory(JSON.stringify(serializeCanvasJson(c)))
     }
+    queueProductDetailIndicatorRefresh()
     scheduleAutosave()
     markActivePageCanvasChanged()
-  }, [markActivePageCanvasChanged, pushHistory, scheduleAutosave])
+  }, [markActivePageCanvasChanged, pushHistory, queueProductDetailIndicatorRefresh, scheduleAutosave])
 
   // Mantiene la ref actualizada para que applyHistory pueda llamarla
   scheduleAutosaveRef.current = scheduleAutosave
@@ -2387,6 +2397,7 @@ export default function EditPublication() {
         setCanvasLoading(false)
         perfMark('canvas-first-useful-render', { pageId: activePage.id })
         perfMeasure('canvas-time-to-first-useful-render', 'canvas-load-start', undefined, { pageId: activePage.id })
+        queueProductDetailIndicatorRefresh()
         onDone()
       }
 
