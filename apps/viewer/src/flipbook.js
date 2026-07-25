@@ -1983,7 +1983,6 @@ async function init() {
       if (state.items.length) {
         trigger.style.display = ''
         sep.style.display = ''
-        openPanel()
       }
     })
   }

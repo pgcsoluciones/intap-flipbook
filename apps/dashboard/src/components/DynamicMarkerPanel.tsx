@@ -9,6 +9,7 @@ type Props = {
   selectedObject: any | null
   targetKind?: string | null
   ensureElementId: () => string | null
+  openImageBank?: (onSelect: (url: string, thumbnailUrl?: string) => void) => void
 }
 
 type Visibility = 'public' | 'internal'
@@ -509,7 +510,7 @@ function formFromMarker(marker: DynamicMarker): FormState {
   }
 }
 
-export default function DynamicMarkerPanel({ publicationId, pageId, selectedObject, targetKind, ensureElementId }: Props) {
+export default function DynamicMarkerPanel({ publicationId, pageId, selectedObject, targetKind, ensureElementId, openImageBank }: Props) {
   const targetObjectId = selectedObject?.data?.elementId ?? ''
   const [marker, setMarker] = useState<DynamicMarker | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm)
@@ -1026,6 +1027,46 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
 
   return (
     <div style={styles.stack}>
+      <div style={styles.saveBar}>
+        <div style={styles.saveBarText}>
+          <strong style={styles.saveBarTitle}>Guardar ficha</strong>
+          <span
+            style={{
+              ...styles.saveBarStatus,
+              color: error
+                ? '#b91c1c'
+                : saved
+                  ? '#047857'
+                  : saving
+                    ? '#4338ca'
+                    : '#6b7280',
+            }}
+          >
+            {saving
+              ? 'Guardando...'
+              : error
+                ? 'Revisa el error antes de continuar'
+                : saved || 'Guarda antes de abrir Vista previa'}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          style={{
+            ...styles.primaryBtn,
+            width: 'auto',
+            minWidth: 124,
+            padding: '9px 12px',
+            opacity: saving ? 0.65 : 1,
+            cursor: saving ? 'wait' : 'pointer',
+          }}
+          disabled={saving}
+          onClick={save}
+        >
+          {saving ? 'Guardando...' : 'Guardar cambios'}
+        </button>
+      </div>
+
       <Accordion title="Información principal" open>
         <div style={styles.headerRow}>
           <span style={{ ...styles.badge, ...statusStyle(marker.status) }}>{statusLabel(marker.status)}</span>
@@ -1232,13 +1273,70 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
             </select>
             <div style={styles.mediaUpload}>
               <div style={styles.mediaUploadTitle}>{mediaUploadConfig[item.type].label}</div>
-              <FileField
-                value={item.url}
-                onChange={(url) => updateListItem('media', index, { url })}
-                accept={mediaUploadConfig[item.type].accept}
-                hint={mediaUploadConfig[item.type].hint}
-                browseLabel={mediaUploadConfig[item.type].label}
-              />
+              {item.type === 'image' && openImageBank ? (
+                <div>
+                  {item.url ? (
+                    <img
+                      src={item.url}
+                      alt={item.alt || item.title || 'Vista previa'}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        maxHeight: 130,
+                        objectFit: 'contain',
+                        borderRadius: 8,
+                        background: '#f8fafc',
+                        marginBottom: 8,
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        border: '2px dashed #c7d2fe',
+                        borderRadius: 10,
+                        padding: '18px 12px',
+                        textAlign: 'center',
+                        color: '#9ca3af',
+                        fontSize: 12,
+                        background: '#f8fafc',
+                        marginBottom: 8,
+                      }}
+                    >
+                      Sin imagen seleccionada
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    style={{ ...styles.secondaryBtn, width: '100%' }}
+                    onClick={() => openImageBank((url, thumbnailUrl) => {
+                      updateListItem('media', index, {
+                        url,
+                        thumbnail_url: thumbnailUrl ?? '',
+                      })
+                    })}
+                  >
+                    Examinar imagen
+                  </button>
+
+                  <input
+                    style={{ ...styles.input, marginTop: 6 }}
+                    value={item.url}
+                    onChange={(event) => updateListItem('media', index, {
+                      url: event.target.value,
+                    })}
+                    placeholder="…o pega una URL: https://…"
+                  />
+                </div>
+              ) : (
+                <FileField
+                  value={item.url}
+                  onChange={(url) => updateListItem('media', index, { url })}
+                  accept={mediaUploadConfig[item.type].accept}
+                  hint={mediaUploadConfig[item.type].hint}
+                  browseLabel={mediaUploadConfig[item.type].label}
+                />
+              )}
             </div>
             <input style={styles.input} value={item.thumbnail_url} onChange={(e) => updateListItem('media', index, { thumbnail_url: e.target.value })} placeholder="URL miniatura opcional" />
             <input style={styles.input} value={item.title} onChange={(e) => updateListItem('media', index, { title: e.target.value })} placeholder="Título opcional" />
@@ -1589,12 +1687,8 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
       </Accordion>
 
       {error && <div style={styles.error}>{error}</div>}
-      {saved && <div style={styles.success}>{saved}</div>}
 
       <div style={styles.actions}>
-        <button type="button" style={styles.secondaryBtn} disabled={saving} onClick={save}>
-          {saving ? 'Guardando...' : 'Guardar cambios'}
-        </button>
         {marker.status === 'active' ? (
           <button type="button" style={styles.secondaryBtn} disabled={saving} onClick={() => setStatus('inactive')}>
             Desactivar
@@ -1666,6 +1760,38 @@ const styles: Record<string, React.CSSProperties> = {
   mediaUpload: { display: 'flex', flexDirection: 'column', gap: 6 },
   mediaUploadTitle: { fontSize: 12, fontWeight: 800, color: '#4F46E5' },
   actions: { display: 'flex', flexDirection: 'column', gap: 8 },
+  saveBar: {
+    position: 'sticky',
+    top: 0,
+    zIndex: 20,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    padding: 10,
+    margin: '-2px -2px 2px',
+    border: '1px solid #c7d2fe',
+    borderRadius: 10,
+    background: 'rgba(255,255,255,0.97)',
+    boxShadow: '0 8px 20px rgba(15,23,42,0.12)',
+    backdropFilter: 'blur(8px)',
+  },
+  saveBarText: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    minWidth: 0,
+  },
+  saveBarTitle: {
+    color: '#111827',
+    fontSize: 12,
+    lineHeight: 1.2,
+  },
+  saveBarStatus: {
+    fontSize: 11,
+    lineHeight: 1.25,
+    overflowWrap: 'anywhere',
+  },
   primaryBtn: { width: '100%', background: '#4F46E5', color: '#fff', border: 'none', borderRadius: 8, padding: '10px', cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'inherit' },
   secondaryBtn: { width: '100%', background: '#fff', color: '#4F46E5', border: '1.5px solid #4F46E5', borderRadius: 8, padding: '9px 10px', cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'inherit' },
   removeBtn: { width: '100%', background: '#fff', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 700, fontFamily: 'inherit' },

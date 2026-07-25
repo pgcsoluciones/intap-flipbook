@@ -9,6 +9,7 @@ import proposalRoutes from './routes/proposals'
 import unitRoutes from './routes/units'
 import svgRoutes from './routes/svg'
 import dynamicMarkerRoutes from './routes/dynamicMarkers'
+import productDetailRoutes from './routes/productDetails'
 import publicDynamicMarkerRoutes, { publicMarkersForPublication } from './routes/publicDynamicMarkers'
 import appointmentRoutes from './routes/appointmentCalendars'
 import leadIntakeRoutes from './routes/leadIntakes'
@@ -16,6 +17,11 @@ import leadIntakeCustomerMessageRoutes from './routes/leadIntakeCustomerMessages
 import { jwtMiddleware } from './middleware/jwt'
 import { verifyJwt } from './lib/jwt'
 import { getUserPlan, getPlanUsage } from './lib/plans'
+import {
+  canvasUsesOpenProductDetail,
+  cleanProductDetailId,
+  parseCanvasJson,
+} from './lib/productDetailsCanvas'
 import type { AuthVariables } from './middleware/jwt'
 
 export type Env = {
@@ -195,6 +201,7 @@ app.route('/api/publications', publicationRoutes)
 // Otherwise the public read-only upload asset route can be intercepted.
 app.route('/api/upload', uploadRoutes)
 app.route('/api/dynamic-markers', dynamicMarkerRoutes)
+app.route('/api/product-details', productDetailRoutes)
 app.route('/', appointmentRoutes)
 app.route('/', leadIntakeRoutes)
 app.route('/', leadIntakeCustomerMessageRoutes)
@@ -564,6 +571,130 @@ app.get('/view/preview/:token', async (c) => {
 
   if (!pub) return c.json({ success: false, error: 'Publication not found' }, 404)
   return c.json(await viewerPayload(c.env.DB, pub))
+})
+
+type PublicProductDetailRow = {
+  id: number
+  title: string
+  description: string | null
+  price: string | null
+  image_url: string | null
+  accent_color: string | null
+  cta_type: string | null
+  cta_label: string | null
+  cta_target: string | null
+}
+
+function cleanPublicProductDetailId(value: unknown): number | null {
+  return cleanProductDetailId(value)
+}
+
+function publicProductDetailPayload(detail: PublicProductDetailRow) {
+  return {
+    id: detail.id,
+    title: detail.title,
+    description: detail.description,
+    price: detail.price,
+    image_url: detail.image_url,
+    accent_color: detail.accent_color || '#4F46E5',
+    cta_type: detail.cta_type,
+    cta_label: detail.cta_label,
+    cta_target: detail.cta_target,
+  }
+}
+
+async function publicationUsesProductDetail(
+  db: D1Database,
+  publicationId: string,
+  detailId: number,
+): Promise<boolean> {
+  const { results } = await db.prepare(
+    `SELECT canvas_json
+     FROM pages
+     WHERE publication_id = ?
+       AND canvas_json LIKE '%open_product_detail%'`,
+  ).bind(publicationId).all<{ canvas_json: string | null }>()
+
+  return (results ?? []).some((row) =>
+    canvasUsesOpenProductDetail(
+      parseCanvasJson(row.canvas_json),
+      detailId,
+    )
+  )
+}
+
+app.get('/view/:slug/product-details/:detailId', async (c) => {
+  const slug = c.req.param('slug')
+  const detailId = cleanPublicProductDetailId(c.req.param('detailId'))
+
+  if (!detailId) {
+    return c.json(
+      { success: false, error: 'Detalle no disponible' },
+      404,
+    )
+  }
+
+  const publication = await c.env.DB.prepare(
+    `SELECT id, user_id
+     FROM publications
+     WHERE public_slug = ?
+       AND status = 'published'
+       AND deleted_at IS NULL
+     LIMIT 1`,
+  ).bind(slug).first<{ id: string; user_id: string }>()
+
+  if (!publication) {
+    return c.json(
+      { success: false, error: 'Detalle no disponible' },
+      404,
+    )
+  }
+
+  const isLinked = await publicationUsesProductDetail(
+    c.env.DB,
+    publication.id,
+    detailId,
+  )
+
+  if (!isLinked) {
+    return c.json(
+      { success: false, error: 'Detalle no disponible' },
+      404,
+    )
+  }
+
+  const detail = await c.env.DB.prepare(
+    `SELECT
+       id,
+       title,
+       description,
+       price,
+       image_url,
+       accent_color,
+       cta_type,
+       cta_label,
+       cta_target
+     FROM product_details
+     WHERE id = ?
+       AND tenant_id = ?
+       AND status = 'active'
+     LIMIT 1`,
+  ).bind(
+    detailId,
+    publication.user_id,
+  ).first<PublicProductDetailRow>()
+
+  if (!detail) {
+    return c.json(
+      { success: false, error: 'Detalle no disponible' },
+      404,
+    )
+  }
+
+  return c.json({
+    success: true,
+    data: publicProductDetailPayload(detail),
+  })
 })
 
 app.get('/view/:slug', async (c) => {

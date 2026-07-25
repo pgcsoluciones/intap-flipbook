@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 // @ts-ignore
 import { fabric } from 'fabric'
-import { ApiRequestError, api, toCanvasSafeAssetUrl, type MediaAsset, type MediaFolder } from '../lib/api'
+import { ApiRequestError, api, toCanvasSafeAssetUrl, type MediaAsset, type MediaFolder, type ProductDetail, type ProductDetailStatus } from '../lib/api'
 import { PageBatchConfirmationError, pdfPageAssetName, processPageBatch, uploadPdfRenderedPagesAsAssets } from '../lib/pageBatch'
 import { optimizeImageFile, type OptimizedImageResult } from '../lib/imageOptimization'
 import {
@@ -60,7 +60,13 @@ import FileField from '../components/FileField'
 import MediaPicker, { resolveExistingMediaFolderFilter } from '../components/MediaPicker'
 import WidgetPreview from '../components/WidgetPreview'
 import DynamicMarkerPanel from '../components/DynamicMarkerPanel'
-
+import ProductDetailModal from '../components/ProductDetailModal'
+import {
+  buildProjectImageBank,
+  collectImageBankFromPages,
+  mergeProjectImageBank,
+  writeProjectImageBank,
+} from '../lib/imageBank'
 // Tipos MIME para los distintos campos de subida del editor
 const ACCEPT_AUDIO = 'audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/mp4,audio/aac'
 const ACCEPT_VIDEO = 'video/mp4,video/webm,video/ogg'
@@ -92,6 +98,10 @@ type EditorMediaPickerIntent =
   | { type: 'action-gallery-replace'; pageId: string; elementId: string; imageIndex: number }
   | { type: 'widget-image-field'; pageId: string; elementId: string; field: 'image' | 'poster' }
   | { type: 'action-image-field'; pageId: string; elementId: string; field: 'image' }
+  | { type: 'dynamic-marker-image'; apply: (url: string, thumbnailUrl?: string) => void }
+type OpenDynamicMarkerImagePicker = (
+  onSelect: (url: string, thumbnailUrl?: string) => void
+) => void
 type OpenWidgetGalleryMediaPicker = (request:
   | { type: 'add'; max: number }
   | { type: 'replace'; imageIndex: number }
@@ -780,7 +790,7 @@ const BUTTON_PRESETS: { label: string; variant: 'solid' | 'outline' | 'pill' }[]
 ]
 
 // Tipos de acción de un botón (qué ocurre al hacer clic en el viewer)
-type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'popup_audio' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos' | 'popup_message' | 'show_comment' | 'copy_text'
+type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'popup_audio' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos' | 'popup_message' | 'show_comment' | 'copy_text' | 'open_product_detail'
 const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'link',           label: 'Abrir Enlace',        icon: 'link' },
   { type: 'page',           label: 'Ir a Página',         icon: 'pages' },
@@ -794,11 +804,20 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'popup_message',  label: 'Mensaje emergente',   icon: 'badge' },
   { type: 'show_comment',   label: 'Mostrar comentario',  icon: 'contact' },
   { type: 'copy_text',      label: 'Copiar texto',        icon: 'duplicate' },
+  { type: 'open_product_detail', label: 'Abrir detalle',  icon: 'badge' },
   { type: 'download',       label: 'Descargar archivo',   icon: 'uploads' },
   { type: 'gallery_images', label: 'Galería de imágenes', icon: 'image' },
   { type: 'gallery_videos', label: 'Galería de videos',   icon: 'video' },
   { type: 'show_hide',      label: 'Mostrar/Ocultar',     icon: 'elements' },
 ]
+
+type ProductDetailIndicator = {
+  key: string
+  x: number
+  y: number
+  status: ProductDetailStatus
+  title: string
+}
 
 // Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
 type WidgetType = 'map' | 'whatsapp' | 'social' | 'contact' | 'video' | 'audio' | 'qr' | 'barcode' | 'gallery' | 'table' | 'like' | 'embed' | 'quiz' | 'popup_banner' | 'download' | 'units_table' | 'product_card'
@@ -1186,26 +1205,6 @@ const POPUP_TEMPLATES: { key: string; label: string; defaults: Partial<typeof WI
   { key: 'custom',  label: '✏️ Personalizado',      defaults: { bgColor: '#111827', textColor: '#fff' } },
 ]
 
-// Reúne todas las URLs de imágenes ya usadas en el proyecto: fondos de página
-// y elementos de imagen dentro del canvas de cada página.
-function collectBankFromPages(ps: any[]): string[] {
-  const urls = new Set<string>()
-  for (const pg of ps) {
-    if (pg?.image_url) urls.add(pg.image_url)
-    const cj = pg?.canvas_json
-    if (cj) {
-      try {
-        const parsed = typeof cj === 'string' ? JSON.parse(cj) : cj
-        for (const o of parsed?.objects ?? []) {
-          if (o?.type === 'image' && o?.src) urls.add(o.src)
-          if (o?.data?.src) urls.add(o.data.src)
-        }
-      } catch { /* canvas_json inválido: lo ignoramos */ }
-    }
-  }
-  return [...urls]
-}
-
 export default function EditPublication() {
   const { id } = useParams<{ id: string }>()
   const [searchParams] = useSearchParams()
@@ -1230,6 +1229,11 @@ export default function EditPublication() {
   const [oldImagesPendingCount, setOldImagesPendingCount] = useState(0)
   const [legacyOptimization, setLegacyOptimization] = useState({ running: false, cancelled: false, done: 0, total: 0, failed: 0, message: '' })
   const [selectVersion, setSelectVersion] = useState(0) // fuerza refresco del panel de props
+  const [productDetailIndicators, setProductDetailIndicators] = useState<ProductDetailIndicator[]>([])
+  const productDetailIndicatorCacheRef = useRef<Map<number, { status: ProductDetailStatus; title: string } | null>>(new Map())
+  const productDetailIndicatorPendingRef = useRef<Map<number, Promise<void>>>(new Map())
+  const productDetailIndicatorFrameRef = useRef<number | null>(null)
+  const productDetailIndicatorLastRef = useRef('')
   // Miniaturas reales por página: conserva solo el último dataURL válido para page.id + versión.
   const [thumbnailByPageId, setThumbnailByPageId] = useState<Record<string, PageThumbnailCacheEntry>>({})
   const [thumbnailUrlByPublicUrl, setThumbnailUrlByPublicUrl] = useState<Record<string, string>>({})
@@ -1358,6 +1362,10 @@ export default function EditPublication() {
   const pagesRef = useRef<any[]>([])
   // Solo para priorización/verificación de página activa; no reconstruye snapshots live.
   const activePageRef = useRef<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const imgInputRef  = useRef<HTMLInputElement>(null)
+  const svgInputRef = useRef<HTMLInputElement>(null)
+  const pdfPagesInputRef = useRef<HTMLInputElement>(null)
   // Objeto que se va a reemplazar in-situ (icono/SVG/forma/botón/texto): al insertar
   // el siguiente elemento desde el panel, se intercambia por éste conservando caja y posición.
   const replaceTargetRef = useRef<any>(null)
@@ -1396,6 +1404,71 @@ export default function EditPublication() {
       attempted: !pageId || !objectId,
     }
   }
+
+  const refreshProductDetailIndicators = useCallback(() => {
+    const canvas = fabricRef.current
+    if (!canvas) {
+      productDetailIndicatorLastRef.current = ''
+      setProductDetailIndicators([])
+      return
+    }
+
+    const objects = canvas.getObjects?.() ?? []
+    const entries: Array<{ key: string; id: number; x: number; y: number }> = []
+    objects.forEach((obj: any, index: number) => {
+      const action = obj?.data?.action
+      if (action?.type !== 'open_product_detail') return
+      const detailId = typeof action.detail_id === 'number' ? action.detail_id : Number(action.detail_id)
+      if (!Number.isInteger(detailId) || detailId <= 0) return
+      const rect = obj.getBoundingRect?.(true, true)
+      if (!rect) return
+      entries.push({
+        key: obj.data?.elementId || `${detailId}:${index}`,
+        id: detailId,
+        x: Math.max(8, Math.min(CANVAS_W - 8, (rect.left ?? 0) + (rect.width ?? 0) - 6)),
+        y: Math.max(8, Math.min(CANVAS_H - 8, (rect.top ?? 0) + 6)),
+      })
+    })
+
+    const indicators: ProductDetailIndicator[] = []
+    entries.forEach((entry) => {
+      if (!productDetailIndicatorCacheRef.current.has(entry.id) && !productDetailIndicatorPendingRef.current.has(entry.id)) {
+        const pending = api.productDetails.get(entry.id)
+          .then((res) => {
+            productDetailIndicatorCacheRef.current.set(entry.id, {
+              status: res.data.status,
+              title: res.data.title || `Detalle ${entry.id}`,
+            })
+          })
+          .catch(() => {
+            productDetailIndicatorCacheRef.current.set(entry.id, null)
+          })
+          .finally(() => {
+            productDetailIndicatorPendingRef.current.delete(entry.id)
+            refreshProductDetailIndicators()
+          })
+        productDetailIndicatorPendingRef.current.set(entry.id, pending)
+      }
+      const info = productDetailIndicatorCacheRef.current.get(entry.id)
+      if (!info) return
+      indicators.push({ key: entry.key, x: entry.x, y: entry.y, status: info.status, title: info.title })
+    })
+
+    const nextKey = JSON.stringify(indicators)
+    if (nextKey !== productDetailIndicatorLastRef.current) {
+      productDetailIndicatorLastRef.current = nextKey
+      setProductDetailIndicators(indicators)
+    }
+  }, [])
+
+  const queueProductDetailIndicatorRefresh = useCallback(() => {
+    if (productDetailIndicatorFrameRef.current != null) cancelAnimationFrame(productDetailIndicatorFrameRef.current)
+    productDetailIndicatorFrameRef.current = requestAnimationFrame(() => {
+      productDetailIndicatorFrameRef.current = null
+      refreshProductDetailIndicators()
+    })
+  }, [refreshProductDetailIndicators])
+
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
   const isTextEditingRef = useRef(false)
@@ -1777,7 +1850,7 @@ export default function EditPublication() {
 
   const resolvePublicationThumbnails = useCallback(async (pageList: any[]) => {
     if (!id || !pageList.length) return
-    const urls = collectBankFromPages(pageList).map((url) => toCanvasSafeAssetUrl(url)).filter(Boolean)
+    const urls = collectImageBankFromPages(pageList).map((url) => toCanvasSafeAssetUrl(url)).filter(Boolean)
     if (!urls.length) return
     try {
       const res = await api.mediaAssets.resolveThumbnails({ publication_id: id, public_urls: urls })
@@ -1819,7 +1892,7 @@ export default function EditPublication() {
       } catch {}
       const hiddenUrls = new Set(hidden.map((url) => toCanvasSafeAssetUrl(url)).filter(Boolean))
       const merged = Array.from(new Set(
-        [...collectBankFromPages(ps), ...stored]
+        [...collectImageBankFromPages(ps), ...stored]
           .map((url) => toCanvasSafeAssetUrl(url))
           .filter(Boolean),
       )).filter((url) => !hiddenUrls.has(url))
@@ -1897,7 +1970,7 @@ export default function EditPublication() {
     legacyOptimizationCancelRef.current = false
     const knownUrls = new Set(mediaBankAssets.map((asset) => toCanvasSafeAssetUrl(asset.public_url)).filter(Boolean))
     const legacyCandidates = Array.from(new Set([
-      ...collectBankFromPages(pagesRef.current),
+      ...collectImageBankFromPages(pagesRef.current),
       ...imageBank,
     ].map((url) => toCanvasSafeAssetUrl(url)).filter(Boolean)))
       .filter((url) => !knownUrls.has(url))
@@ -2500,9 +2573,11 @@ export default function EditPublication() {
       if (isLoading) return  // no guardar durante la carga inicial del JSON
       if (isTextEditingRef.current) return
       if (!isUndoRedoRef.current) pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
+      queueProductDetailIndicatorRefresh()
       scheduleAutosave()
       markActivePageCanvasChanged()
     }
+    const onProductDetailObjectMove = () => queueProductDetailIndicatorRefresh()
     const onTextEditingEntered = () => {
       isTextEditingRef.current = true
       clearTimeout(autosaveTimer.current)
@@ -2563,6 +2638,9 @@ export default function EditPublication() {
     canvas.on('object:modified', onChange)
     canvas.on('object:added', onChange)
     canvas.on('object:removed', onChange)
+    canvas.on('object:moving', onProductDetailObjectMove)
+    canvas.on('object:scaling', onProductDetailObjectMove)
+    canvas.on('object:rotating', onProductDetailObjectMove)
     // PROTECTED: Do not replace with text:changed.
     // Saving per keystroke causes focus loss and stale saves.
     canvas.on('text:editing:entered', onTextEditingEntered)
@@ -2582,6 +2660,14 @@ export default function EditPublication() {
       ) {
         persistCanvas(cleanupPageId, cleanupCanvas, false)
       }
+
+      if (productDetailIndicatorFrameRef.current != null) {
+        cancelAnimationFrame(productDetailIndicatorFrameRef.current)
+        productDetailIndicatorFrameRef.current = null
+      }
+      productDetailIndicatorLastRef.current = ''
+      setProductDetailIndicators([])
+
       canvasGenerationRef.current += 1
       canvasReadyRef.current = false
       setCanvasLoading(false)
@@ -4062,6 +4148,28 @@ export default function EditPublication() {
         return
       }
 
+      if (intent.type === 'dynamic-marker-image') {
+        const selectedIndex = selectedUrls.findIndex(Boolean)
+        const selectedUrl = selectFirstMediaPickerUrl({ urls: selectedUrls, assets })
+        const selectedAsset = selectedIndex >= 0 ? assets?.[selectedIndex] : assets?.[0]
+
+        if (!selectedUrl) {
+          throw new Error('No se pudo obtener la imagen seleccionada.')
+        }
+
+        const thumbnailUrl =
+          typeof (selectedAsset as any)?.thumbnail_url === 'string'
+            ? (selectedAsset as any).thumbnail_url
+            : undefined
+
+        intent.apply(selectedUrl, thumbnailUrl)
+
+        if (selectedAsset) rememberMediaAssets([selectedAsset])
+        clearPickerIntent()
+        void refreshMediaBank()
+        return
+      }
+
       if (intent.type === 'widget-gallery-add' || intent.type === 'widget-gallery-replace') {
         const applied = updateWidgetGalleryImagesByIntent(intent, selectedUrls)
         if (!applied) throw new Error('No se pudo aplicar la selección a la galería.')
@@ -4422,6 +4530,24 @@ export default function EditPublication() {
                 onContextMenu={onCanvasContextMenu}
               >
                 <canvas ref={canvasRef} />
+
+                <div style={s.productDetailIndicatorLayer}>
+                  {productDetailIndicators.map((indicator) => (
+                    <span
+                      key={indicator.key}
+                      title={`Detalle de producto: ${indicator.status === 'active' ? 'activa' : 'inactiva'} - ${indicator.title}`}
+                      style={{
+                        ...s.productDetailIndicator,
+                        left: indicator.x,
+                        top: indicator.y,
+                        background: indicator.status === 'active' ? '#16a34a' : '#dc2626',
+                      }}
+                    >
+                      i
+                    </span>
+                  ))}
+                </div>
+
                 {canvasLoading && (
                   <div style={s.canvasLoadingOverlay}>
                     <span style={s.canvasLoadingText}>Cargando página...</span>
@@ -4487,7 +4613,10 @@ export default function EditPublication() {
               pages={pages}
               publicationId={id}
               pageId={activePage?.id}
-              onChange={() => { recordCurrentCanvasChange() }}
+              onChange={() => {
+                recordCurrentCanvasChange()
+                queueProductDetailIndicatorRefresh()
+              }}
               onSyncToggle={handleSvgSyncToggle}
               onReframeImage={startImageReframe}
               onToggleHide={toggleHideInEditor}
@@ -4529,6 +4658,12 @@ export default function EditPublication() {
                 }
                 openMediaPicker({ type: 'action-gallery-replace', pageId, elementId, imageIndex: request.imageIndex })
               }}
+              openDynamicMarkerImagePicker={(onSelect) => {
+                openMediaPicker({
+                  type: 'dynamic-marker-image',
+                  apply: onSelect,
+                })
+              }}
             />
           ) : (
             <div style={s.propsScroll}>
@@ -4554,6 +4689,12 @@ export default function EditPublication() {
                     selectedObject={null}
                     targetKind={null}
                     ensureElementId={() => null}
+                    openImageBank={(onSelect) => {
+                      openMediaPicker({
+                        type: 'dynamic-marker-image',
+                        apply: onSelect,
+                      })
+                    }}
                   />
                 </div>
               )}
@@ -4616,6 +4757,7 @@ export default function EditPublication() {
             : undefined
         }
       />
+
 
       {/* ── Vista previa de la hoja activa ── */}
       {sheetPreview && <SheetPreviewModal data={sheetPreview} onClose={() => setSheetPreview(null)} />}
@@ -5517,6 +5659,7 @@ function PropsPanel({
   openObjectImageReplacement,
   openWidgetGalleryMediaPicker,
   openActionGalleryMediaPicker,
+  openDynamicMarkerImagePicker,
 }: {
   obj: any
   canvas: any
@@ -5530,6 +5673,7 @@ function PropsPanel({
   openObjectImageReplacement?: (obj: FabricObjectInstance) => void
   openWidgetGalleryMediaPicker?: (obj: FabricObjectInstance, request: Parameters<OpenWidgetGalleryMediaPicker>[0]) => void
   openActionGalleryMediaPicker?: (obj: FabricObjectInstance, request: Parameters<OpenWidgetGalleryMediaPicker>[0]) => void
+  openDynamicMarkerImagePicker?: OpenDynamicMarkerImagePicker
 }) {
   const kind: string = (obj as any).data?.kind
     ?? (obj instanceof fabric.Textbox || obj instanceof fabric.Text ? 'text' : 'shape')
@@ -5943,6 +6087,7 @@ function PropsPanel({
           selectedObject={obj}
           targetKind={kind}
           ensureElementId={ensureElementId}
+          openImageBank={openDynamicMarkerImagePicker}
         />
       </div>
       )}
@@ -7336,7 +7481,10 @@ function ActionEditor({
             <button
               key={a.type}
               style={{ ...s.actionCard, ...(current === a.type ? s.actionCardActive : {}) }}
-              onClick={() => setAction({ type: a.type })}
+              onClick={() => {
+                if (a.type === 'open_product_detail') setData({ action: { type: a.type } })
+                else setAction({ type: a.type })
+              }}
               title={a.label}
             >
               <Icon name={a.icon} size={16} />
@@ -7526,10 +7674,262 @@ function ActionEditor({
         </>
       )}
 
+      {action.type === 'open_product_detail' && (
+        <ProductDetailActionSelector
+          detailId={action.detail_id}
+          onChange={(detailId) => setData({ action: { type: 'open_product_detail', detail_id: detailId } })}
+        />
+      )}
+
       {current !== 'none' && (
         <TrackingControl value={data.tracking} onChange={(t) => setData({ tracking: t })} />
       )}
     </>
+  )
+}
+
+function ProductDetailActionSelector({
+  detailId,
+  onChange,
+}: {
+  detailId: unknown
+  onChange: (detailId: number) => void
+}) {
+  const parsedDetailId = typeof detailId === 'number' ? detailId : Number(detailId)
+  const validDetailId = Number.isInteger(parsedDetailId) && parsedDetailId > 0 ? parsedDetailId : null
+  const pageSize = 10
+  const [query, setQuery] = React.useState('')
+  const [activeQuery, setActiveQuery] = React.useState('')
+  const [page, setPage] = React.useState(1)
+  const [total, setTotal] = React.useState(0)
+  const [items, setItems] = React.useState<ProductDetail[]>([])
+  const [selectedDetail, setSelectedDetail] = React.useState<ProductDetail | null>(null)
+  const [loading, setLoading] = React.useState(false)
+  const [selectedLoading, setSelectedLoading] = React.useState(false)
+  const [error, setError] = React.useState('')
+  const [selectedError, setSelectedError] = React.useState('')
+  const [previewDetail, setPreviewDetail] = React.useState<ProductDetail | null>(null)
+  const previewButtonRef = React.useRef<HTMLButtonElement>(null)
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const visibleItems = items.filter((item) => item.id !== validDetailId)
+  const showPagination = total > pageSize
+
+  const loadItems = React.useCallback(async (term = '', nextPage = 1) => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await api.productDetails.list({
+        q: term.trim() || undefined,
+        status: 'active',
+        limit: pageSize,
+        offset: (Math.max(1, nextPage) - 1) * pageSize,
+      })
+      const rows = res.data ?? []
+      const nextTotal = Number(res.page?.total ?? rows.length)
+      const nextTotalPages = Math.max(1, Math.ceil(nextTotal / pageSize))
+      const safePage = Math.min(Math.max(1, nextPage), nextTotalPages)
+      if (safePage !== nextPage && nextTotal > 0) {
+        const retry = await api.productDetails.list({
+          q: term.trim() || undefined,
+          status: 'active',
+          limit: pageSize,
+          offset: (safePage - 1) * pageSize,
+        })
+        setItems(retry.data ?? [])
+        setTotal(Number(retry.page?.total ?? retry.data?.length ?? 0))
+        setPage(safePage)
+      } else {
+        setItems(rows)
+        setTotal(nextTotal)
+        setPage(safePage)
+      }
+    } catch (err) {
+      setItems([])
+      setTotal(0)
+      setError(err instanceof Error ? err.message : 'No se pudieron cargar los detalles de producto.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void loadItems('', 1)
+    }, [loadItems])
+
+  React.useEffect(() => {
+    if (!validDetailId) {
+      setSelectedDetail(null)
+      setSelectedError(detailId == null || detailId === '' ? '' : 'El detail_id guardado no es numerico positivo.')
+      return
+    }
+
+    let cancelled = false
+    setSelectedLoading(true)
+    setSelectedError('')
+    api.productDetails.get(validDetailId)
+      .then((res) => {
+        if (cancelled) return
+        setSelectedDetail(res.data)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setSelectedDetail(null)
+        setSelectedError(err instanceof Error ? err.message : 'Ficha no disponible.')
+      })
+      .finally(() => {
+        if (!cancelled) setSelectedLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [detailId, validDetailId])
+
+  async function selectDetail(item: ProductDetail) {
+    setError('')
+    try {
+      const res = await api.productDetails.linkable(item.id)
+      onChange(res.data.id)
+      setSelectedDetail(res.data)
+      setSelectedError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo vincular el detalle.')
+    }
+  }
+
+  return (
+    <PropGroup label="Detalle de producto">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {selectedLoading ? (
+          <p style={cp.hint}>Cargando ficha vinculada...</p>
+        ) : selectedDetail ? (
+          <div style={{
+            border: `1px solid ${selectedDetail.status === 'active' ? '#bbf7d0' : '#fde68a'}`,
+            background: selectedDetail.status === 'active' ? '#f0fdf4' : '#fffbeb',
+            borderRadius: 8,
+            padding: '8px 10px',
+            fontSize: 12,
+            color: selectedDetail.status === 'active' ? '#166534' : '#92400e',
+          }}>
+            <strong style={{ display: 'block', color: '#111827', marginBottom: 2 }}>{selectedDetail.title}</strong>
+            <span>{selectedDetail.internal_name} · {selectedDetail.status === 'active' ? 'Activa' : 'Inactiva'}</span>
+            {selectedDetail.status !== 'active' && (
+              <span style={{ display: 'block', marginTop: 4 }}>Esta ficha está inactiva. Puedes cambiarla por otra activa.</span>
+            )}
+            <button
+              ref={previewButtonRef}
+              type="button"
+              style={{ ...s.alignBtn, width: '100%', marginTop: 8, fontSize: 12, fontWeight: 700, color: '#4F46E5', borderColor: '#c7d2fe', background: '#fff' }}
+              onClick={() => setPreviewDetail(selectedDetail)}
+            >
+              Vista previa
+            </button>
+          </div>
+        ) : selectedError ? (
+          <div style={{ border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b', borderRadius: 8, padding: '8px 10px', fontSize: 12 }}>
+            Ficha no disponible. Se conserva temporalmente el detail_id {validDetailId ?? String(detailId)} para que puedas reemplazarlo.
+          </div>
+        ) : (
+          <p style={cp.hint}>Selecciona una ficha activa para vincular este objeto.</p>
+        )}
+
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            style={s.propInput}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const term = query.trim()
+                setActiveQuery(term)
+                setPage(1)
+                void loadItems(term, 1)
+              }
+            }}
+            placeholder="Buscar por nombre interno o titulo"
+          />
+          <button
+            type="button"
+            style={{ ...s.alignBtn, flex: '0 0 auto', padding: '7px 10px' }}
+            disabled={loading}
+            onClick={() => {
+              const term = query.trim()
+              setActiveQuery(term)
+              setPage(1)
+              void loadItems(term, 1)
+            }}
+          >
+            Buscar
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {loading ? (
+            <p style={cp.hint}>Cargando detalles activos...</p>
+          ) : visibleItems.length === 0 ? (
+            <p style={cp.hint}>No hay detalles activos con esa busqueda.</p>
+          ) : (
+            visibleItems.map((item) => {
+              const selected = validDetailId === item.id
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  style={{
+                    border: selected ? '1px solid #4F46E5' : '1px solid #e5e7eb',
+                    background: selected ? '#eef2ff' : '#fff',
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                  onClick={() => void selectDetail(item)}
+                >
+                  <strong style={{ display: 'block', fontSize: 12.5, color: '#111827', overflowWrap: 'anywhere' }}>{item.title}</strong>
+                  <span style={{ display: 'block', marginTop: 2, fontSize: 11.5, color: '#6b7280', overflowWrap: 'anywhere' }}>{item.internal_name} · Activa</span>
+                </button>
+              )
+            })
+          )}
+        </div>
+
+        {showPagination && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              style={{ ...s.alignBtn, opacity: page <= 1 || loading ? 0.5 : 1, cursor: page <= 1 || loading ? 'not-allowed' : 'pointer' }}
+              disabled={page <= 1 || loading}
+              onClick={() => void loadItems(activeQuery, page - 1)}
+            >
+              Anterior
+            </button>
+            <span style={{ color: '#6b7280', fontSize: 12, fontWeight: 800 }}>Página {page} de {totalPages}</span>
+            <button
+              type="button"
+              style={{ ...s.alignBtn, opacity: page >= totalPages || loading ? 0.5 : 1, cursor: page >= totalPages || loading ? 'not-allowed' : 'pointer' }}
+              disabled={page >= totalPages || loading}
+              onClick={() => void loadItems(activeQuery, page + 1)}
+            >
+              Siguiente
+            </button>
+          </div>
+        )}
+
+        {error && <div style={{ border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b', borderRadius: 8, padding: '7px 9px', fontSize: 12 }}>{error}</div>}
+        <Link to="/product-details" style={{ color: '#4F46E5', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>
+          Gestionar detalles de producto
+        </Link>
+        {previewDetail && (
+          <ProductDetailModal
+            detail={previewDetail}
+            opener={previewButtonRef.current}
+            onClose={() => setPreviewDetail(null)}
+          />
+        )}
+      </div>
+    </PropGroup>
   )
 }
 
@@ -7983,6 +8383,8 @@ const s: Record<string, React.CSSProperties> = {
   canvasWrap:  { flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 32, alignItems: 'flex-start' },
   canvasLoadingOverlay: { position: 'absolute', inset: 0, background: 'rgba(249,250,251,0.86)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' },
   canvasLoadingText: { fontSize: 14, fontWeight: 700, color: '#374151', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', boxShadow: '0 8px 24px rgba(15,23,42,0.12)' },
+  productDetailIndicatorLayer: { position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 5 } as React.CSSProperties,
+  productDetailIndicator: { position: 'absolute', transform: 'translate(-50%, -50%)', width: 18, height: 18, borderRadius: 999, color: '#fff', border: '2px solid #fff', boxShadow: '0 4px 12px rgba(15,23,42,.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, lineHeight: 1, fontWeight: 900, fontFamily: 'Inter, system-ui, sans-serif', pointerEvents: 'auto', cursor: 'help' } as React.CSSProperties,
   adjustBar:   { display: 'flex', alignItems: 'center', gap: 14, padding: '8px 16px', background: '#eef2ff', borderBottom: '1px solid #c7d2fe', flexShrink: 0, flexWrap: 'wrap' } as React.CSSProperties,
   adjustReset: { background: '#fff', border: '1px solid #c7d2fe', borderRadius: 7, padding: '5px 12px', fontSize: 12, fontWeight: 600, color: '#4338ca', cursor: 'pointer', fontFamily: 'inherit' } as React.CSSProperties,
   insTabs:   { display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', flexShrink: 0 } as React.CSSProperties,

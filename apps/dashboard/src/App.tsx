@@ -9,6 +9,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const NewPublication = lazy(() => import('./pages/NewPublication'))
 const Publications = lazy(() => import('./pages/Publications'))
 const TenantDynamicMarkers = lazy(() => import('./pages/TenantDynamicMarkers'))
+const TenantProductDetails = lazy(() => import('./pages/TenantProductDetails'))
 const Settings = lazy(() => import('./pages/Settings'))
 const PlanPage = lazy(() => import('./pages/PlanPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
@@ -76,6 +77,7 @@ export default function App() {
           <Route path="/dashboard" element={<Layout><Dashboard /></Layout>} />
           <Route path="/publications" element={<Layout><Publications /></Layout>} />
           <Route path="/dynamic-data" element={<Layout><TenantDynamicMarkers /></Layout>} />
+          <Route path="/product-details" element={<Layout><TenantProductDetails /></Layout>} />
           <Route path="/publications/new" element={<NewPublication />} />
           <Route path="/publications/:id/editor" element={<EditPublication />} />
           <Route path="/publications/:id/preview" element={<Layout><Preview /></Layout>} />
