@@ -30,6 +30,101 @@ function normalizeCanvasJson(value: unknown) {
   return JSON.stringify(source)
 }
 
+function collectOpenProductDetailIds(
+  value: unknown,
+  out = new Set<number>(),
+): Set<number> {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectOpenProductDetailIds(item, out))
+    return out
+  }
+
+  if (!value || typeof value !== 'object') return out
+
+  const record = value as Record<string, unknown>
+  const data = (
+    record.data
+    && typeof record.data === 'object'
+    && !Array.isArray(record.data)
+  )
+    ? record.data as Record<string, unknown>
+    : null
+
+  const actionCandidates = [
+    record.action,
+    data?.action,
+  ]
+
+  for (const action of actionCandidates) {
+    if (!action || typeof action !== 'object' || Array.isArray(action)) {
+      continue
+    }
+
+    const actionRecord = action as Record<string, unknown>
+
+    if (actionRecord.type !== 'open_product_detail') continue
+
+    const rawId = actionRecord.detail_id
+    if (rawId === null || rawId === undefined || rawId === '') continue
+
+    const parsed = typeof rawId === 'number' ? rawId : Number(rawId)
+
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new Error('detail_id debe ser un número positivo')
+    }
+
+    out.add(parsed)
+  }
+
+  Object.values(record).forEach((child) =>
+    collectOpenProductDetailIds(child, out)
+  )
+
+  return out
+}
+
+async function validateProductDetailCanvasActions(
+  db: D1Database,
+  canvasJson: string | undefined,
+  userId: string,
+) {
+  if (!canvasJson || !canvasJson.includes('open_product_detail')) return
+
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(canvasJson)
+  } catch {
+    return
+  }
+
+  const ids = Array.from(collectOpenProductDetailIds(parsed))
+  if (!ids.length) return
+
+  const placeholders = ids.map(() => '?').join(', ')
+
+  const { results } = await db.prepare(
+    `SELECT id, tenant_id
+     FROM product_details
+     WHERE id IN (${placeholders})`,
+  ).bind(...ids).all<{ id: number; tenant_id: string }>()
+
+  const rows = results ?? []
+  const existingIds = new Set(rows.map((row) => Number(row.id)))
+
+  const missingId = ids.find((id) => !existingIds.has(id))
+  if (missingId) {
+    throw new Error('El detalle de producto vinculado ya no existe')
+  }
+
+  const foreign = rows.find((row) => row.tenant_id !== userId)
+  if (foreign) {
+    throw new Error(
+      'No puedes vincular un detalle de producto de otro tenant'
+    )
+  }
+}
+
 // POST /api/publications/:pubId/pages/batch
 pages.post('/publications/:pubId/pages/batch', async (c) => {
   const userId = c.get('user').sub
@@ -76,6 +171,23 @@ pages.post('/publications/:pubId/pages/batch', async (c) => {
   const invalid = normalized.find((page) => 'error' in page)
   if (invalid && 'error' in invalid) {
     return c.json({ success: false, error: `Página ${invalid.index + 1}: ${invalid.error}` }, 400)
+  }
+
+  try {
+    for (const page of normalized) {
+      if ('error' in page) continue
+
+      await validateProductDetailCanvasActions(
+        c.env.DB,
+        page.canvas_json,
+        userId,
+      )
+    }
+  } catch (error) {
+    return c.json({
+      success: false,
+      error: errorMessage(error),
+    }, 400)
   }
 
   const { plan, customLimits } = await getUserPlan(c.env.DB, userId)
@@ -216,6 +328,19 @@ pages.put('/pages/:pageId', async (c) => {
     canvas_json?: string
     cover_json?: string
   }>()
+
+  try {
+    await validateProductDetailCanvasActions(
+      c.env.DB,
+      body.canvas_json,
+      userId,
+    )
+  } catch (error) {
+    return c.json({
+      success: false,
+      error: errorMessage(error),
+    }, 400)
+  }
 
   await c.env.DB.prepare(
     `UPDATE pages

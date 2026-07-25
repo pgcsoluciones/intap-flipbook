@@ -411,6 +411,64 @@ export type MediaAsset = {
   updated_at: string
 }
 
+export type ProductDetailStatus = 'active' | 'inactive'
+
+export type ProductDetail = {
+  id: number
+  tenant_id: string
+  internal_name: string
+  title: string
+  description: string | null
+  price: string | null
+  image_url: string | null
+  accent_color: string
+  cta_type: string | null
+  cta_label: string | null
+  cta_target: string | null
+  status: ProductDetailStatus
+  usage_count: number
+  created_at: string
+  updated_at: string
+}
+
+export type ProductDetailInput = {
+  internal_name: string
+  title: string
+  description?: string | null
+  price?: string | null
+  image_url?: string | null
+  accent_color?: string | null
+  cta_type?: string | null
+  cta_label?: string | null
+  cta_target?: string | null
+  status?: ProductDetailStatus
+}
+
+export type ProductDetailImportRow = ProductDetailInput & {
+  row: number
+  existing_id?: number
+  import_decision?: 'replace' | 'keep' | 'skip'
+}
+
+export type ProductDetailImportResult = {
+  success: true
+  created: number
+  updated?: number
+  kept?: number
+  skipped?: number
+  invalid: Array<{ row: number; field: string; message: string }>
+  duplicates: Array<{
+    row: number
+    internal_name: string
+    title?: string
+    existing_id?: number
+    existing_internal_name?: string
+    existing_title?: string
+    match_fields?: string[]
+    changes?: Array<{ field: string; current: string | null; incoming: string | null }>
+  }>
+}
+
 export type MediaFolder = {
   id: string
   tenant_id: string
@@ -601,6 +659,43 @@ export const api = {
       request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
     reuse: (sourceId: string, body: ReuseDynamicMarkerInput) =>
       request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(sourceId)}/reuse`, { method: 'POST', body: JSON.stringify(body) }),
+  },
+  productDetails: {
+    list: (params: { q?: string; status?: ProductDetailStatus | ''; limit?: number; offset?: number } = {}) => {
+      const qs = new URLSearchParams()
+      if (params.q) qs.set('q', params.q)
+      if (params.status) qs.set('status', params.status)
+      if (params.limit != null) qs.set('limit', String(params.limit))
+      if (params.offset != null) qs.set('offset', String(params.offset))
+      return request<{
+        success: true
+        data: ProductDetail[]
+        page?: {
+          limit: number
+          offset: number
+          total: number
+          total_pages: number
+        }
+      }>(`/api/product-details${qs.size ? `?${qs}` : ''}`)
+    },
+    get: (id: number | string) =>
+      request<{ success: true; data: ProductDetail }>(`/api/product-details/${encodeURIComponent(id)}`),
+    linkable: (id: number | string) =>
+      request<{ success: true; data: ProductDetail }>(`/api/product-details/${encodeURIComponent(id)}/linkable`),
+    create: (body: ProductDetailInput) =>
+      request<{ success: true; data: ProductDetail }>('/api/product-details', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: number | string, body: ProductDetailInput) =>
+      request<{ success: true; data: ProductDetail }>(`/api/product-details/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) }),
+    setStatus: (id: number | string, status: ProductDetailStatus) =>
+      request<{ success: true; data: ProductDetail }>(`/api/product-details/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    duplicate: (id: number | string) =>
+      request<{ success: true; data: ProductDetail }>(`/api/product-details/${encodeURIComponent(id)}/duplicate`, { method: 'POST' }),
+    usage: (id: number | string) =>
+      request<{ success: true; data: { id: number; usage_count: number } }>(`/api/product-details/${encodeURIComponent(id)}/usage`),
+    import: (rows: ProductDetailImportRow[], dryRun = false) =>
+      request<ProductDetailImportResult>('/api/product-details/import', { method: 'POST', body: JSON.stringify({ rows, dry_run: dryRun }) }),
+    remove: (id: number | string) =>
+      request<{ success: true; data: { id: number } }>(`/api/product-details/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
   appointmentCalendars: {
     list: (params: {

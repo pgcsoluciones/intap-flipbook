@@ -8,6 +8,7 @@ function NavIcon({ name }: { name: string }) {
   if (name === 'home') return <svg {...props}><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>
   if (name === 'book') return <svg {...props}><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
   if (name === 'database') return <svg {...props}><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+  if (name === 'tag') return <svg {...props}><path d="M20.5 13.5l-7 7a2 2 0 01-2.8 0l-7.2-7.2V3.5h9.8l7.2 7.2a2 2 0 010 2.8z"/><circle cx="8.5" cy="8.5" r="1.4"/></svg>
   if (name === 'mail') return <svg {...props}><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 7 10-7"/></svg>
   if (name === 'clipboard') return <svg {...props}><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a3 3 0 016 0v1"/><path d="M8.5 10h7"/><path d="M8.5 14h7"/><path d="M8.5 18h4"/></svg>
   if (name === 'calendar') return <svg {...props}><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4"/><path d="M8 3v4"/><path d="M3 10h18"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/></svg>
@@ -53,6 +54,7 @@ const NAV_ITEMS = [
   { to: '/dashboard',    icon: 'home',      label: 'Inicio' },
   { to: '/publications', icon: 'book',      label: 'Mis Flipbooks' },
   { to: '/dynamic-data', icon: 'database',  label: 'Data Dinámica' },
+  { to: '/product-details', icon: 'tag',    label: 'Detalles de producto' },
   { to: '/responses',    icon: 'mail',      label: 'Respuestas' },
   { to: '/requests',     icon: 'clipboard', label: 'Solicitudes' },
   { to: '/agenda',       icon: 'calendar', label: 'Agenda' },
