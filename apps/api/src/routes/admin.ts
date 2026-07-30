@@ -1,12 +1,55 @@
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
 import { signJwt } from '../lib/jwt'
+import {
+  getAllTenantStorageTotals,
+  getTenantStorageUsage,
+} from '../lib/storageUsage'
+import {
+  getGlobalWatermarkConfig,
+  normalizeHttpUrl,
+  normalizeWatermarkConfig,
+} from '../lib/watermarkConfig'
+import type { WatermarkConfig } from '../lib/watermarkConfig'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
 const admin = new Hono<{ Bindings: Env; Variables: AuthVariables }>()
 
 admin.use('*', jwtMiddleware)
+
+async function tableHasColumn(
+  db: D1Database,
+  tableName: string,
+  columnName: string,
+): Promise<boolean> {
+  const { results } = await db.prepare(
+    `PRAGMA table_info(${tableName})`,
+  ).all<{ name: string }>()
+
+  return (results ?? []).some((column) => column.name === columnName)
+}
+
+function adminError(c: Context, error: unknown) {
+  console.error('Admin route error', error)
+  return c.json({
+    success: false,
+    error: error instanceof Error ? error.message : 'Internal Server Error',
+  }, 500)
+}
+
+function serializeWatermarkConfig(data: WatermarkConfig) {
+  return {
+    text: data.text,
+    link_url: data.link_url,
+    logo_url: data.logo_url,
+    position: data.position,
+    opacity: data.opacity,
+    watermark_text: data.text,
+    watermark_url: data.link_url,
+  }
+}
 
 // Middleware: verify is_admin
 admin.use('*', async (c, next) => {
@@ -22,34 +65,54 @@ admin.use('*', async (c, next) => {
 
 // GET /admin/users — list all users with usage stats
 admin.get('/users', async (c) => {
-  const { results } = await c.env.DB.prepare(`
-    SELECT
-      u.id, u.email, u.name, u.plan_id, u.is_admin, u.status,
-      u.created_at, u.plan_expires_at,
-      COUNT(DISTINCT p.id) as pub_count,
-      COALESCE(SUM(pg.size_bytes), 0) as total_bytes
-    FROM users u
-    LEFT JOIN publications p ON p.user_id = u.id
-    LEFT JOIN pages pg ON pg.publication_id = p.id
-    GROUP BY u.id
-    ORDER BY u.created_at DESC
-  `).all()
-  return c.json({ success: true, data: results })
+  try {
+    const hasStatus = await tableHasColumn(c.env.DB, 'users', 'status')
+    const statusSelect = hasStatus ? 'u.status' : "'active' AS status"
+    const { results } = await c.env.DB.prepare(`
+      SELECT
+        u.id, u.email, u.name, u.plan_id, u.is_admin, ${statusSelect},
+        u.created_at, u.plan_expires_at,
+        COUNT(DISTINCT p.id) as pub_count
+      FROM users u
+      LEFT JOIN publications p ON p.user_id = u.id
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+    `).all()
+    const storageTotals = await getAllTenantStorageTotals(c.env.DB)
+    const storageByTenant = new Map(
+      storageTotals.map((usage) => [usage.tenant_id, usage]),
+    )
+    const data = (results ?? []).map((user: any) => {
+      const usage = storageByTenant.get(user.id)
+
+      return {
+        ...user,
+        status: user.status ?? 'active',
+        pub_count: Number(user.pub_count ?? 0),
+        total_bytes: usage?.total_bytes ?? 0,
+      }
+    })
+
+    return c.json({ success: true, data })
+  } catch (error) {
+    return adminError(c, error)
+  }
 })
 
 // GET /admin/users/:id — tenant detail with payments
 admin.get('/users/:id', async (c) => {
   const id = c.req.param('id')
+  const hasStatus = await tableHasColumn(c.env.DB, 'users', 'status')
+  const statusSelect = hasStatus ? 'u.status' : "'active' AS status"
   const user = await c.env.DB.prepare(`
-    SELECT u.id, u.email, u.name, u.plan_id, u.is_admin, u.status,
+    SELECT u.id, u.email, u.name, u.plan_id, u.is_admin, ${statusSelect},
       u.created_at, u.plan_expires_at, u.grace_period_days,
       u.watermark_override,
       u.custom_max_publications, u.custom_max_pages, u.custom_max_storage_mb,
       COUNT(DISTINCT p.id) as pub_count,
-      COALESCE(SUM(pg.size_bytes), 0) as total_bytes
+      0 as total_bytes
     FROM users u
     LEFT JOIN publications p ON p.user_id = u.id
-    LEFT JOIN pages pg ON pg.publication_id = p.id
     WHERE u.id = ?
     GROUP BY u.id
   `).bind(id).first()
@@ -58,8 +121,17 @@ admin.get('/users/:id', async (c) => {
   const { results: payments } = await c.env.DB.prepare(`
     SELECT * FROM payments WHERE user_id = ? ORDER BY created_at DESC
   `).bind(id).all()
+  const storageUsage = await getTenantStorageUsage(c.env.DB, id)
 
-  return c.json({ success: true, data: { ...user, payments } })
+  return c.json({
+    success: true,
+    data: {
+      ...user,
+      total_bytes: storageUsage.total_bytes,
+      storage_usage: storageUsage,
+      payments,
+    },
+  })
 })
 
 // PUT /admin/users/:id/plan — change user plan
@@ -613,24 +685,60 @@ admin.put('/referrals/:id', async (c) => {
 
 // GET /admin/branding
 admin.get('/branding', async (c) => {
-  const data = await c.env.DB.prepare('SELECT * FROM watermark_config WHERE id = 1').first()
-  return c.json({ success: true, data })
+  const data = await getGlobalWatermarkConfig(c.env.DB)
+
+  return c.json({
+    success: true,
+    data: serializeWatermarkConfig(data),
+  })
 })
 
 // PUT /admin/branding
 admin.put('/branding', async (c) => {
   const body = await c.req.json<any>()
+  const current = await getGlobalWatermarkConfig(c.env.DB)
+  const linkUrlInput = body.link_url ?? body.watermark_url
+  const linkUrl = linkUrlInput === undefined
+    ? current.link_url
+    : normalizeHttpUrl(linkUrlInput)
+
+  if (!linkUrl) {
+    return c.json({
+      success: false,
+      error: 'link_url debe ser HTTP o HTTPS',
+    }, 400)
+  }
+
+  const next = normalizeWatermarkConfig({
+    text: body.text ?? body.watermark_text ?? current.text,
+    link_url: linkUrl,
+    logo_url: body.logo_url ?? current.logo_url,
+    position: body.position ?? current.position,
+    opacity: body.opacity ?? current.opacity,
+  })
+
   await c.env.DB.prepare(`
-    UPDATE watermark_config SET text = ?, logo_url = ?, link_url = ?, position = ?, opacity = ?
-    WHERE id = 1
+    INSERT INTO watermark_config (id, text, logo_url, link_url, position, opacity)
+    VALUES (1, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      text = excluded.text,
+      logo_url = excluded.logo_url,
+      link_url = excluded.link_url,
+      position = excluded.position,
+      opacity = excluded.opacity
   `).bind(
-    body.text ?? 'Creado con Intap Flipbook',
-    body.logo_url ?? null,
-    body.link_url ?? 'https://intapflipbook.com',
-    body.position ?? 'bottom-right',
-    body.opacity ?? 80
+    next.text,
+    next.logo_url,
+    next.link_url,
+    next.position,
+    next.opacity,
   ).run()
-  return c.json({ success: true })
+  const data = await getGlobalWatermarkConfig(c.env.DB)
+
+  return c.json({
+    success: true,
+    data: serializeWatermarkConfig(data),
+  })
 })
 
 // ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
@@ -827,24 +935,41 @@ admin.delete('/tutorials/:id', async (c) => {
 
 // GET /admin/stats — global stats
 admin.get('/stats', async (c) => {
-  const [users, pubs, pages] = await Promise.all([
-    c.env.DB.prepare('SELECT COUNT(*) as count FROM users').first<{ count: number }>(),
-    c.env.DB.prepare('SELECT COUNT(*) as count FROM publications').first<{ count: number }>(),
-    c.env.DB.prepare('SELECT COUNT(*) as count, COALESCE(SUM(size_bytes),0) as bytes FROM pages').first<{ count: number; bytes: number }>(),
-  ])
-  const { results: byPlan } = await c.env.DB.prepare(
-    'SELECT plan_id, COUNT(*) as count FROM users GROUP BY plan_id'
-  ).all()
-  return c.json({
-    success: true,
-    data: {
-      users: users?.count ?? 0,
-      publications: pubs?.count ?? 0,
-      pages: pages?.count ?? 0,
-      storage_mb: parseFloat(((pages?.bytes ?? 0) / 1024 / 1024).toFixed(2)),
-      by_plan: byPlan,
-    },
-  })
+  try {
+    const [users, pubs, pages, byPlan, recentUsers, storageTotals] = await Promise.all([
+      c.env.DB.prepare('SELECT COUNT(*) as count FROM users').first<{ count: number }>(),
+      c.env.DB.prepare('SELECT COUNT(*) as count FROM publications').first<{ count: number }>(),
+      c.env.DB.prepare('SELECT COUNT(*) as count FROM pages').first<{ count: number }>(),
+      c.env.DB.prepare(
+        'SELECT plan_id, COUNT(*) as count FROM users GROUP BY plan_id'
+      ).all<{ plan_id: string; count: number }>(),
+      c.env.DB.prepare(`
+        SELECT id, email, name, plan_id, created_at
+        FROM users
+        ORDER BY created_at DESC
+        LIMIT 10
+      `).all(),
+      getAllTenantStorageTotals(c.env.DB),
+    ])
+    const storageBytes = storageTotals.reduce(
+      (total, usage) => total + usage.total_bytes,
+      0,
+    )
+
+    return c.json({
+      success: true,
+      data: {
+        users: users?.count ?? 0,
+        publications: pubs?.count ?? 0,
+        pages: pages?.count ?? 0,
+        storage_mb: parseFloat((storageBytes / 1024 / 1024).toFixed(2)),
+        by_plan: byPlan.results ?? [],
+        recent_activity: recentUsers.results ?? [],
+      },
+    })
+  } catch (error) {
+    return adminError(c, error)
+  }
 })
 
 // GET /admin/stats/top-publications

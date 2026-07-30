@@ -299,6 +299,7 @@ export default function MediaPicker({
   const [folderError, setFolderError] = useState('')
   const [deleteFolderPrompt, setDeleteFolderPrompt] = useState<MediaFolder | null>(null)
   const [allAssetTotal, setAllAssetTotal] = useState(0)
+  const [showHiddenAssets, setShowHiddenAssets] = useState(false)
   const [knownAssetUrls, setKnownAssetUrls] = useState<string[]>([])
   const [pageNumber, setPageNumber] = useState(1)
   const [pageInfo, setPageInfo] = useState({ page: 1, total: 0, total_pages: 1, has_more: false })
@@ -362,6 +363,7 @@ export default function MediaPicker({
     setFolderError('')
     setDeleteFolderPrompt(null)
     setAllAssetTotal(0)
+    setShowHiddenAssets(false)
     setFiles([])
     setPreviewUrls((prev) => {
       for (const url of Object.values(prev)) URL.revokeObjectURL(url)
@@ -436,6 +438,7 @@ export default function MediaPicker({
         limit: BANK_PAGE_SIZE,
         page: nextPage,
         folder_id: activeFolderId,
+        hidden: showHiddenAssets,
       })
       if (seq !== loadSeqRef.current) return
       setAssets(res.data ?? [])
@@ -453,7 +456,7 @@ export default function MediaPicker({
     } finally {
       if (seq === loadSeqRef.current) setLoading(false)
     }
-  }, [activeFolderId, foldersLoaded, open, publicationId, q])
+  }, [activeFolderId, foldersLoaded, open, publicationId, q, showHiddenAssets])
 
   useEffect(() => {
     if (!open) return
@@ -471,6 +474,7 @@ export default function MediaPicker({
   }, [loadFolders, open])
 
   const legacyItems = useMemo(() => {
+    if (showHiddenAssets) return []
     if (!shouldShowLegacyForFolder(activeFolderId)) return []
     const seen = new Set<string>()
     const query = q.trim().toLowerCase()
@@ -491,7 +495,7 @@ export default function MediaPicker({
       })
     }
     return result
-  }, [activeFolderId, knownAssetUrls, legacyUrls, mode, q])
+  }, [activeFolderId, knownAssetUrls, legacyUrls, mode, q, showHiddenAssets])
 
   const items = useMemo(() => {
     const assetItems: PickerItem[] = []
@@ -523,8 +527,9 @@ export default function MediaPicker({
   const combinedTotalPages = combinedPage.totalPages
   const activeFolder = typeof activeFolderId === 'string' ? folders.find((folder) => folder.id === activeFolderId) ?? null : null
   const uploadTargetFolderId = uploadFolderId
-  const selectedCanMove = canMoveMediaPickerSelection(selectedItems)
   const selectedHasLegacy = selectedItems.some((item) => !item.asset)
+  const selectedHasHidden = selectedItems.some((item) => item.asset?.is_hidden)
+  const selectedCanMove = !selectedHasHidden && canMoveMediaPickerSelection(selectedItems)
   const activeFolderLabel = activeFolderId === undefined ? 'Todas' : activeFolderId === null ? 'Banco general' : activeFolder?.name ?? 'Carpeta'
   const selectedMoveTarget = moveTargetFolderId === 'none' ? undefined : moveTargetFolderId === 'unfiled' ? null : moveTargetFolderId
   const moveTargetInvalid = !canExecuteMediaMove(selectedItems, selectedMoveTarget, loading)
@@ -874,6 +879,7 @@ export default function MediaPicker({
       }
 
       await refreshAfterBankRemoval(selectedAssets)
+      await api.plan.usage().catch(() => null)
       setDeletePrompt(null)
       setNotice(
         selectedAssets.length === 1
@@ -1110,6 +1116,7 @@ export default function MediaPicker({
     const labels = deletePrompt.items.flatMap((item) => item.usages.map((usage) => usage.label))
     const canDeleteAllPhysical = deletePrompt.items.length > 0
       && deletePrompt.items.every((item) => item.can_delete_physical)
+    const hasHiddenAssets = deletePrompt.items.some((item) => item.asset?.is_hidden)
     return (
       <div style={styles.overlay} onClick={() => setDeletePrompt(null)}>
         <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
@@ -1122,7 +1129,7 @@ export default function MediaPicker({
               {deletePrompt.mode === 'in-use'
                 ? `${deletePrompt.items.length === 1 ? 'Esta imagen está' : 'Estas imágenes están'} siendo utilizada${deletePrompt.items.length === 1 ? '' : 's'} en ${deletePrompt.totalUses} lugares del proyecto.`
                 : canDeleteAllPhysical
-                  ? `${deletePrompt.items.length === 1 ? 'Esta imagen no está' : 'Estas imágenes no están'} siendo utilizada${deletePrompt.items.length === 1 ? '' : 's'}. ¿Deseas eliminarla${deletePrompt.items.length === 1 ? '' : 's'} definitivamente?`
+                  ? `${deletePrompt.items.length === 1 ? 'Esta imagen no está' : 'Estas imágenes no están'} siendo utilizada${deletePrompt.items.length === 1 ? '' : 's'}. Esta acción eliminará el archivo definitivamente y liberará almacenamiento.`
                   : `${deletePrompt.items.length === 1 ? 'Esta imagen no está' : 'Estas imágenes no están'} siendo utilizada${deletePrompt.items.length === 1 ? '' : 's'}, pero el archivo de origen no pertenece a un almacenamiento seguro para borrado físico.`}
             </div>
             {notice && <div style={styles.success}>{notice}</div>}
@@ -1138,12 +1145,12 @@ export default function MediaPicker({
               {deletePrompt.mode === 'in-use' ? (
                 <>
                   <button type="button" style={styles.secondary} disabled={!labels.length || loading} onClick={() => setNotice(labels.join(', '))}>Ver dónde se utiliza</button>
-                  <button type="button" style={styles.primary} disabled={loading} onClick={() => void hidePromptAssets()}>{loading ? 'Quitando...' : 'Quitar del banco'}</button>
+                  {!hasHiddenAssets && <button type="button" style={styles.primary} disabled={loading} onClick={() => void hidePromptAssets()}>{loading ? 'Quitando...' : 'Quitar del banco'}</button>}
                 </>
               ) : canDeleteAllPhysical ? (
                 <button type="button" style={styles.primary} disabled={loading} onClick={() => void deletePromptAssets()}>{loading ? 'Eliminando...' : 'Eliminar definitivamente'}</button>
               ) : (
-                <button type="button" style={styles.primary} disabled={loading} onClick={() => void hidePromptAssets()}>{loading ? 'Quitando...' : 'Quitar del banco'}</button>
+                !hasHiddenAssets && <button type="button" style={styles.primary} disabled={loading} onClick={() => void hidePromptAssets()}>{loading ? 'Quitando...' : 'Quitar del banco'}</button>
               )}
             </div>
           </div>
@@ -1260,7 +1267,21 @@ export default function MediaPicker({
                 <div style={styles.warning}>Las imágenes anteriores sin registro de asset no se pueden mover.</div>
               )}
             </div>
-            <input value={q} onChange={(event) => { setQ(event.target.value); setPageNumber(1) }} placeholder="Buscar por nombre" style={styles.search} />
+            <div style={styles.searchRow}>
+              <input value={q} onChange={(event) => { setQ(event.target.value); setPageNumber(1) }} placeholder="Buscar por nombre" style={styles.search} />
+              <label style={styles.hiddenToggle}>
+                <input
+                  type="checkbox"
+                  checked={showHiddenAssets}
+                  onChange={(event) => {
+                    setShowHiddenAssets(event.target.checked)
+                    setSelectedItems([])
+                    setPageNumber(1)
+                  }}
+                />
+                Ocultas
+              </label>
+            </div>
             {error && <div style={styles.error}>{error}</div>}
             {notice && <div style={styles.success}>{notice}</div>}
             {(busyMessage || selectionStatus) && <div style={styles.empty}>{busyMessage || selectionStatus}</div>}
@@ -1319,8 +1340,8 @@ export default function MediaPicker({
               <div style={styles.actions}>
                 <button type="button" style={styles.secondary} disabled={processingSelection} onClick={onClose}>Cancelar</button>
                 <button type="button" style={styles.secondary} disabled={!selectedItems.length || processingSelection} onClick={clearSelection}>Limpiar selección</button>
-                <button type="button" style={styles.secondary} disabled={!selectedItems.some((item) => item.asset || item.key.startsWith('legacy:')) || processingSelection || loading} onClick={() => void deleteSelectedFromBank()}>Eliminar del banco</button>
-                <button type="button" style={styles.primary} disabled={!selectedItems.length || processingSelection} onClick={() => void useSelectedItems()}>
+                <button type="button" style={styles.secondary} disabled={!selectedItems.some((item) => item.asset || item.key.startsWith('legacy:')) || processingSelection || loading} onClick={() => void deleteSelectedFromBank()}>{showHiddenAssets ? 'Eliminar definitivamente' : 'Eliminar del banco'}</button>
+                <button type="button" style={styles.primary} disabled={!selectedItems.length || selectedHasHidden || processingSelection} onClick={() => void useSelectedItems()}>
                   {processingSelection ? (busyMessage || selectionStatus || 'Procesando...') : mode === 'pages' ? `Agregar páginas (${selectedItems.length})` : `Usar selección (${selectedItems.length})`}
                 </button>
               </div>
@@ -1495,7 +1516,9 @@ const styles: Record<string, React.CSSProperties> = {
   tab: { flex: 1, border: 'none', background: '#f9fafb', color: '#6b7280', fontSize: 13, fontWeight: 700, padding: '12px 14px', cursor: 'pointer' },
   tabActive: { background: '#fff', color: '#111827', boxShadow: 'inset 0 -2px 0 #4F46E5' },
   body: { padding: 18, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minHeight: 0 },
-  search: { height: 38, border: '1px solid #d1d5db', borderRadius: 7, padding: '0 12px', fontSize: 13, outline: 'none' },
+  searchRow: { display: 'flex', gap: 8, alignItems: 'center' },
+  search: { height: 38, border: '1px solid #d1d5db', borderRadius: 7, padding: '0 12px', fontSize: 13, outline: 'none', flex: 1 },
+  hiddenToggle: { minHeight: 38, display: 'flex', alignItems: 'center', gap: 6, border: '1px solid #d1d5db', borderRadius: 7, padding: '0 10px', fontSize: 12, color: '#374151', background: '#fff', whiteSpace: 'nowrap' },
   folderPanel: { display: 'flex', flexDirection: 'column', gap: 10, border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, background: '#fff' },
   folderHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   folderTitle: { fontSize: 13, fontWeight: 800, color: '#111827' },

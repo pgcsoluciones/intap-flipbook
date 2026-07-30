@@ -161,6 +161,7 @@ export default function PlanPage() {
             label="Almacenamiento"
             used={parseFloat(usage.storage.used_mb.toFixed(1))}
             max={usage.storage.max_mb}
+            unlimited={usage.storage.unlimited || usage.storage.max_mb === null}
           />
           <div style={styles.featureList}>
             <FeatureItem active={usage.features.sound_enabled} label="Sonido al voltear páginas" />

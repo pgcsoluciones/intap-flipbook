@@ -2,6 +2,17 @@ import { Hono } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
 import { getUserPlan, checkStorageLimit } from '../lib/plans'
 import { sanitizeSvg } from '../lib/svg'
+import { checkTenantStorageLimit } from '../lib/storageUsage'
+import {
+  countStorageObjectReferences,
+  detachStorageReferencesBySource,
+  finalizeStorageObjectDeletionByPhysicalKey,
+  getStorageObjectByPhysicalKey,
+  linkStorageObjectReference,
+  listStorageObjectsForSource,
+  registerStorageObject,
+  setStorageObjectLifecycle,
+} from '../lib/storageRegistry'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
@@ -11,6 +22,237 @@ const upload = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 function isPublicUploadKey(key: string) {
   return /^uploads\/[^/]+\/[^/]+$/.test(key)
+}
+
+function safeMediaAssetPhysicalKeys(asset: MediaAssetRow): string[] {
+  const keys = [
+    asset.storage_key,
+    asset.optimized_storage_key ?? null,
+    asset.thumbnail_storage_key ?? null,
+  ]
+
+  return Array.from(new Set(
+    keys.filter((key): key is string =>
+      !!key && isPublicUploadKey(key)
+    ),
+  ))
+}
+
+async function countMediaAssetStorageObjectReferences(
+  db: D1Database,
+  storageObjectId: string,
+  tenantId: string,
+  assetId: string,
+): Promise<number> {
+  const row = await db.prepare(
+    `SELECT COUNT(*) AS count
+     FROM storage_object_references
+     WHERE storage_object_id = ?
+       AND tenant_id = ?
+       AND source_type = 'media_asset'
+       AND source_id = ?`,
+  ).bind(storageObjectId, tenantId, assetId).first<{ count: number }>()
+
+  const count = Number(row?.count ?? 0)
+  return Number.isFinite(count) && count > 0 ? Math.trunc(count) : 0
+}
+
+async function detachMediaAssetStorageObjectReferences(
+  db: D1Database,
+  storageObjectId: string,
+  tenantId: string,
+  assetId: string,
+): Promise<void> {
+  await db.prepare(
+    `DELETE FROM storage_object_references
+     WHERE storage_object_id = ?
+       AND tenant_id = ?
+       AND source_type = 'media_asset'
+       AND source_id = ?`,
+  ).bind(storageObjectId, tenantId, assetId).run()
+}
+
+export async function assertMediaAssetPhysicalDeletionAllowed(
+  c: any,
+  userId: string,
+  asset: MediaAssetRow,
+): Promise<{ ok: true; keys: string[] } | { ok: false; response: Response }> {
+  if (asset.storage_bucket !== 'MEDIA') {
+    return {
+      ok: false,
+      response: c.json({
+        success: false,
+        code: 'MEDIA_ASSET_UNSAFE_STORAGE_KEY',
+        error: 'No se puede eliminar físicamente una imagen sin storage_key confiable.',
+      }, 409),
+    }
+  }
+
+  const keysToDelete = safeMediaAssetPhysicalKeys(asset)
+  if (!keysToDelete.length) {
+    return {
+      ok: false,
+      response: c.json({
+        success: false,
+        code: 'MEDIA_ASSET_UNSAFE_STORAGE_KEY',
+        error: 'No se encontraron claves uploads/... seguras para eliminar.',
+      }, 409),
+    }
+  }
+
+  const usage = await countMediaAssetUsage(c, asset)
+  if (usage.usage_count > 0) {
+    return {
+      ok: false,
+      response: c.json({
+        success: false,
+        code: 'ASSET_IN_USE',
+        error: 'La imagen está en uso y no puede eliminarse definitivamente.',
+        data: usage,
+      }, 409),
+    }
+  }
+
+  for (const key of keysToDelete) {
+    const object = await getStorageObjectByPhysicalKey(
+      c.env.DB,
+      userId,
+      'MEDIA',
+      key,
+    )
+    if (!object) continue
+
+    const totalReferences = await countStorageObjectReferences(
+      c.env.DB,
+      object.id,
+    )
+    const ownReferences = await countMediaAssetStorageObjectReferences(
+      c.env.DB,
+      object.id,
+      userId,
+      asset.id,
+    )
+
+    if (totalReferences > ownReferences) {
+      return {
+        ok: false,
+        response: c.json({
+          success: false,
+          code: 'ASSET_IN_USE',
+          error: 'La imagen todavía tiene referencias activas y no puede eliminarse definitivamente.',
+          data: {
+            asset_id: asset.id,
+            storage_key: key,
+            reference_count: totalReferences,
+          },
+        }, 409),
+      }
+    }
+  }
+
+  return { ok: true, keys: keysToDelete }
+}
+
+export async function permanentlyDeleteMediaAsset(
+  c: any,
+  userId: string,
+  asset: MediaAssetRow,
+) {
+  const deletion = await assertMediaAssetPhysicalDeletionAllowed(c, userId, asset)
+  if (!deletion.ok) return deletion.response
+
+  const secondCheck = await assertMediaAssetPhysicalDeletionAllowed(c, userId, asset)
+  if (!secondCheck.ok) return secondCheck.response
+  const keysToDelete = secondCheck.keys
+
+  try {
+    for (const key of keysToDelete) {
+      await c.env.MEDIA.delete(key)
+    }
+  } catch (error) {
+    console.error('[upload.media-assets.delete.r2] failed', {
+      user_id: userId,
+      asset_id: asset.id,
+      error: error instanceof Error
+        ? error.message
+        : String(error),
+    })
+
+    return c.json({
+      success: false,
+      error: 'No se pudo eliminar el archivo físico.',
+    }, 500)
+  }
+
+  for (const key of keysToDelete) {
+    const object = await getStorageObjectByPhysicalKey(
+      c.env.DB,
+      userId,
+      'MEDIA',
+      key,
+    )
+    if (!object) continue
+
+    await detachMediaAssetStorageObjectReferences(
+      c.env.DB,
+      object.id,
+      userId,
+      asset.id,
+    )
+
+    const finalized = await finalizeStorageObjectDeletionByPhysicalKey(
+      c.env.DB,
+      userId,
+      'MEDIA',
+      key,
+    )
+    if (!finalized) {
+      console.error('[upload.media-assets.delete.registry] failed', {
+        user_id: userId,
+        asset_id: asset.id,
+        storage_object_id: object.id,
+        storage_key: key,
+      })
+    }
+  }
+
+  const now = new Date().toISOString()
+  await c.env.DB.prepare('UPDATE media_assets SET deleted_at = ?, is_hidden = 1, updated_at = ? WHERE id = ? AND tenant_id = ?')
+    .bind(now, now, asset.id, userId)
+    .run()
+  return c.json({ success: true, data: { deleted: true } })
+}
+
+function variantAdditionalBytes(
+  variants: Array<{
+    key: string
+    bytes: number
+    replacingBytes?: number | null
+  }>,
+): { incomingBytes: number; replacingBytes: number } {
+  const byKey = new Map<string, { bytes: number; replacingBytes: number }>()
+
+  for (const variant of variants) {
+    const current = byKey.get(variant.key)
+
+    byKey.set(variant.key, {
+      bytes: Math.max(current?.bytes ?? 0, variant.bytes),
+      replacingBytes: Math.max(
+        current?.replacingBytes ?? 0,
+        variant.replacingBytes ?? 0,
+      ),
+    })
+  }
+
+  let incomingBytes = 0
+  let replacingBytes = 0
+
+  for (const variant of byKey.values()) {
+    incomingBytes += variant.bytes
+    replacingBytes += variant.replacingBytes
+  }
+
+  return { incomingBytes, replacingBytes }
 }
 
 // PROTECTED: Public read-only asset route required by Fabric thumbnail rendering.
@@ -525,6 +767,21 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fo
       const thumbExt = MEDIA_IMAGE_EXT_BY_TYPE[thumbnail.type]!
       thumbnailKey = `uploads/${userId}/${existing.id}-thumb.${thumbExt}`
       thumbnailUrl = `${c.env.R2_PUBLIC_BASE_URL}/${thumbnailKey}`
+      const thumbnailCheck = await checkTenantStorageLimit(
+        c.env.DB,
+        userId,
+        thumbnail.size,
+      )
+      if (!thumbnailCheck.allowed) {
+        throw new Response(JSON.stringify({
+          success: false,
+          error: thumbnailCheck.message
+            ?? 'Almacenamiento insuficiente.',
+        }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
       await c.env.MEDIA.put(thumbnailKey, thumbnailBody, {
         httpMetadata: { contentType: thumbnail.type },
       })
@@ -561,7 +818,13 @@ async function storeMediaAsset(c: any, userId: string, publicationId: string, fo
   }
 
   const { plan } = await getUserPlan(c.env.DB, userId)
-  const storageError = await checkStorageLimit(c.env.DB, userId, plan, sizeBytes)
+  const newAssetBytes = variantAdditionalBytes([
+    { key: 'main', bytes: sizeBytes },
+    ...(thumbnail && thumbnailBody
+      ? [{ key: 'thumbnail', bytes: thumbnail.size }]
+      : []),
+  ]).incomingBytes
+  const storageError = await checkStorageLimit(c.env.DB, userId, plan, newAssetBytes)
   if (storageError) {
     throw new Response(JSON.stringify({ success: false, error: storageError }), {
       status: 403,
@@ -797,6 +1060,7 @@ upload.get('/media-assets', async (c) => {
   }
 
   const q = (c.req.query('q') ?? '').trim()
+  const hiddenOnly = c.req.query('hidden') === 'true'
   const needsThumbnail = c.req.query('needs_thumbnail') === 'true'
   const needsOptimization = c.req.query('needs_optimization') === 'true'
   const limit = boundedMediaAssetLimit(c.req.query('limit') ?? null)
@@ -807,11 +1071,15 @@ upload.get('/media-assets', async (c) => {
     'tenant_id = ?',
     'publication_id = ?',
     'storage_bucket = ?',
-    '(is_hidden IS NULL OR is_hidden = 0)',
     'deleted_at IS NULL',
     "mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif')",
   ]
   const params: unknown[] = [userId, publicationId, 'MEDIA']
+  conditions.push(
+    hiddenOnly
+      ? 'is_hidden = 1'
+      : '(is_hidden IS NULL OR is_hidden = 0)',
+  )
   if (folderFilter === 'unfiled') {
     conditions.push('folder_id IS NULL')
   } else if (folderFilter != null && folderFilter.trim()) {
@@ -1068,55 +1336,111 @@ upload.post('/media-assets/:assetId/variants', async (c) => {
   const updates: string[] = []
   const values: unknown[] = []
   const now = new Date().toISOString()
+  const displayUpload = display instanceof File && !asset.optimized_url
+    ? (() => {
+      const ext = MEDIA_IMAGE_EXT_BY_TYPE[display.type]
+      if (!ext) return { error: 'Tipo de display no permitido.', status: 415 as const }
+      if (display.size > IMAGE_MAX_BYTES) return { error: 'El display supera el tamaño máximo permitido.', status: 413 as const }
+      const key = `uploads/${userId}/${asset.id}-display.${ext}`
 
-  if (display instanceof File && !asset.optimized_url) {
-    const ext = MEDIA_IMAGE_EXT_BY_TYPE[display.type]
-    if (!ext) return c.json({ success: false, error: 'Tipo de display no permitido.' }, 415)
-    if (display.size > IMAGE_MAX_BYTES) return c.json({ success: false, error: 'El display supera el tamaño máximo permitido.' }, 413)
-    const key = `uploads/${userId}/${asset.id}-display.${ext}`
-    const url = `${c.env.R2_PUBLIC_BASE_URL}/${key}`
-    await c.env.MEDIA.put(key, await display.arrayBuffer(), {
-      httpMetadata: { contentType: display.type },
+      return {
+        file: display,
+        key,
+        url: `${c.env.R2_PUBLIC_BASE_URL}/${key}`,
+      }
+    })()
+    : null
+  const thumbnailUpload = thumbnail instanceof File && !asset.thumbnail_url
+    ? (() => {
+      const ext = MEDIA_IMAGE_EXT_BY_TYPE[thumbnail.type]
+      if (!ext) return { error: 'Tipo de miniatura no permitido.', status: 415 as const }
+      if (thumbnail.size > IMAGE_MAX_BYTES) return { error: 'La miniatura supera el tamaño máximo permitido.', status: 413 as const }
+      const key = `uploads/${userId}/${asset.id}-thumb.${ext}`
+
+      return {
+        file: thumbnail,
+        key,
+        url: `${c.env.R2_PUBLIC_BASE_URL}/${key}`,
+      }
+    })()
+    : null
+
+  if (displayUpload && 'error' in displayUpload) {
+    return c.json({ success: false, error: displayUpload.error }, displayUpload.status)
+  }
+
+  if (thumbnailUpload && 'error' in thumbnailUpload) {
+    return c.json({ success: false, error: thumbnailUpload.error }, thumbnailUpload.status)
+  }
+
+  const pendingVariants = [
+    ...(displayUpload && !('error' in displayUpload)
+      ? [{ key: displayUpload.key, bytes: displayUpload.file.size }]
+      : []),
+    ...(thumbnailUpload && !('error' in thumbnailUpload)
+      ? [{ key: thumbnailUpload.key, bytes: thumbnailUpload.file.size }]
+      : []),
+  ]
+
+  if (pendingVariants.length) {
+    const { incomingBytes, replacingBytes } =
+      variantAdditionalBytes(pendingVariants)
+    const storageCheck = await checkTenantStorageLimit(
+      c.env.DB,
+      userId,
+      incomingBytes,
+      replacingBytes,
+    )
+
+    if (!storageCheck.allowed) {
+      return c.json({
+        success: false,
+        error: storageCheck.message
+          ?? 'Almacenamiento insuficiente.',
+      }, 403)
+    }
+  }
+
+  if (displayUpload && !('error' in displayUpload)) {
+    const { file, key, url } = displayUpload
+    await c.env.MEDIA.put(key, await file.arrayBuffer(), {
+      httpMetadata: { contentType: file.type },
     })
     updates.push('optimized_storage_key = ?', 'optimized_url = ?', 'optimized_mime_type = ?', 'optimized_size_bytes = ?', 'optimized_width = ?', 'optimized_height = ?')
     values.push(
       key,
       url,
-      display.type,
-      display.size,
+      file.type,
+      file.size,
       optionalInt(metadata.optimized_width as any),
       optionalInt(metadata.optimized_height as any),
     )
     asset.optimized_storage_key = key
     asset.optimized_url = url
-    asset.optimized_mime_type = display.type
-    asset.optimized_size_bytes = display.size
+    asset.optimized_mime_type = file.type
+    asset.optimized_size_bytes = file.size
     asset.optimized_width = optionalInt(metadata.optimized_width as any)
     asset.optimized_height = optionalInt(metadata.optimized_height as any)
   }
 
-  if (thumbnail instanceof File && !asset.thumbnail_url) {
-    const ext = MEDIA_IMAGE_EXT_BY_TYPE[thumbnail.type]
-    if (!ext) return c.json({ success: false, error: 'Tipo de miniatura no permitido.' }, 415)
-    if (thumbnail.size > IMAGE_MAX_BYTES) return c.json({ success: false, error: 'La miniatura supera el tamaño máximo permitido.' }, 413)
-    const key = `uploads/${userId}/${asset.id}-thumb.${ext}`
-    const url = `${c.env.R2_PUBLIC_BASE_URL}/${key}`
-    await c.env.MEDIA.put(key, await thumbnail.arrayBuffer(), {
-      httpMetadata: { contentType: thumbnail.type },
+  if (thumbnailUpload && !('error' in thumbnailUpload)) {
+    const { file, key, url } = thumbnailUpload
+    await c.env.MEDIA.put(key, await file.arrayBuffer(), {
+      httpMetadata: { contentType: file.type },
     })
     updates.push('thumbnail_storage_key = ?', 'thumbnail_url = ?', 'thumbnail_mime_type = ?', 'thumbnail_size_bytes = ?', 'thumbnail_width = ?', 'thumbnail_height = ?')
     values.push(
       key,
       url,
-      thumbnail.type,
-      thumbnail.size,
+      file.type,
+      file.size,
       optionalInt(metadata.thumbnail_width as any),
       optionalInt(metadata.thumbnail_height as any),
     )
     asset.thumbnail_storage_key = key
     asset.thumbnail_url = url
-    asset.thumbnail_mime_type = thumbnail.type
-    asset.thumbnail_size_bytes = thumbnail.size
+    asset.thumbnail_mime_type = file.type
+    asset.thumbnail_size_bytes = file.size
     asset.thumbnail_width = optionalInt(metadata.thumbnail_width as any)
     asset.thumbnail_height = optionalInt(metadata.thumbnail_height as any)
   }
@@ -1232,29 +1556,7 @@ upload.delete('/media-assets/:assetId', async (c) => {
   const lookup = await getOwnedMediaAsset(c, userId, c.req.param('assetId'), c.req.query('publication_id') ?? undefined)
   if (lookup.status === 'missing') return c.json({ success: false, error: 'Imagen no encontrada' }, 404)
   if (lookup.status === 'forbidden') return c.json({ success: false, error: 'No tienes acceso a esta imagen' }, 403)
-  if (lookup.asset.storage_bucket !== 'MEDIA' || !lookup.asset.storage_key || !isPublicUploadKey(lookup.asset.storage_key)) {
-    return c.json({ success: false, code: 'MEDIA_ASSET_UNSAFE_STORAGE_KEY', error: 'No se puede eliminar físicamente una imagen sin storage_key confiable.' }, 409)
-  }
-  const usage = await countMediaAssetUsage(c, lookup.asset)
-  if (usage.usage_count > 0) {
-    return c.json({ success: false, code: 'ASSET_IN_USE', error: 'La imagen está en uso y no puede eliminarse físicamente.', data: usage }, 409)
-  }
-  const secondUsage = await countMediaAssetUsage(c, lookup.asset)
-  if (secondUsage.usage_count > 0) {
-    return c.json({ success: false, code: 'ASSET_IN_USE', error: 'La imagen está en uso y no puede eliminarse físicamente.', data: secondUsage }, 409)
-  }
-  await c.env.MEDIA.delete(lookup.asset.storage_key)
-  if (
-    lookup.asset.thumbnail_storage_key
-    && lookup.asset.thumbnail_storage_key !== lookup.asset.storage_key
-    && isPublicUploadKey(lookup.asset.thumbnail_storage_key)
-  ) {
-    await c.env.MEDIA.delete(lookup.asset.thumbnail_storage_key)
-  }
-  await c.env.DB.prepare('UPDATE media_assets SET deleted_at = ?, is_hidden = 1, updated_at = ? WHERE id = ? AND tenant_id = ?')
-    .bind(new Date().toISOString(), new Date().toISOString(), lookup.asset.id, userId)
-    .run()
-  return c.json({ success: true, data: { deleted: true } })
+  return permanentlyDeleteMediaAsset(c, userId, lookup.asset)
 })
 
 upload.post('/media-assets/:assetId/thumbnail', async (c) => {
@@ -1275,6 +1577,27 @@ upload.post('/media-assets/:assetId/thumbnail', async (c) => {
     ? lookup.asset.thumbnail_storage_key
     : `uploads/${userId}/${lookup.asset.id}-thumb.${ext}`
   const url = `${c.env.R2_PUBLIC_BASE_URL}/${key}`
+  const replacedThumbnailBytes = (
+    lookup.asset.thumbnail_storage_key
+    && lookup.asset.thumbnail_storage_key === key
+    && lookup.asset.thumbnail_storage_key !== lookup.asset.storage_key
+    && lookup.asset.thumbnail_storage_key !== lookup.asset.optimized_storage_key
+  )
+    ? lookup.asset.thumbnail_size_bytes ?? 0
+    : 0
+  const storageCheck = await checkTenantStorageLimit(
+    c.env.DB,
+    userId,
+    thumbnail.size,
+    replacedThumbnailBytes,
+  )
+  if (!storageCheck.allowed) {
+    return c.json({
+      success: false,
+      error: storageCheck.message
+        ?? 'Almacenamiento insuficiente.',
+    }, 403)
+  }
   await c.env.MEDIA.put(key, await thumbnail.arrayBuffer(), {
     httpMetadata: { contentType: thumbnail.type },
   })
@@ -1372,31 +1695,254 @@ upload.post('/', async (c) => {
 
   const formData = await c.req.formData()
   const file = formData.get('file') as File | null
-  if (!file) return c.json({ success: false, error: 'file field is required' }, 400)
+
+  if (!file) {
+    return c.json({
+      success: false,
+      error: 'file field is required',
+    }, 400)
+  }
 
   const ext = EXT_BY_TYPE[file.type]
+
   if (!ext) {
-    return c.json({ success: false, error: 'Tipo de archivo no permitido. Se aceptan imágenes, audio, video y documentos (PDF, ZIP, Office).' }, 415)
+    return c.json({
+      success: false,
+      error: (
+        'Tipo de archivo no permitido. '
+        + 'Se aceptan imágenes, audio, video y documentos '
+        + '(PDF, ZIP, Office).'
+      ),
+    }, 415)
   }
+
   const isImage = file.type.startsWith('image/')
-  const maxBytes = isImage ? IMAGE_MAX_BYTES : MEDIA_MAX_BYTES
+  const maxBytes = isImage
+    ? IMAGE_MAX_BYTES
+    : MEDIA_MAX_BYTES
+
   if (file.size > maxBytes) {
     const mb = Math.round(maxBytes / 1024 / 1024)
-    return c.json({ success: false, error: `El archivo supera el tamaño máximo de ${mb} MB` }, 413)
+
+    return c.json({
+      success: false,
+      error: `El archivo supera el tamaño máximo de ${mb} MB`,
+    }, 413)
   }
 
-  const { plan } = await getUserPlan(c.env.DB, userId)
-  const storageError = await checkStorageLimit(c.env.DB, userId, plan, file.size)
-  if (storageError) return c.json({ success: false, error: storageError }, 403)
+  const storageCheck = await checkTenantStorageLimit(
+    c.env.DB,
+    userId,
+    file.size,
+  )
+
+  if (!storageCheck.allowed) {
+    return c.json({
+      success: false,
+      error: storageCheck.message
+        ?? 'Almacenamiento insuficiente.',
+    }, 403)
+  }
 
   const key = `uploads/${userId}/${crypto.randomUUID()}.${ext}`
-
-  await c.env.MEDIA.put(key, await file.arrayBuffer(), {
-    httpMetadata: { contentType: file.type },
-  })
-
   const url = `${c.env.R2_PUBLIC_BASE_URL}/${key}`
-  return c.json({ success: true, data: { url, key, size_bytes: file.size } }, 201)
+
+  let storageObjectId: string | null = null
+  let physicalCreated = false
+
+  try {
+    // Registrar primero evita que un archivo físico quede sin contabilizar
+    // cuando D1 y el rollback de R2 fallan simultáneamente.
+    storageObjectId = await registerStorageObject(
+      c.env.DB,
+      {
+        tenantId: userId,
+        bucketKey: 'MEDIA',
+        objectKey: key,
+        sizeBytes: file.size,
+        mimeType: file.type,
+        category: 'raw_upload',
+        metadata: {
+          original_name: file.name,
+        },
+      },
+    )
+
+    // Desde que comienza el intento de escritura, el resultado puede
+    // ser ambiguo. El rollback debe intentar borrar la clave aunque
+    // MEDIA.put lance una excepción antes de devolver el control.
+    physicalCreated = true
+
+    await c.env.MEDIA.put(
+      key,
+      await file.arrayBuffer(),
+      {
+        httpMetadata: {
+          contentType: file.type,
+        },
+      },
+    )
+
+    await linkStorageObjectReference(
+      c.env.DB,
+      {
+        storageObjectId,
+        tenantId: userId,
+        publicationId: null,
+        sourceType: 'raw_upload',
+        sourceId: key,
+        sourceField: 'object_key',
+      },
+    )
+  } catch (error) {
+    let physicalDeleted = !physicalCreated
+    let registryCleanupError: unknown = null
+
+    if (physicalCreated) {
+      try {
+        await c.env.MEDIA.delete(key)
+        physicalDeleted = true
+      } catch (deleteError) {
+        console.error(
+          '[upload.raw.create.rollback-r2] failed',
+          {
+            user_id: userId,
+            object_key: key,
+            storage_object_id: storageObjectId,
+            error: deleteError instanceof Error
+              ? deleteError.message
+              : String(deleteError),
+          },
+        )
+      }
+    }
+
+    if (storageObjectId && physicalDeleted) {
+      try {
+        await detachStorageReferencesBySource(
+          c.env.DB,
+          userId,
+          'raw_upload',
+          key,
+        )
+
+        const finalized =
+          await finalizeStorageObjectDeletionByPhysicalKey(
+            c.env.DB,
+            userId,
+            'MEDIA',
+            key,
+          )
+
+        if (!finalized) {
+          throw new Error(
+            'El registro no pudo cerrarse como deleted',
+          )
+        }
+      } catch (cleanupError) {
+        registryCleanupError = cleanupError
+
+        console.error(
+          '[upload.raw.create.rollback-registry] failed',
+          {
+            user_id: userId,
+            object_key: key,
+            storage_object_id: storageObjectId,
+            error: cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+          },
+        )
+      }
+    } else if (storageObjectId && !physicalDeleted) {
+      await setStorageObjectLifecycle(
+        c.env.DB,
+        userId,
+        storageObjectId,
+        'orphaned',
+      ).catch((lifecycleError) => {
+        console.error(
+          '[upload.raw.create.mark-orphaned] failed',
+          {
+            user_id: userId,
+            object_key: key,
+            storage_object_id: storageObjectId,
+            error: lifecycleError instanceof Error
+              ? lifecycleError.message
+              : String(lifecycleError),
+          },
+        )
+      })
+    }
+
+    console.error('[upload.raw.create] failed', {
+      user_id: userId,
+      object_key: key,
+      storage_object_id: storageObjectId,
+      physical_created: physicalCreated,
+      physical_deleted: physicalDeleted,
+      registry_cleanup_error:
+        registryCleanupError instanceof Error
+          ? registryCleanupError.message
+          : (
+            registryCleanupError
+              ? String(registryCleanupError)
+              : null
+          ),
+      error: error instanceof Error
+        ? error.message
+        : String(error),
+    })
+
+    if (!storageObjectId) {
+      return c.json({
+        success: false,
+        code: 'RAW_UPLOAD_REGISTRY_PREPARE_FAILED',
+        error: (
+          'No se pudo preparar el registro de almacenamiento. '
+          + 'No se creó el archivo físico.'
+        ),
+      }, 500)
+    }
+
+    if (!physicalDeleted) {
+      return c.json({
+        success: false,
+        code: 'RAW_UPLOAD_ORPHANED_PHYSICAL_OBJECT',
+        error: (
+          'No se completó la operación y el archivo físico '
+          + 'permanece contabilizado para reconciliación.'
+        ),
+      }, 500)
+    }
+
+    if (registryCleanupError) {
+      return c.json({
+        success: false,
+        code: 'STORAGE_REGISTRY_CREATE_ROLLBACK_PENDING',
+        error: (
+          'El archivo físico fue retirado, pero el registro '
+          + 'requiere reconciliación.'
+        ),
+      }, 500)
+    }
+
+    return c.json({
+      success: false,
+      code: 'RAW_UPLOAD_REGISTRATION_FAILED',
+      error: 'No se pudo completar el registro del archivo.',
+    }, 500)
+  }
+
+  return c.json({
+    success: true,
+    data: {
+      url,
+      key,
+      size_bytes: file.size,
+      storage_object_id: storageObjectId,
+    },
+  }, 201)
 })
 
 // Borra un archivo de R2. Acepta el `key` directo o una `url` pública (de la que se
@@ -1405,7 +1951,10 @@ upload.post('/', async (c) => {
 upload.delete('/', async (c) => {
   const userId = c.get('user').sub
 
-  const body = await c.req.json<{ key?: string; url?: string }>().catch(() => ({}))
+  const body = await c.req
+    .json<{ key?: string; url?: string }>()
+    .catch(() => ({}))
+
   let key = body.key?.trim()
 
   // Si llega una URL pública, derivamos el key quitando el prefijo R2.
@@ -1414,15 +1963,156 @@ upload.delete('/', async (c) => {
     key = body.url.trim().replace(`${base}/`, '')
   }
 
-  if (!key) return c.json({ success: false, error: 'key o url es requerido' }, 400)
-
-  const prefix = `uploads/${userId}/`
-  if (!key.startsWith(prefix)) {
-    return c.json({ success: false, error: 'No autorizado para borrar este archivo' }, 403)
+  if (!key) {
+    return c.json({
+      success: false,
+      error: 'key o url es requerido',
+    }, 400)
   }
 
-  await c.env.MEDIA.delete(key)
-  return c.json({ success: true })
+  const prefix = `uploads/${userId}/`
+
+  if (!key.startsWith(prefix)) {
+    return c.json({
+      success: false,
+      error: 'No autorizado para borrar este archivo',
+    }, 403)
+  }
+
+  const registeredObject =
+    await getStorageObjectByPhysicalKey(
+      c.env.DB,
+      userId,
+      'MEDIA',
+      key,
+    )
+
+  if (registeredObject) {
+    const rawSourceObjects =
+      await listStorageObjectsForSource(
+        c.env.DB,
+        userId,
+        'raw_upload',
+        key,
+      )
+
+    const rawSourceObject = rawSourceObjects.find(
+      (item) => item.id === registeredObject.id,
+    )
+
+    const totalReferenceCount =
+      await countStorageObjectReferences(
+        c.env.DB,
+        registeredObject.id,
+      )
+
+    if (!rawSourceObject) {
+      if (registeredObject.category !== 'raw_upload') {
+        return c.json({
+          success: false,
+          code: 'STORAGE_OBJECT_NOT_RAW_UPLOAD',
+          error: (
+            'Este archivo pertenece a otro módulo '
+            + 'y no puede eliminarse desde esta ruta.'
+          ),
+        }, 409)
+      }
+
+      // Un raw huérfano puede no tener su referencia porque la
+      // vinculación falló después de escribir el objeto en R2.
+      if (totalReferenceCount > 0) {
+        return c.json({
+          success: false,
+          code: 'STORAGE_OBJECT_IN_USE',
+          error: (
+            'El archivo está vinculado a otros registros '
+            + 'y no puede eliminarse físicamente.'
+          ),
+        }, 409)
+      }
+    } else if (
+      rawSourceObject.other_reference_count > 0
+    ) {
+      return c.json({
+        success: false,
+        code: 'STORAGE_OBJECT_IN_USE',
+        error: (
+          'El archivo está vinculado a otros registros '
+          + 'y no puede eliminarse físicamente.'
+        ),
+      }, 409)
+    }
+  }
+
+  try {
+    await c.env.MEDIA.delete(key)
+  } catch (error) {
+    console.error('[upload.raw.delete.r2] failed', {
+      user_id: userId,
+      object_key: key,
+      error: error instanceof Error
+        ? error.message
+        : String(error),
+    })
+
+    return c.json({
+      success: false,
+      error: 'No se pudo eliminar el archivo físico.',
+    }, 500)
+  }
+
+  if (registeredObject) {
+    try {
+      await detachStorageReferencesBySource(
+        c.env.DB,
+        userId,
+        'raw_upload',
+        key,
+      )
+
+      const finalized =
+        await finalizeStorageObjectDeletionByPhysicalKey(
+          c.env.DB,
+          userId,
+          'MEDIA',
+          key,
+        )
+
+      if (!finalized) {
+        throw new Error(
+          'El objeto conserva referencias después del borrado físico',
+        )
+      }
+    } catch (error) {
+      console.error('[upload.raw.delete.registry] failed', {
+        user_id: userId,
+        object_key: key,
+        storage_object_id: registeredObject.id,
+        error: error instanceof Error
+          ? error.message
+          : String(error),
+      })
+
+      return c.json({
+        success: false,
+        code: 'STORAGE_REGISTRY_DELETE_PENDING',
+        error: (
+          'El archivo físico fue eliminado, pero el registro '
+          + 'de almacenamiento requiere reconciliación.'
+        ),
+      }, 500)
+    }
+  }
+
+  return c.json({
+    success: true,
+    data: {
+      deleted: true,
+      storage_registry: registeredObject
+        ? 'deleted'
+        : 'legacy_unregistered',
+    },
+  })
 })
 
 export default upload

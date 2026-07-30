@@ -940,7 +940,7 @@ export const api = {
   },
 
   mediaAssets: {
-    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number; folder_id?: string | null; needs_thumbnail?: boolean; needs_optimization?: boolean }) => {
+    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number; folder_id?: string | null; hidden?: boolean; needs_thumbnail?: boolean; needs_optimization?: boolean }) => {
       const qs = new URLSearchParams()
       qs.set('publication_id', params.publication_id)
       if (params.q) qs.set('q', params.q)
@@ -948,6 +948,7 @@ export const api = {
       if (params.cursor) qs.set('cursor', params.cursor)
       if (params.page != null) qs.set('page', String(params.page))
       if (params.folder_id !== undefined) qs.set('folder_id', params.folder_id ?? 'unfiled')
+      if (params.hidden) qs.set('hidden', 'true')
       if (params.needs_thumbnail) qs.set('needs_thumbnail', 'true')
       if (params.needs_optimization) qs.set('needs_optimization', 'true')
       return request<{
