@@ -17,6 +17,7 @@ import leadIntakeCustomerMessageRoutes from './routes/leadIntakeCustomerMessages
 import { jwtMiddleware } from './middleware/jwt'
 import { verifyJwt } from './lib/jwt'
 import { getUserPlan, getPlanUsage } from './lib/plans'
+import { getGlobalWatermarkConfig } from './lib/watermarkConfig'
 import {
   canvasUsesOpenProductDetail,
   cleanProductDetailId,
@@ -501,9 +502,7 @@ async function viewerPayload(db: D1Database, pub: ViewerPublicationRow) {
        ORDER BY pg.page_number ASC`,
     ).bind(pub.id).all(),
     publicMarkersForPublication(db, pub.id),
-    db.prepare('SELECT text, link_url, position, opacity FROM watermark_config WHERE id = 1').first<{
-      text: string; link_url: string; position: string; opacity: number
-    }>(),
+    getGlobalWatermarkConfig(db),
   ])
 
   // Prioridad: 1) free siempre activa, 2) elección del tenant, 3) override del admin, 4) default por plan
@@ -534,7 +533,7 @@ async function viewerPayload(db: D1Database, pub: ViewerPublicationRow) {
       project_developer: pub.project_developer,
       project_website: pub.project_website,
       watermark_enabled: watermarkEnabled,
-      watermark: wmConfig ?? { text: 'Intap Flipbook', link_url: 'https://intapflipbook.com', position: 'bottom-right', opacity: 80 },
+      watermark: wmConfig,
       pages,
       dynamic_markers: dynamicMarkers,
     },

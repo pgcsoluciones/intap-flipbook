@@ -27,7 +27,8 @@ export default function Dashboard() {
 
   const pubPct  = usage && !usage.publications.unlimited
     ? (usage.publications.used / usage.publications.max) * 100 : 0
-  const storPct = usage
+  const storUnlimited = usage?.storage?.unlimited || usage?.storage?.max_mb === null
+  const storPct = usage && !storUnlimited && usage.storage.max_mb > 0
     ? (usage.storage.used_mb / usage.storage.max_mb) * 100 : 0
   const showLimitWarning = pubPct > 80 || storPct > 80
 
@@ -138,7 +139,10 @@ function UsageSection({ usage }: { usage: any }) {
 
   const storUsed = usage.storage.used_mb
   const storMax  = usage.storage.max_mb
-  const storPct  = Math.min(100, (storUsed / storMax) * 100)
+  const storUnlimited = usage.storage.unlimited || storMax === null
+  const storPct  = !storUnlimited && storMax > 0
+    ? Math.min(100, (storUsed / storMax) * 100)
+    : 0
 
   const pageMax = usage.features.max_pages_per_pub
 
@@ -153,7 +157,9 @@ function UsageSection({ usage }: { usage: any }) {
         />
         <UsageBar
           label="Almacenamiento"
-          value={`${storUsed.toFixed(1)} MB / ${storMax} MB`}
+          value={storUnlimited
+            ? `${storUsed.toFixed(1)} MB / ilimitado`
+            : `${storUsed.toFixed(1)} MB / ${storMax} MB`}
           pct={storPct}
         />
         <div style={s.usageStat}>

@@ -1,4 +1,8 @@
-import type { Env } from '../index'
+import { getIntegerEntitlement } from './entitlements'
+import {
+  checkTenantStorageLimit,
+  getTenantStorageUsage,
+} from './storageUsage'
 
 export interface Plan {
   id: string
@@ -76,18 +80,19 @@ export async function checkPageLimit(db: D1Database, publicationId: string, plan
 }
 
 export async function checkStorageLimit(db: D1Database, userId: string, plan: Plan, newFileBytes: number, customLimits?: CustomLimits): Promise<string | null> {
-  const row = await db
-    .prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM pages pg JOIN publications pub ON pub.id = pg.publication_id WHERE pub.user_id = ?')
-    .bind(userId)
-    .first<{ total: number }>()
-  const usedBytes = row?.total ?? 0
-  const effectiveMaxMb = customLimits?.max_storage_mb ?? plan.max_storage_mb
-  const maxBytes = effectiveMaxMb * 1024 * 1024
-  if (usedBytes + newFileBytes > maxBytes) {
-    const usedMb = (usedBytes / 1024 / 1024).toFixed(1)
-    return `Almacenamiento insuficiente. Usados: ${usedMb} MB / ${effectiveMaxMb} MB (plan ${plan.name}).`
-  }
-  return null
+  const explicitMaxMb = customLimits?.max_storage_mb ?? undefined
+  const storageCheck = await checkTenantStorageLimit(
+    db,
+    userId,
+    newFileBytes,
+    0,
+    explicitMaxMb,
+  )
+
+  return storageCheck.allowed
+    ? null
+    : storageCheck.message
+      ?? `Almacenamiento insuficiente para el plan ${plan.name}.`
 }
 
 export function checkSoundAllowed(plan: Plan): string | null {
@@ -107,13 +112,15 @@ export function checkCustomDomainAllowed(plan: Plan): string | null {
 export async function getPlanUsage(db: D1Database, userId: string, plan: Plan) {
   const [pubRow, storageRow] = await Promise.all([
     db.prepare('SELECT COUNT(*) as count FROM publications WHERE user_id = ?').bind(userId).first<{ count: number }>(),
-    db.prepare(
-      'SELECT COALESCE(SUM(size_bytes), 0) as total FROM pages pg JOIN publications pub ON pub.id = pg.publication_id WHERE pub.user_id = ?'
-    ).bind(userId).first<{ total: number }>(),
+    getTenantStorageUsage(db, userId),
   ])
 
   const pubCount = pubRow?.count ?? 0
-  const usedBytes = storageRow?.total ?? 0
+  const maxStorageMb = await getIntegerEntitlement(
+    db,
+    userId,
+    'storage.max_mb',
+  )
 
   return {
     plan_id: plan.id,
@@ -124,8 +131,12 @@ export async function getPlanUsage(db: D1Database, userId: string, plan: Plan) {
       unlimited: plan.max_publications === null,
     },
     storage: {
-      used_mb: parseFloat((usedBytes / 1024 / 1024).toFixed(2)),
-      max_mb: plan.max_storage_mb,
+      used_mb: storageRow.used_mb,
+      max_mb: maxStorageMb,
+      total_bytes: storageRow.total_bytes,
+      object_count: storageRow.object_count,
+      breakdown: storageRow.breakdown,
+      unlimited: maxStorageMb === null,
     },
     features: {
       sound_enabled: plan.sound_enabled === 1,

@@ -7,6 +7,9 @@ function authH() {
 }
 
 type BrandingConfig = {
+  text: string
+  link_url: string
+  logo_url: string | null
   watermark_text: string
   watermark_url: string
   position: 'bottom-right' | 'bottom-left' | 'bottom-center'
@@ -25,11 +28,35 @@ const POSITION_MAP: Record<BrandingConfig['position'], React.CSSProperties> = {
 }
 
 const DEFAULT_CONFIG: BrandingConfig = {
+  text: 'Creado con Intap Flipbook',
+  link_url: 'https://intapflipbook.com/',
+  logo_url: null,
   watermark_text: 'Creado con Intap Flipbook',
-  watermark_url: 'https://intapflipbook.com',
+  watermark_url: 'https://intapflipbook.com/',
   position: 'bottom-right',
   opacity: 80,
   visibility: { free: true, basic: true, pro: false },
+}
+
+function normalizeBrandingConfig(value: Partial<BrandingConfig> | null | undefined): BrandingConfig {
+  const text = value?.text ?? value?.watermark_text ?? DEFAULT_CONFIG.text
+  const linkUrl = value?.link_url ?? value?.watermark_url ?? DEFAULT_CONFIG.link_url
+
+  return {
+    ...DEFAULT_CONFIG,
+    ...value,
+    text,
+    link_url: linkUrl,
+    logo_url: value?.logo_url ?? DEFAULT_CONFIG.logo_url,
+    watermark_text: text,
+    watermark_url: linkUrl,
+    position: value?.position ?? DEFAULT_CONFIG.position,
+    opacity: value?.opacity ?? DEFAULT_CONFIG.opacity,
+    visibility: {
+      ...DEFAULT_CONFIG.visibility,
+      ...(value?.visibility ?? {}),
+    },
+  }
 }
 
 export default function AdminBranding() {
@@ -46,7 +73,7 @@ export default function AdminBranding() {
       const r = await fetch(`${API_BASE}/admin/branding`, { headers: authH() })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`)
-      setConfig({ ...DEFAULT_CONFIG, ...d.data })
+      setConfig(normalizeBrandingConfig(d.data))
     } catch (e: any) {
       // si no hay config aún, usar defaults sin mostrar error
       if (!String(e.message).includes('404')) flash(e.message)
@@ -60,10 +87,17 @@ export default function AdminBranding() {
       const r = await fetch(`${API_BASE}/admin/branding`, {
         method: 'PUT',
         headers: authH(),
-        body: JSON.stringify(config),
+        body: JSON.stringify({
+          ...config,
+          text: config.watermark_text,
+          link_url: config.watermark_url,
+          watermark_text: config.watermark_text,
+          watermark_url: config.watermark_url,
+        }),
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`)
+      setConfig(normalizeBrandingConfig(d.data))
       flash('Configuración guardada.')
     } catch (e: any) { flash(e.message) }
     finally { setSaving(false) }
@@ -97,7 +131,11 @@ export default function AdminBranding() {
               <input
                 style={s.input}
                 value={config.watermark_text}
-                onChange={(e) => setConfig({ ...config, watermark_text: e.target.value })}
+                onChange={(e) => setConfig({
+                  ...config,
+                  text: e.target.value,
+                  watermark_text: e.target.value,
+                })}
                 placeholder="Creado con Intap Flipbook"
               />
             </label>
@@ -108,7 +146,11 @@ export default function AdminBranding() {
                 style={s.input}
                 type="url"
                 value={config.watermark_url}
-                onChange={(e) => setConfig({ ...config, watermark_url: e.target.value })}
+                onChange={(e) => setConfig({
+                  ...config,
+                  link_url: e.target.value,
+                  watermark_url: e.target.value,
+                })}
                 placeholder="https://intapflipbook.com"
               />
             </label>
