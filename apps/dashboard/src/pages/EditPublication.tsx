@@ -37,6 +37,19 @@ import {
   stripDynamicAssociations,
 } from '../lib/editorClipboard'
 import {
+  DYNAMIC_MARKER_BUTTON_KIND,
+  DYNAMIC_MARKER_BUTTON_PRESETS,
+  createDynamicMarkerButtonData,
+  createDynamicMarkerButtonStyle,
+  getDynamicMarkerButtonCornerRadius,
+  getDynamicMarkerButtonStatusColor,
+  isDynamicMarkerButtonLinked,
+  setDynamicMarkerButtonMarker,
+  updateDynamicMarkerButtonStyle,
+  type DynamicMarkerButtonPreset,
+  type DynamicMarkerButtonStyle,
+} from '../lib/dynamicMarkerButtons'
+import {
   appendMediaPickerUrls,
   MEDIA_PICKER_REPLACEMENT_ERROR,
   readMediaPickerFolder,
@@ -799,6 +812,158 @@ const BUTTON_PRESETS: { label: string; variant: 'solid' | 'outline' | 'pill' }[]
   { label: 'Reproducir',     variant: 'solid' },
 ]
 
+function applyDynamicMarkerButtonStyleToGroup(group: any, style: DynamicMarkerButtonStyle) {
+  const children = group.getObjects?.() || []
+  const background = children.find((item: any) => item.data?.role === 'dynamic_marker_button_bg')
+  const text = children.find((item: any) => item.data?.role === 'dynamic_marker_button_text')
+  const radius = getDynamicMarkerButtonCornerRadius(style)
+
+  if (background?.type === 'circle') {
+    background.set({
+      radius: Math.min(style.width, style.height) / 2,
+      fill: style.backgroundColor,
+      stroke: style.borderColor,
+      strokeWidth: style.borderWidth,
+    })
+  } else if (background) {
+    background.set({
+      width: style.width,
+      height: style.height,
+      fill: style.backgroundColor,
+      stroke: style.borderColor,
+      strokeWidth: style.borderWidth,
+      rx: radius,
+      ry: radius,
+    })
+  }
+
+  if (text) {
+    text.set({
+      text: style.label,
+      width: Math.max(24, style.width - 18),
+      fill: style.textColor,
+      fontSize: style.textSize,
+      fontFamily: style.fontFamily,
+      fontWeight: style.fontWeight,
+      textAlign: style.textAlign,
+      originX: 'center',
+      originY: 'center',
+      left: 0,
+      top: 0,
+    })
+  }
+
+  group.set({ opacity: style.opacity })
+  group.addWithUpdate?.()
+}
+
+function createDynamicMarkerButtonChildren(style: DynamicMarkerButtonStyle) {
+  const isCircle = style.shape === 'circle'
+  const radius = getDynamicMarkerButtonCornerRadius(style)
+  const background = isCircle
+    ? new fabric.Circle({
+        radius: Math.min(style.width, style.height) / 2,
+        fill: style.backgroundColor,
+        stroke: style.borderColor,
+        strokeWidth: style.borderWidth,
+        originX: 'center',
+        originY: 'center',
+        selectable: false,
+        evented: false,
+        data: { role: 'dynamic_marker_button_bg' },
+      })
+    : new fabric.Rect({
+        width: style.width,
+        height: style.height,
+        fill: style.backgroundColor,
+        stroke: style.borderColor,
+        strokeWidth: style.borderWidth,
+        rx: radius,
+        ry: radius,
+        originX: 'center',
+        originY: 'center',
+        selectable: false,
+        evented: false,
+        data: { role: 'dynamic_marker_button_bg' },
+      })
+
+  const text = new fabric.Textbox(style.label, {
+    width: Math.max(24, style.width - 18),
+    fill: style.textColor,
+    fontSize: style.textSize,
+    fontFamily: style.fontFamily,
+    fontWeight: style.fontWeight,
+    textAlign: style.textAlign,
+    originX: 'center',
+    originY: 'center',
+    left: 0,
+    top: 0,
+    selectable: false,
+    evented: false,
+    data: { role: 'dynamic_marker_button_text' },
+  })
+  return [background, text]
+}
+
+function createDynamicMarkerButtonFabricGroup(style: DynamicMarkerButtonStyle) {
+  return new fabric.Group(createDynamicMarkerButtonChildren(style), {
+    left: 0,
+    top: 0,
+    selectable: true,
+    evented: true,
+    data: createDynamicMarkerButtonData(style),
+  })
+}
+
+function rebuildDynamicMarkerButtonGroup(obj: any) {
+  if (obj?.data?.kind !== DYNAMIC_MARKER_BUTTON_KIND) return obj
+  const style: DynamicMarkerButtonStyle = obj.data.dynamicMarkerButton ?? createDynamicMarkerButtonStyle('solid-rect')
+  const transform = {
+    left: obj.left,
+    top: obj.top,
+    scaleX: obj.scaleX,
+    scaleY: obj.scaleY,
+    angle: obj.angle,
+    flipX: obj.flipX,
+    flipY: obj.flipY,
+    skewX: obj.skewX,
+    skewY: obj.skewY,
+    opacity: obj.opacity,
+    visible: obj.visible,
+    selectable: obj.selectable,
+    evented: obj.evented,
+    hasControls: obj.hasControls,
+    hasBorders: obj.hasBorders,
+  }
+  const rebuilt = createDynamicMarkerButtonFabricGroup(style)
+  obj._objects = rebuilt.getObjects()
+  obj._objects.forEach((child: any) => {
+    child.group = obj
+    child.canvas = obj.canvas
+    child.selectable = false
+    child.evented = false
+  })
+  obj.data = {
+    ...obj.data,
+    dynamicMarkerButton: style,
+    label: style.label,
+  }
+  obj.set({
+    ...transform,
+    width: rebuilt.width,
+    height: rebuilt.height,
+    dirty: true,
+  })
+  obj.addWithUpdate?.()
+  obj.set(transform)
+  obj.setCoords?.()
+  return obj
+}
+
+function ensureDynamicMarkerButtonEditorStateForCanvas(canvas: any) {
+  canvas?.getObjects?.().forEach((obj: any) => rebuildDynamicMarkerButtonGroup(obj))
+}
+
 // Tipos de acción de un botón (qué ocurre al hacer clic en el viewer)
 type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'popup_audio' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos' | 'popup_message' | 'show_comment' | 'copy_text' | 'open_product_detail' | 'open_dynamic_marker'
 const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
@@ -828,6 +993,13 @@ type ProductDetailIndicator = {
   y: number
   status: ProductDetailStatus
   title: string
+}
+
+type DynamicMarkerButtonIndicator = {
+  key: string
+  x: number
+  y: number
+  linked: boolean
 }
 
 // Catálogo de widgets. `type` identifica el comportamiento que el visor renderiza.
@@ -1245,6 +1417,9 @@ export default function EditPublication() {
   const productDetailIndicatorPendingRef = useRef<Map<number, Promise<void>>>(new Map())
   const productDetailIndicatorFrameRef = useRef<number | null>(null)
   const productDetailIndicatorLastRef = useRef('')
+  const [dynamicMarkerButtonIndicators, setDynamicMarkerButtonIndicators] = useState<DynamicMarkerButtonIndicator[]>([])
+  const dynamicMarkerButtonIndicatorFrameRef = useRef<number | null>(null)
+  const dynamicMarkerButtonIndicatorLastRef = useRef('')
   // Miniaturas reales por página: conserva solo el último dataURL válido para page.id + versión.
   const [thumbnailByPageId, setThumbnailByPageId] = useState<Record<string, PageThumbnailCacheEntry>>({})
   const [thumbnailUrlByPublicUrl, setThumbnailUrlByPublicUrl] = useState<Record<string, string>>({})
@@ -1480,6 +1655,40 @@ export default function EditPublication() {
     })
   }, [refreshProductDetailIndicators])
 
+  const refreshDynamicMarkerButtonIndicators = useCallback(() => {
+    const canvas = fabricRef.current
+    if (!canvas) {
+      dynamicMarkerButtonIndicatorLastRef.current = ''
+      setDynamicMarkerButtonIndicators([])
+      return
+    }
+    const indicators: DynamicMarkerButtonIndicator[] = []
+    ;(canvas.getObjects?.() ?? []).forEach((obj: any, index: number) => {
+      if (obj?.data?.kind !== DYNAMIC_MARKER_BUTTON_KIND) return
+      const rect = obj.getBoundingRect?.(true, true)
+      if (!rect) return
+      indicators.push({
+        key: obj.data?.elementId || `dynamic-marker-button:${index}`,
+        x: Math.max(8, Math.min(CANVAS_W - 8, (rect.left ?? 0) + (rect.width ?? 0) - 8)),
+        y: Math.max(8, Math.min(CANVAS_H - 8, (rect.top ?? 0) + 8)),
+        linked: isDynamicMarkerButtonLinked(obj.data),
+      })
+    })
+    const nextKey = JSON.stringify(indicators)
+    if (nextKey !== dynamicMarkerButtonIndicatorLastRef.current) {
+      dynamicMarkerButtonIndicatorLastRef.current = nextKey
+      setDynamicMarkerButtonIndicators(indicators)
+    }
+  }, [])
+
+  const queueDynamicMarkerButtonIndicatorRefresh = useCallback(() => {
+    if (dynamicMarkerButtonIndicatorFrameRef.current != null) cancelAnimationFrame(dynamicMarkerButtonIndicatorFrameRef.current)
+    dynamicMarkerButtonIndicatorFrameRef.current = requestAnimationFrame(() => {
+      dynamicMarkerButtonIndicatorFrameRef.current = null
+      refreshDynamicMarkerButtonIndicators()
+    })
+  }, [refreshDynamicMarkerButtonIndicators])
+
   const autosaveTimer = useRef<any>(null)
   const savedFlashTimer = useRef<any>(null)
   const isTextEditingRef = useRef(false)
@@ -1594,11 +1803,14 @@ export default function EditPublication() {
         try {
           if (fabricRef.current !== c || pageIdRef.current !== pageId) return
           await restoreCanvasBackground(c, pageId ? pagesRef.current.find((p) => p.id === pageId) : activePage)
+          ensureDynamicMarkerButtonEditorStateForCanvas(c)
           const active = c.getActiveObject?.() ?? null
+          rebuildDynamicMarkerButtonGroup(active)
           selectedRef.current = active
           setSelected(active)
           setSelectVersion((v) => v + 1)
           queueProductDetailIndicatorRefresh()
+          queueDynamicMarkerButtonIndicatorRefresh()
           scheduleAutosaveRef.current()
         } catch (error) {
           console.error('[editor] apply history failed', error)
@@ -1611,7 +1823,7 @@ export default function EditPublication() {
       isUndoRedoRef.current = false
       console.error('[editor] apply history failed', error)
     }
-  }, [activePage, displayUrlByPublicUrl, queueProductDetailIndicatorRefresh, restoreCanvasBackground])
+  }, [activePage, displayUrlByPublicUrl, queueDynamicMarkerButtonIndicatorRefresh, queueProductDetailIndicatorRefresh, restoreCanvasBackground])
 
   useEffect(() => {
     pagesRef.current = pages
@@ -2275,9 +2487,10 @@ export default function EditPublication() {
       pushHistory(JSON.stringify(serializeCanvasJson(c)))
     }
     queueProductDetailIndicatorRefresh()
+    queueDynamicMarkerButtonIndicatorRefresh()
     scheduleAutosave()
     markActivePageCanvasChanged()
-  }, [markActivePageCanvasChanged, pushHistory, queueProductDetailIndicatorRefresh, scheduleAutosave])
+  }, [markActivePageCanvasChanged, pushHistory, queueDynamicMarkerButtonIndicatorRefresh, queueProductDetailIndicatorRefresh, scheduleAutosave])
 
   // Mantiene la ref actualizada para que applyHistory pueda llamarla
   scheduleAutosaveRef.current = scheduleAutosave
@@ -2401,6 +2614,7 @@ export default function EditPublication() {
         perfMark('canvas-first-useful-render', { pageId: activePage.id })
         perfMeasure('canvas-time-to-first-useful-render', 'canvas-load-start', undefined, { pageId: activePage.id })
         queueProductDetailIndicatorRefresh()
+        queueDynamicMarkerButtonIndicatorRefresh()
         onDone()
       }
 
@@ -2443,6 +2657,7 @@ export default function EditPublication() {
 
     const updateSelectedObject = (next: any) => {
       if (selectedRef.current === next) return
+      rebuildDynamicMarkerButtonGroup(next)
       selectedRef.current = next
       setSelected(next)
       setSelectVersion((v) => v + 1)
@@ -2487,6 +2702,7 @@ export default function EditPublication() {
           if (o.data?.hiddenInEditor) {
             o.set({ opacity: 0.07, selectable: false, evented: false, hasControls: false, hasBorders: false })
           }
+          rebuildDynamicMarkerButtonGroup(o)
         })
         canvas.renderAll()
         if (restoredHistory) {
@@ -2588,10 +2804,14 @@ export default function EditPublication() {
       if (isTextEditingRef.current) return
       if (!isUndoRedoRef.current) pushHistory(JSON.stringify(serializeCanvasJson(canvas)))
       queueProductDetailIndicatorRefresh()
+      queueDynamicMarkerButtonIndicatorRefresh()
       scheduleAutosave()
       markActivePageCanvasChanged()
     }
-    const onProductDetailObjectMove = () => queueProductDetailIndicatorRefresh()
+    const onProductDetailObjectMove = () => {
+      queueProductDetailIndicatorRefresh()
+      queueDynamicMarkerButtonIndicatorRefresh()
+    }
     const onTextEditingEntered = () => {
       isTextEditingRef.current = true
       clearTimeout(autosaveTimer.current)
@@ -2681,6 +2901,12 @@ export default function EditPublication() {
       }
       productDetailIndicatorLastRef.current = ''
       setProductDetailIndicators([])
+      if (dynamicMarkerButtonIndicatorFrameRef.current != null) {
+        cancelAnimationFrame(dynamicMarkerButtonIndicatorFrameRef.current)
+        dynamicMarkerButtonIndicatorFrameRef.current = null
+      }
+      dynamicMarkerButtonIndicatorLastRef.current = ''
+      setDynamicMarkerButtonIndicators([])
 
       canvasGenerationRef.current += 1
       canvasReadyRef.current = false
@@ -2823,6 +3049,31 @@ export default function EditPublication() {
       },
     })
     c.add(btn); c.setActiveObject(btn); c.requestRenderAll()
+    setActiveTool('buttons')
+    scheduleAutosave()
+  }
+
+  function addDynamicMarkerButton(preset: DynamicMarkerButtonPreset) {
+    const c = fabricRef.current
+    if (!c) return
+    const style = createDynamicMarkerButtonStyle(preset.presetId)
+    const button = createDynamicMarkerButtonFabricGroup(style)
+    const zoom = c.getZoom?.() || 1
+    const vpt = c.viewportTransform || [1, 0, 0, 1, 0, 0]
+    const center = {
+      x: (c.getWidth() / 2 - vpt[4]) / zoom,
+      y: (c.getHeight() / 2 - vpt[5]) / zoom,
+    }
+    button.set({
+      left: center.x - style.width / 2,
+      top: center.y - style.height / 2,
+    })
+    c.add(button)
+    c.setActiveObject(button)
+    selectedRef.current = button
+    setSelected(button)
+    setSelectVersion((value) => value + 1)
+    c.requestRenderAll()
     setActiveTool('buttons')
     scheduleAutosave()
   }
@@ -3542,6 +3793,7 @@ export default function EditPublication() {
       replaceTargetRef.current = null
       c.discardActiveObject()
       enlivened.forEach((obj) => {
+        rebuildDynamicMarkerButtonGroup(obj)
         obj.setCoords?.()
         c.add(obj)
         addedObjects.push(obj)
@@ -3591,6 +3843,7 @@ export default function EditPublication() {
       const existingElementIds = collectFabricElementIds(c.getObjects())
       prepareDuplicatedFabricObjectForEditor(clone, existingElementIds)
       restoreDuplicateInteractivity(clone, o)
+      rebuildDynamicMarkerButtonGroup(clone)
       clone.set({ left: (o.left ?? 0) + DUPLICATE_OFFSET, top: (o.top ?? 0) + DUPLICATE_OFFSET })
 
       c.discardActiveObject()
@@ -3598,6 +3851,7 @@ export default function EditPublication() {
         clone._restoreObjectsState?.()
         const clonedObjects = typeof clone.getObjects === 'function' ? clone.getObjects() : []
         clonedObjects.forEach((child: any) => {
+          rebuildDynamicMarkerButtonGroup(child)
           child.setCoords?.()
           c.add(child)
         })
@@ -4417,6 +4671,7 @@ export default function EditPublication() {
               addText={addText}
               addShape={addShape}
               addButton={addButton}
+              addDynamicMarkerButton={addDynamicMarkerButton}
               addLinkZone={addLinkZone}
               openImagePicker={() => {
                 const pageId = pageIdRef.current
@@ -4546,6 +4801,20 @@ export default function EditPublication() {
                 <canvas ref={canvasRef} />
 
                 <div style={s.productDetailIndicatorLayer}>
+                  {dynamicMarkerButtonIndicators.map((indicator) => (
+                    <span
+                      key={indicator.key}
+                      title={indicator.linked ? 'Botón de ficha vinculado' : 'Botón de ficha sin ficha'}
+                      style={{
+                        ...s.dynamicMarkerButtonIndicator,
+                        left: indicator.x,
+                        top: indicator.y,
+                        background: getDynamicMarkerButtonStatusColor({
+                          action: indicator.linked ? { type: 'open_dynamic_marker', marker_id: 'linked' } : undefined,
+                        }),
+                      }}
+                    />
+                  ))}
                   {productDetailIndicators.map((indicator) => (
                     <span
                       key={indicator.key}
@@ -4630,6 +4899,7 @@ export default function EditPublication() {
               onChange={() => {
                 recordCurrentCanvasChange()
                 queueProductDetailIndicatorRefresh()
+                queueDynamicMarkerButtonIndicatorRefresh()
               }}
               onSyncToggle={handleSvgSyncToggle}
               onReframeImage={startImageReframe}
@@ -5400,6 +5670,16 @@ function ContextPanel(p: any) {
         <>
           <PanelTitle title="Botones" />
           <p style={cp.hint}>Agrega un botón y configura su acción y estilo en el panel derecho.</p>
+          <div style={cp.sectionLabel}>Botón de ficha</div>
+          <div style={cp.dynamicButtonGrid}>
+            {DYNAMIC_MARKER_BUTTON_PRESETS.map((preset) => (
+              <button key={preset.presetId} style={cp.dynamicButtonCard} onClick={() => p.addDynamicMarkerButton(preset)}>
+                <DynamicMarkerButtonPreview preset={preset} />
+                <span>{preset.name}</span>
+              </button>
+            ))}
+          </div>
+          <div style={cp.sectionLabel}>Botones generales</div>
           <div style={cp.btnList}>
             {BUTTON_PRESETS.map((b) => (
               <button
@@ -6010,6 +6290,10 @@ function PropsPanel({
         )}
 
         {/* ── BOTÓN: estilo visual + acción ── */}
+        {kind === DYNAMIC_MARKER_BUTTON_KIND && (
+          <DynamicMarkerButtonProps obj={obj} canvas={canvas} publicationId={publicationId} onChange={onChange} />
+        )}
+
         {kind === 'button' && (
           <ButtonProps obj={obj} canvas={canvas} pages={pages} setData={setData} onChange={onChange} />
         )}
@@ -6087,15 +6371,21 @@ function PropsPanel({
 
       {insTab === 'actions' && (
       <div style={s.props}>
-        <TriggerSelector data={(obj as any).data ?? {}} setData={setData} />
-        <ActionEditor
-          data={(obj as any).data ?? {}}
-          pages={pages}
-          setData={setData}
-          targets={namedTargets}
-          publicationId={publicationId}
-          openImageBank={(request) => openActionGalleryMediaPicker?.(obj, request)}
-        />
+        {kind === DYNAMIC_MARKER_BUTTON_KIND ? (
+          <p style={cp.hint}>La ficha vinculada se configura en Propiedades para mantener el contrato único del botón.</p>
+        ) : (
+          <>
+            <TriggerSelector data={(obj as any).data ?? {}} setData={setData} />
+            <ActionEditor
+              data={(obj as any).data ?? {}}
+              pages={pages}
+              setData={setData}
+              targets={namedTargets}
+              publicationId={publicationId}
+              openImageBank={(request) => openActionGalleryMediaPicker?.(obj, request)}
+            />
+          </>
+        )}
         {isWidget && (
           <p style={{ ...cp.hint, marginTop: 8 }}>
             <b>Nota:</b> para que este widget pueda ser objetivo de "Mostrar / ocultar", asígnale un nombre en la pestaña <b>Propiedades</b>.
@@ -6219,6 +6509,102 @@ function SvgLibProps({ obj, canvas, onChange, onSyncToggle }: { obj: any; canvas
 }
 
 // Propiedades específicas del botón: estilo + acción
+function DynamicMarkerButtonPreview({ preset }: { preset: DynamicMarkerButtonPreset }) {
+  return (
+    <div style={cp.dynamicButtonPreviewWrap}>
+      <div style={{
+        width: preset.shape === 'circle' ? 44 : 86,
+        height: preset.shape === 'circle' ? 44 : 34,
+        borderRadius: preset.shape === 'circle' ? 999 : Math.min(preset.borderRadius, 18),
+        background: preset.backgroundColor,
+        color: preset.textColor,
+        border: `${preset.borderWidth}px solid ${preset.borderColor}`,
+        opacity: preset.opacity,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 10,
+        fontFamily: preset.fontFamily,
+        fontWeight: preset.fontWeight,
+        textAlign: 'center',
+        padding: 4,
+        boxSizing: 'border-box',
+      }}>
+        {preset.label}
+      </div>
+    </div>
+  )
+}
+
+function DynamicMarkerButtonProps({ obj, canvas, publicationId, onChange }: any) {
+  const style: DynamicMarkerButtonStyle = obj.data?.dynamicMarkerButton ?? createDynamicMarkerButtonStyle('solid-rect')
+
+  function patchStyle(patch: Partial<DynamicMarkerButtonStyle>) {
+    obj.data = updateDynamicMarkerButtonStyle(obj.data, patch)
+    rebuildDynamicMarkerButtonGroup(obj)
+    canvas?.requestRenderAll()
+    onChange()
+  }
+
+  function setMarker(markerId: string | null) {
+    obj.data = setDynamicMarkerButtonMarker(obj.data, markerId ?? undefined)
+    rebuildDynamicMarkerButtonGroup(obj)
+    canvas?.requestRenderAll()
+    onChange()
+  }
+
+  const markerId = obj.data?.action?.type === 'open_dynamic_marker' ? obj.data.action.marker_id : undefined
+  const isLinked = !!markerId
+
+  return (
+    <>
+      <PropGroup label="Contenido">
+        <input style={s.propInput} value={style.label} onChange={(e) => patchStyle({ label: e.target.value })} />
+      </PropGroup>
+      <PropGroup label="Ficha vinculada">
+        <div style={{ ...s.statusBadge, ...(isLinked ? s.statusBadgeLinked : s.statusBadgeEmpty) }}>
+          {isLinked ? 'Ficha vinculada' : 'Sin ficha'}
+        </div>
+        <DynamicMarkerSelector publicationId={publicationId} value={markerId} onChange={setMarker} />
+      </PropGroup>
+      <PropGroup label="Texto">
+        <select style={s.propInput} value={style.fontFamily} onChange={(e) => patchStyle({ fontFamily: e.target.value })}>
+          {FONTS.map((f) => <option key={f.name} value={f.family} style={{ fontFamily: f.family }}>{f.name}</option>)}
+        </select>
+        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+          <input type="color" value={style.textColor} onChange={(e) => patchStyle({ textColor: e.target.value })} style={s.colorInput} />
+          <input style={s.propInput} type="number" min={8} max={80} value={style.textSize} onChange={(e) => patchStyle({ textSize: +e.target.value })} />
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+          <button style={{ ...s.alignBtn, ...(style.fontWeight === '700' ? s.alignActive : {}) }} onClick={() => patchStyle({ fontWeight: style.fontWeight === '700' ? '400' : '700' })}>B</button>
+          {(['left', 'center', 'right'] as const).map((align) => (
+            <button key={align} style={{ ...s.alignBtn, ...(style.textAlign === align ? s.alignActive : {}) }} onClick={() => patchStyle({ textAlign: align })}>
+              {align === 'left' ? '⟸' : align === 'center' ? '≡' : '⟹'}
+            </button>
+          ))}
+        </div>
+      </PropGroup>
+      <PropGroup label="Botón">
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input type="color" value={style.backgroundColor.startsWith('#') ? style.backgroundColor : '#ffffff'} onChange={(e) => patchStyle({ backgroundColor: e.target.value })} style={s.colorInput} />
+          <input type="color" value={style.borderColor.startsWith('#') ? style.borderColor : '#ffffff'} onChange={(e) => patchStyle({ borderColor: e.target.value })} style={s.colorInput} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
+          <input style={s.propInput} type="number" min={0} max={20} value={style.borderWidth} onChange={(e) => patchStyle({ borderWidth: +e.target.value })} />
+          <input style={s.propInput} type="number" min={0} max={999} value={style.borderRadius} onChange={(e) => patchStyle({ borderRadius: +e.target.value })} />
+        </div>
+        <input style={{ width: '100%', marginTop: 8 }} type="range" min={0.1} max={1} step={0.05} value={style.opacity} onChange={(e) => patchStyle({ opacity: +e.target.value })} />
+      </PropGroup>
+      <PropGroup label="Dimensiones">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+          <input style={s.propInput} type="number" min={32} max={800} value={style.width} onChange={(e) => patchStyle({ width: +e.target.value })} />
+          <input style={s.propInput} type="number" min={24} max={400} value={style.height} onChange={(e) => patchStyle({ height: +e.target.value })} />
+        </div>
+      </PropGroup>
+    </>
+  )
+}
+
 function ButtonProps({ obj, canvas, pages, setData, onChange }: { obj: any; canvas: any; pages: any[]; setData: (p: any) => void; onChange: () => void }) {
   const data = (obj as any).data ?? {}
   const [iconSizeDisplay, setIconSizeDisplay] = React.useState<number>(data.iconSize ?? 22)
@@ -8428,6 +8814,7 @@ const s: Record<string, React.CSSProperties> = {
   canvasLoadingText: { fontSize: 14, fontWeight: 700, color: '#374151', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', boxShadow: '0 8px 24px rgba(15,23,42,0.12)' },
   productDetailIndicatorLayer: { position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 5 } as React.CSSProperties,
   productDetailIndicator: { position: 'absolute', transform: 'translate(-50%, -50%)', width: 18, height: 18, borderRadius: 999, color: '#fff', border: '2px solid #fff', boxShadow: '0 4px 12px rgba(15,23,42,.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, lineHeight: 1, fontWeight: 900, fontFamily: 'Inter, system-ui, sans-serif', pointerEvents: 'auto', cursor: 'help' } as React.CSSProperties,
+  dynamicMarkerButtonIndicator: { position: 'absolute', transform: 'translate(-50%, -50%)', width: 14, height: 14, borderRadius: 999, border: '2px solid #fff', boxShadow: '0 4px 12px rgba(15,23,42,.24)', pointerEvents: 'auto', cursor: 'help' } as React.CSSProperties,
   adjustBar:   { display: 'flex', alignItems: 'center', gap: 14, padding: '8px 16px', background: '#eef2ff', borderBottom: '1px solid #c7d2fe', flexShrink: 0, flexWrap: 'wrap' } as React.CSSProperties,
   adjustReset: { background: '#fff', border: '1px solid #c7d2fe', borderRadius: 7, padding: '5px 12px', fontSize: 12, fontWeight: 600, color: '#4338ca', cursor: 'pointer', fontFamily: 'inherit' } as React.CSSProperties,
   insTabs:   { display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', flexShrink: 0 } as React.CSSProperties,
@@ -8452,6 +8839,9 @@ const s: Record<string, React.CSSProperties> = {
   miniLabel: { fontSize: 10, color: '#9ca3af', display: 'block', marginBottom: 4 },
   propInput: { border: '1px solid #e5e7eb', borderRadius: 6, padding: '7px 10px', fontSize: 13, width: '100%', boxSizing: 'border-box' as const, background: '#fff' },
   colorInput:{ width: '100%', height: 34, border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', padding: 2, boxSizing: 'border-box' as const },
+  statusBadge: { display: 'inline-flex', alignItems: 'center', width: 'fit-content', borderRadius: 999, padding: '4px 9px', fontSize: 11, fontWeight: 800, marginBottom: 8 },
+  statusBadgeLinked: { background: '#dcfce7', border: '1px solid #86efac', color: '#166534' },
+  statusBadgeEmpty: { background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#475569' },
   axisLabel: { fontSize: 11, color: '#9ca3af', textAlign: 'center' as const },
   alignBtn:  { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, padding: '7px 0', fontSize: 14, cursor: 'pointer', color: '#374151', flex: 1 },
   alignActive: { background: '#eef2ff', borderColor: '#4f46e5', color: '#4f46e5' },
@@ -8490,6 +8880,9 @@ const cp: Record<string, React.CSSProperties> = {
   shapeLabel: { fontSize: 11, color: '#6b7280' },
   btnList:    { display: 'flex', flexDirection: 'column', gap: 8 },
   previewBtn: { width: '100%', padding: '10px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
+  dynamicButtonGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 },
+  dynamicButtonCard: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, minHeight: 96, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', cursor: 'pointer', color: '#374151', fontSize: 11, fontWeight: 600, padding: 8 },
+  dynamicButtonPreviewWrap: { width: '100%', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'center' },
   widgetCard: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, height: 72, border: '1px solid #e5e7eb', borderRadius: 8, color: '#475569', background: '#fff' },
   widgetLabel:{ fontSize: 10, color: '#6b7280', textAlign: 'center' as const, lineHeight: 1.2 },
   crown:      { position: 'absolute', top: 4, right: 5, fontSize: 11, color: '#f59e0b' },
