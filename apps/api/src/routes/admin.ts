@@ -7,6 +7,9 @@ import {
   getTenantStorageUsage,
 } from '../lib/storageUsage'
 import {
+  backfillLegacyPageStorage,
+} from '../lib/legacyPageStorageBackfill'
+import {
   getGlobalWatermarkConfig,
   normalizeHttpUrl,
   normalizeWatermarkConfig,
@@ -201,6 +204,28 @@ admin.put('/users/:id/admin', async (c) => {
   const body = await c.req.json<{ is_admin: boolean }>()
   await c.env.DB.prepare('UPDATE users SET is_admin = ? WHERE id = ?').bind(body.is_admin ? 1 : 0, id).run()
   return c.json({ success: true })
+})
+
+// POST /admin/storage/backfill-legacy-pages — backfill seguro de páginas históricas.
+admin.post('/storage/backfill-legacy-pages', async (c) => {
+  try {
+    const body = await c.req.json<{
+      tenant_id?: string
+      dry_run?: boolean
+    }>()
+    const result = await backfillLegacyPageStorage(
+      c.env.DB,
+      c.env.MEDIA,
+      {
+        tenantId: body.tenant_id ?? '',
+        dryRun: body.dry_run !== false,
+      },
+    )
+
+    return c.json({ success: true, data: result })
+  } catch (error) {
+    return adminError(c, error)
+  }
 })
 
 // POST /admin/users/:id/impersonate — emite JWT de corta duración para ese tenant
