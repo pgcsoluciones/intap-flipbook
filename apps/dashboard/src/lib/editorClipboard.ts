@@ -65,9 +65,34 @@ export function stripDynamicAssociations(value: any): any {
   return next
 }
 
+const DUPLICATE_LINKED_CARD_ACTION_TYPES = new Set([
+  'open_dynamic_marker',
+  'open_product_detail',
+])
+
+function stripLinkedCardActionData(data: any) {
+  if (!data || typeof data !== 'object') return data
+  if (DUPLICATE_LINKED_CARD_ACTION_TYPES.has(data.action?.type)) {
+    delete data.action
+    delete data.marker_id
+    delete data.detail_id
+  }
+  return data
+}
+
+function stripLinkedCardTopLevelAction(obj: any) {
+  if (!obj || typeof obj !== 'object') return
+  if (DUPLICATE_LINKED_CARD_ACTION_TYPES.has(obj.action?.type)) {
+    delete obj.action
+    delete obj.marker_id
+    delete obj.detail_id
+  }
+}
+
 export function resetDuplicateData(obj: any, existingElementIds: Set<string>) {
   const sourceData = clonePlainValue(obj?.data ?? {})
   const cleanData = stripDynamicAssociations(sourceData)
+  stripLinkedCardActionData(cleanData)
   cleanData.elementId = makeElementId(existingElementIds)
   obj.data = cleanData
 }
@@ -83,11 +108,17 @@ export function resetDuplicateTree(obj: any, existingElementIds: Set<string>, re
     obj.hasBorders = true
   }
   for (const key of DYNAMIC_ASSOCIATION_KEYS) delete obj?.[key]
+  stripLinkedCardTopLevelAction(obj)
   resetDuplicateData(obj, existingElementIds)
   const children = typeof obj?.getObjects === 'function' ? obj.getObjects() : (obj?._objects ?? obj?.objects)
   if (Array.isArray(children)) {
     children.forEach((child: any) => resetDuplicateTree(child, existingElementIds, restoreHiddenDynamicVisuals))
   }
+}
+
+export function prepareDuplicatedFabricObjectForEditor(obj: any, existingElementIds: Set<string>) {
+  resetDuplicateTree(obj, existingElementIds)
+  return obj
 }
 
 export function getFabricSelectionObjects(activeObject: any, canvasObjects: any[] = []) {

@@ -370,3 +370,93 @@ test('duplicacion existente usa la misma regeneracion y limpieza del portapapele
     await clipboard.cleanup()
   }
 })
+
+test('duplicacion de interfaz limpia solo open_dynamic_marker y conserva otras acciones', async () => {
+  const clipboard = await loadClipboard()
+  try {
+    const existing = new Set(['el_original'])
+    const duplicate = {
+      type: 'group',
+      action: { type: 'open_dynamic_marker', marker_id: 'marker-top' },
+      data: {
+        elementId: 'el_original',
+        kind: 'button',
+        label: 'Abrir ficha',
+        bg: '#4F46E5',
+        textColor: '#fff',
+        variant: 'solid',
+        target_object_id: 'el_original',
+        action: { type: 'open_dynamic_marker', marker_id: 'marker-data' },
+      },
+      objects: [{
+        type: 'rect',
+        data: {
+          elementId: 'el_child',
+          dynamicMarkerId: 'direct-marker',
+          action: { type: 'whatsapp', phone: '+18095550123' },
+        },
+      }],
+    }
+
+    clipboard.prepareDuplicatedFabricObjectForEditor(duplicate, existing)
+
+    assert.notEqual(duplicate.data.elementId, 'el_original')
+    assert.equal(duplicate.action, undefined)
+    assert.equal(duplicate.data.action, undefined)
+    assert.equal(duplicate.data.marker_id, undefined)
+    assert.equal(duplicate.data.target_object_id, undefined)
+    assert.equal(duplicate.objects[0].data.dynamicMarkerId, undefined)
+    assert.equal(duplicate.objects[0].data.action.type, 'whatsapp')
+    assert.equal(duplicate.objects[0].data.action.phone, '+18095550123')
+    assert.equal(duplicate.data.bg, '#4F46E5')
+    assert.equal(duplicate.data.variant, 'solid')
+  } finally {
+    await clipboard.cleanup()
+  }
+})
+
+test('duplicacion de ellipse con open_product_detail limpia solo el vinculo de ficha', async () => {
+  const clipboard = await loadClipboard()
+  try {
+    const original = {
+      type: 'ellipse',
+      left: 373,
+      top: 684.56,
+      width: 180,
+      height: 110,
+      rx: 90,
+      ry: 55,
+      fill: 'rgba(79,70,229,0.85)',
+      stroke: '#111827',
+      strokeWidth: 2,
+      data: {
+        kind: 'shape',
+        elementId: 'el_original',
+        action: { type: 'open_product_detail', detail_id: 99 },
+        detail_id: 99,
+      },
+    }
+    const duplicate = clipboard.clonePlainValue(original)
+
+    clipboard.prepareDuplicatedFabricObjectForEditor(duplicate, new Set(['el_original']))
+
+    assert.equal(original.data.action.type, 'open_product_detail')
+    assert.equal(original.data.action.detail_id, 99)
+    assert.equal(original.data.detail_id, 99)
+    assert.notEqual(duplicate.data.elementId, 'el_original')
+    assert.equal(duplicate.data.action, undefined)
+    assert.equal(duplicate.data.detail_id, undefined)
+    assert.equal(duplicate.type, 'ellipse')
+    assert.equal(duplicate.left, 373)
+    assert.equal(duplicate.top, 684.56)
+    assert.equal(duplicate.width, 180)
+    assert.equal(duplicate.height, 110)
+    assert.equal(duplicate.rx, 90)
+    assert.equal(duplicate.ry, 55)
+    assert.equal(duplicate.fill, 'rgba(79,70,229,0.85)')
+    assert.equal(duplicate.stroke, '#111827')
+    assert.equal(duplicate.strokeWidth, 2)
+  } finally {
+    await clipboard.cleanup()
+  }
+})

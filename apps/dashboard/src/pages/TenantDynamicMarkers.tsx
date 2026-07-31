@@ -175,7 +175,7 @@ export default function TenantDynamicMarkers() {
       }
       setPage(EMPTY_PAGE)
       setLoaded(true)
-      setError(err instanceof Error ? err.message : 'No se pudieron cargar las fichas dinámicas.')
+      setError(err instanceof Error ? err.message : 'No se pudieron cargar las fichas interactivas.')
     } finally {
       if (append) setLoadingMore(false)
       else setLoading(false)
@@ -420,7 +420,7 @@ export default function TenantDynamicMarkers() {
 
   const emptyTitle = activeQuery || status
     ? 'No hay fichas con esos filtros.'
-    : 'Aún no hay fichas dinámicas.'
+    : 'Aún no hay fichas interactivas.'
 
   const emptyCopy = activeQuery || status
     ? 'Prueba con otra búsqueda o limpia los filtros para volver a las recientes.'
@@ -430,8 +430,8 @@ export default function TenantDynamicMarkers() {
     <div style={s.wrap}>
       <header style={s.header}>
         <div>
-          <h1 style={s.title}>Data Dinámica</h1>
-          <p style={s.subtitle}>Consulta central de fichas dinámicas existentes del tenant.</p>
+          <h1 style={s.title}>Fichas interactivas</h1>
+          <p style={s.subtitle}>Consulta central de fichas interactivas existentes del tenant.</p>
         </div>
 
         <button
@@ -483,7 +483,7 @@ export default function TenantDynamicMarkers() {
       {error && <p style={s.error}>{error}</p>}
 
       {!loaded || (loading && !items.length) ? (
-        <div style={s.empty}>Cargando fichas dinámicas...</div>
+        <div style={s.empty}>Cargando fichas interactivas...</div>
       ) : !items.length ? (
         <div style={s.empty}>
           <strong>{emptyTitle}</strong>
@@ -694,7 +694,7 @@ function DetailPanel({
 
           <section style={s.detailSection}>
             <h3 style={s.detailSectionTitle}>Estado de ficha</h3>
-            <p style={s.statusHelp}>Este estado solo controla la ficha dinámica, no el estado de la publicación.</p>
+            <p style={s.statusHelp}>Este estado solo controla la ficha interactiva, no el estado de la publicación.</p>
             {detailDirty && (
               <div style={s.statusWarning}>Guarda o descarta los cambios comerciales antes de cambiar estado.</div>
             )}

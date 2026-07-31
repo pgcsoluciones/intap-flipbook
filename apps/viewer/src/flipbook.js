@@ -5,7 +5,9 @@ if (window.fabric?.Text?.prototype) {
   window.fabric.Text.prototype.textBaseline = 'alphabetic'
 }
 
-const PUBLIC_API_BASE = 'https://intap-flipbook-api.fliaprince.workers.dev'
+const PUBLIC_API_BASE = window.location.hostname.endsWith('.intap-flipbook-viewer.pages.dev')
+  ? 'https://intap-flipbook-api-preview.fliaprince.workers.dev'
+  : 'https://intap-flipbook-api.fliaprince.workers.dev'
 
 function cleanApiBase(value) {
   if (!value) return null
@@ -156,15 +158,23 @@ async function init() {
   const { data } = await res.json()
   document.title = data.title
   const dynamicMarkerMap = new Map()
+  const dynamicMarkerById = new Map()
   ;(Array.isArray(data.dynamic_markers) ? data.dynamic_markers : []).forEach((marker) => {
-    if (!marker?.page_id || !marker?.target_object_id) return
-    const key = `${marker.page_id}::${marker.target_object_id}`
-    if (!dynamicMarkerMap.has(key)) dynamicMarkerMap.set(key, marker)
+    if (marker?.id && !dynamicMarkerById.has(marker.id)) dynamicMarkerById.set(marker.id, marker)
+    if (marker?.page_id && marker?.target_object_id) {
+      const key = `${marker.page_id}::${marker.target_object_id}`
+      if (!dynamicMarkerMap.has(key)) dynamicMarkerMap.set(key, marker)
+    }
   })
 
   function getDynamicMarker(pageId, elementId) {
     if (!pageId || !elementId) return null
     return dynamicMarkerMap.get(`${pageId}::${elementId}`) || null
+  }
+
+  function getDynamicMarkerById(markerId) {
+    if (!markerId) return null
+    return dynamicMarkerById.get(String(markerId)) || null
   }
 
   function formatMarkerMoney(value, currency) {
@@ -2918,7 +2928,9 @@ async function init() {
   function runAction(a, fcanvas, selfObj, elementDomMap, opener = null) {
     if (!a || !a.type || a.type === 'none') return
     // Extraer la URL destino según el tipo de acción (para analítica)
-    const urlDest = a.url || a.phone || a.email || a.whatsapp || null
+    const urlDest = a.type === 'open_dynamic_marker' && a.marker_id
+      ? `marker_id:${a.marker_id}`
+      : (a.url || a.phone || a.email || a.whatsapp || null)
     // Analítica: registrar el clic (respeta la config de seguimiento del elemento)
     trackInteraction(a.tracking, a.label || a.text || a.url || a.phone || a.email || a.type, a.type, urlDest)
     switch (a.type) {
@@ -2931,6 +2943,11 @@ async function init() {
       case 'open_product_detail':
         void openProductDetail(a.detail_id, opener)
         break
+      case 'open_dynamic_marker': {
+        const marker = getDynamicMarkerById(a.marker_id)
+        if (marker) showDynamicMarkerModal(marker)
+        break
+      }
       case 'call':
         if (a.phone) window.location.href = 'tel:' + String(a.phone).replace(/\s+/g, '')
         break
@@ -4429,7 +4446,7 @@ async function init() {
           const clipPath = dynamicMarkerClipPath(obj, r)
           const hot = document.createElement('button')
           hot.type = 'button'
-          hot.setAttribute('aria-label', `Abrir ficha ${dynamicMarker.name || 'dinámica'}`)
+          hot.setAttribute('aria-label', `Abrir ficha ${dynamicMarker.name || 'interactiva'}`)
           hot.style.cssText = [
             'position:absolute',
             `left:${r.left}px`,

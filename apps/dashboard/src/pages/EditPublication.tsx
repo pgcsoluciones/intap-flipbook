@@ -30,6 +30,7 @@ import {
   editorClipboardCountLabel,
   getFabricSelectionObjects,
   prepareClipboardObjectsForPaste,
+  prepareDuplicatedFabricObjectForEditor,
   resetDuplicateTree,
   serializeFabricSelectionForClipboard,
   shouldIgnoreEditorClipboardShortcut,
@@ -60,6 +61,7 @@ import FileField from '../components/FileField'
 import MediaPicker, { resolveExistingMediaFolderFilter } from '../components/MediaPicker'
 import WidgetPreview from '../components/WidgetPreview'
 import DynamicMarkerPanel from '../components/DynamicMarkerPanel'
+import DynamicMarkerSelector from '../components/DynamicMarkerSelector'
 import ProductDetailModal from '../components/ProductDetailModal'
 import {
   buildProjectImageBank,
@@ -798,7 +800,7 @@ const BUTTON_PRESETS: { label: string; variant: 'solid' | 'outline' | 'pill' }[]
 ]
 
 // Tipos de acción de un botón (qué ocurre al hacer clic en el viewer)
-type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'popup_audio' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos' | 'popup_message' | 'show_comment' | 'copy_text' | 'open_product_detail'
+type ActionType = 'link' | 'page' | 'call' | 'whatsapp' | 'email' | 'popup_text' | 'popup_image' | 'popup_video' | 'popup_audio' | 'download' | 'show_hide' | 'gallery_images' | 'gallery_videos' | 'popup_message' | 'show_comment' | 'copy_text' | 'open_product_detail' | 'open_dynamic_marker'
 const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'link',           label: 'Abrir Enlace',        icon: 'link' },
   { type: 'page',           label: 'Ir a Página',         icon: 'pages' },
@@ -813,6 +815,7 @@ const ACTION_TYPES: { type: ActionType; label: string; icon: string }[] = [
   { type: 'show_comment',   label: 'Mostrar comentario',  icon: 'contact' },
   { type: 'copy_text',      label: 'Copiar texto',        icon: 'duplicate' },
   { type: 'open_product_detail', label: 'Abrir detalle',  icon: 'badge' },
+  { type: 'open_dynamic_marker', label: 'Abrir ficha',    icon: 'database' },
   { type: 'download',       label: 'Descargar archivo',   icon: 'uploads' },
   { type: 'gallery_images', label: 'Galería de imágenes', icon: 'image' },
   { type: 'gallery_videos', label: 'Galería de videos',   icon: 'video' },
@@ -3586,7 +3589,7 @@ export default function EditPublication() {
 
       replaceTargetRef.current = null
       const existingElementIds = collectFabricElementIds(c.getObjects())
-      resetDuplicateTree(clone, existingElementIds)
+      prepareDuplicatedFabricObjectForEditor(clone, existingElementIds)
       restoreDuplicateInteractivity(clone, o)
       clone.set({ left: (o.left ?? 0) + DUPLICATE_OFFSET, top: (o.top ?? 0) + DUPLICATE_OFFSET })
 
@@ -4682,7 +4685,7 @@ export default function EditPublication() {
               <div style={s.insTabs}>
                 <button style={{ ...s.insTabBtn, ...(pagePanelTab === 'config' ? s.insTabActive : {}) }} onClick={() => setPagePanelTab('config')}>Propiedades</button>
                 <button style={{ ...s.insTabBtn, ...(pagePanelTab === 'actions' ? s.insTabActive : {}) }} onClick={() => setPagePanelTab('actions')}>Acciones</button>
-                <button style={{ ...s.insTabBtn, ...(pagePanelTab === 'dynamic' ? s.insTabActive : {}) }} onClick={() => setPagePanelTab('dynamic')}>Data Dinámica</button>
+                <button style={{ ...s.insTabBtn, ...(pagePanelTab === 'dynamic' ? s.insTabActive : {}) }} onClick={() => setPagePanelTab('dynamic')}>Fichas interactivas</button>
               </div>
               {pagePanelTab === 'config' && (
                 <PageConfig bgColor={bgColor} applyBgColor={applyBgColor} onShowAllHidden={showAllHiddenInEditor} />
@@ -5691,7 +5694,16 @@ function PropsPanel({
 
   const [, setTick] = React.useState(0)
   const set = (props: any) => { obj.set(props); canvas?.requestRenderAll(); onChange(); setTick((t) => t + 1) }
-  const setData = (patch: any) => { (obj as any).data = { ...((obj as any).data ?? {}), ...patch }; onChange(); setTick((t) => t + 1) }
+  const setData = (patch: any) => {
+    const next = { ...((obj as any).data ?? {}) }
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) delete (next as any)[key]
+      else (next as any)[key] = value
+    }
+    ;(obj as any).data = next
+    onChange()
+    setTick((t) => t + 1)
+  }
   const ensureElementId = () => {
     const existing = (obj as any).data?.elementId
     if (existing) return existing
@@ -5764,7 +5776,7 @@ function PropsPanel({
       <div style={s.insTabs}>
         <button style={{ ...s.insTabBtn, ...(insTab === 'config' ? s.insTabActive : {}) }} onClick={() => setInsTab('config')}>Propiedades</button>
         <button style={{ ...s.insTabBtn, ...(insTab === 'actions' ? s.insTabActive : {}) }} onClick={() => setInsTab('actions')}>Acciones</button>
-        <button style={{ ...s.insTabBtn, ...(insTab === 'dynamic' ? s.insTabActive : {}) }} onClick={() => setInsTab('dynamic')}>Data Dinámica</button>
+        <button style={{ ...s.insTabBtn, ...(insTab === 'dynamic' ? s.insTabActive : {}) }} onClick={() => setInsTab('dynamic')}>Fichas interactivas</button>
       </div>
 
       {insTab === 'config' && (
@@ -6081,6 +6093,7 @@ function PropsPanel({
           pages={pages}
           setData={setData}
           targets={namedTargets}
+          publicationId={publicationId}
           openImageBank={(request) => openActionGalleryMediaPicker?.(obj, request)}
         />
         {isWidget && (
@@ -7465,11 +7478,13 @@ function ActionEditor({
   setData,
   targets = [],
   openImageBank,
+  publicationId,
 }: {
   data: any
   pages: any[]
   setData: (p: any) => void
   targets?: { id: string; name: string }[]
+  publicationId?: string
   openImageBank?: OpenWidgetGalleryMediaPicker
 }) {
   const action = data.action ?? { type: 'link' }
@@ -7494,6 +7509,7 @@ function ActionEditor({
               style={{ ...s.actionCard, ...(current === a.type ? s.actionCardActive : {}) }}
               onClick={() => {
                 if (a.type === 'open_product_detail') setData({ action: { type: a.type } })
+                else if (a.type === 'open_dynamic_marker') setData({ action: { type: a.type } })
                 else setAction({ type: a.type })
               }}
               title={a.label}
@@ -7690,6 +7706,22 @@ function ActionEditor({
           detailId={action.detail_id}
           onChange={(detailId) => setData({ action: { type: 'open_product_detail', detail_id: detailId } })}
         />
+      )}
+
+      {action.type === 'open_dynamic_marker' && (
+        <PropGroup label="Ficha interactiva">
+          <DynamicMarkerSelector
+            value={action.marker_id}
+            publicationId={publicationId}
+            onChange={(markerId) => {
+              if (!markerId) setData({ action: undefined })
+              else setData({ action: { type: 'open_dynamic_marker', marker_id: markerId } })
+            }}
+          />
+          <p style={{ ...cp.hint, marginTop: 6 }}>
+            La ficha directa del objeto, si existe en la pestaña Fichas interactivas, conserva prioridad en el Viewer.
+          </p>
+        </PropGroup>
       )}
 
       {current !== 'none' && (

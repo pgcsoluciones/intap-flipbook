@@ -53,7 +53,7 @@ function BellButton({ count, onClick, color = '#fff' }: { count: number; onClick
 const NAV_ITEMS = [
   { to: '/dashboard',    icon: 'home',      label: 'Inicio' },
   { to: '/publications', icon: 'book',      label: 'Mis Flipbooks' },
-  { to: '/dynamic-data', icon: 'database',  label: 'Data Dinámica' },
+  { to: '/dynamic-data', icon: 'database',  label: 'Fichas interactivas' },
   { to: '/product-details', icon: 'tag',    label: 'Detalles de producto' },
   { to: '/responses',    icon: 'mail',      label: 'Respuestas' },
   { to: '/requests',     icon: 'clipboard', label: 'Solicitudes' },

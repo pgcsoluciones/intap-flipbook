@@ -581,7 +581,7 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
         setForm(found ? formFromMarker(found) : emptyForm)
       })
       .catch((err: any) => {
-        if (!cancelled) setError(err?.message ?? 'No se pudo cargar la ficha dinámica')
+        if (!cancelled) setError(err?.message ?? 'No se pudo cargar la ficha interactiva')
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -999,7 +999,7 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
   if (!selectedObject) {
     return (
       <div style={styles.empty}>
-        Selecciona un elemento del lienzo para conectar una ficha dinámica.
+        Selecciona un elemento del lienzo para conectar una ficha interactiva.
       </div>
     )
   }
