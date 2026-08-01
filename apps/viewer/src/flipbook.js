@@ -4426,18 +4426,38 @@ async function init() {
       )
     }
 
-    const fcanvas = new fabric.StaticCanvas(cv, { width: DESIGN_W, height: DESIGN_H })
+    const fcanvas = new fabric.StaticCanvas(cv, { width: DESIGN_W, height: DESIGN_H, enableRetinaScaling: true })
     // Mapa elementId → holderDiv para widgets DOM (show_hide puede afectarlos igual que objetos Fabric)
     const elementDomMap = {}
     // Sin fondo: la imagen de la página ya está debajo
     const objectsOnly = Object.assign({}, parsed, { background: '', backgroundImage: null })
     return new Promise((resolve) => {
       fcanvas.loadFromJSON(objectsOnly, () => {
+      function sharpenDynamicMarkerButtonObject(obj) {
+        if (!obj || obj.data?.kind !== 'dynamic_marker_button') return
+        obj.objectCaching = false
+        obj.noScaleCache = true
+        obj.dirty = true
+        ;(obj.getObjects?.() || []).forEach((child) => {
+          child.objectCaching = false
+          child.noScaleCache = true
+          child.dirty = true
+        })
+      }
+      function rerenderAfterFontsReady() {
+        const fonts = typeof document !== 'undefined' ? document.fonts : null
+        if (!fonts?.ready) return
+        fonts.ready.then(() => {
+          fcanvas.getObjects().forEach(sharpenDynamicMarkerButtonObject)
+          fcanvas.requestRenderAll()
+        }).catch(() => {})
+      }
       let widgetIdx = 0
       // slice(): vamos a remover widgets del canvas mientras iteramos
       fcanvas.getObjects().slice().forEach((obj) => {
        try {
         const d = obj.data || {}
+        sharpenDynamicMarkerButtonObject(obj)
         obj.__showHideWrap = wrap
         const r = obj.getBoundingRect(true)
         const currentPage = div.__pageData || data.pages[pageIndex - lead]
@@ -4585,6 +4605,7 @@ async function init() {
       registerAnimations(fcanvas)
 
       fcanvas.renderAll()
+      rerenderAfterFontsReady()
       // Fade-in del overlay una vez que Fabric.js terminó de renderizar —
       // evita el "flash" de elementos que aparecen de golpe sobre la imagen.
       requestAnimationFrame(() => {

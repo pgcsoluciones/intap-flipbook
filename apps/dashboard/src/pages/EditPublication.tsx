@@ -39,11 +39,18 @@ import {
 import {
   DYNAMIC_MARKER_BUTTON_KIND,
   DYNAMIC_MARKER_BUTTON_PRESETS,
+  DYNAMIC_MARKER_BUTTON_ICONS,
   createDynamicMarkerButtonData,
   createDynamicMarkerButtonStyle,
+  getDynamicMarkerButtonCacheSignature,
   getDynamicMarkerButtonCornerRadius,
+  getDynamicMarkerButtonIcon,
+  getDynamicMarkerButtonLayout,
+  getDynamicMarkerButtonShadow,
+  getDynamicMarkerButtonScaledStyle,
   getDynamicMarkerButtonStatusColor,
   isDynamicMarkerButtonLinked,
+  normalizeDynamicMarkerButtonStyle,
   setDynamicMarkerButtonMarker,
   updateDynamicMarkerButtonStyle,
   type DynamicMarkerButtonPreset,
@@ -816,7 +823,9 @@ function applyDynamicMarkerButtonStyleToGroup(group: any, style: DynamicMarkerBu
   const children = group.getObjects?.() || []
   const background = children.find((item: any) => item.data?.role === 'dynamic_marker_button_bg')
   const text = children.find((item: any) => item.data?.role === 'dynamic_marker_button_text')
+  const icon = children.find((item: any) => item.data?.role === 'dynamic_marker_button_icon')
   const radius = getDynamicMarkerButtonCornerRadius(style)
+  const layout = getDynamicMarkerButtonLayout(style)
 
   if (background?.type === 'circle') {
     background.set({
@@ -824,6 +833,7 @@ function applyDynamicMarkerButtonStyleToGroup(group: any, style: DynamicMarkerBu
       fill: style.backgroundColor,
       stroke: style.borderColor,
       strokeWidth: style.borderWidth,
+      shadow: getDynamicMarkerButtonShadow(style),
     })
   } else if (background) {
     background.set({
@@ -834,13 +844,14 @@ function applyDynamicMarkerButtonStyleToGroup(group: any, style: DynamicMarkerBu
       strokeWidth: style.borderWidth,
       rx: radius,
       ry: radius,
+      shadow: getDynamicMarkerButtonShadow(style),
     })
   }
 
   if (text) {
     text.set({
       text: style.label,
-      width: Math.max(24, style.width - 18),
+      width: layout.textWidth,
       fill: style.textColor,
       fontSize: style.textSize,
       fontFamily: style.fontFamily,
@@ -848,8 +859,21 @@ function applyDynamicMarkerButtonStyleToGroup(group: any, style: DynamicMarkerBu
       textAlign: style.textAlign,
       originX: 'center',
       originY: 'center',
-      left: 0,
-      top: 0,
+      left: layout.textX,
+      top: layout.textY,
+      visible: layout.showText,
+    })
+  }
+
+  if (icon) {
+    icon.set({
+      left: layout.iconX,
+      top: layout.iconY,
+      scaleX: style.iconSize / 24,
+      scaleY: style.iconSize / 24,
+      stroke: style.iconColor,
+      fill: '',
+      visible: layout.showIcon,
     })
   }
 
@@ -860,18 +884,22 @@ function applyDynamicMarkerButtonStyleToGroup(group: any, style: DynamicMarkerBu
 function createDynamicMarkerButtonChildren(style: DynamicMarkerButtonStyle) {
   const isCircle = style.shape === 'circle'
   const radius = getDynamicMarkerButtonCornerRadius(style)
+  const layout = getDynamicMarkerButtonLayout(style)
   const background = isCircle
     ? new fabric.Circle({
         radius: Math.min(style.width, style.height) / 2,
         fill: style.backgroundColor,
         stroke: style.borderColor,
-        strokeWidth: style.borderWidth,
-        originX: 'center',
-        originY: 'center',
-        selectable: false,
-        evented: false,
-        data: { role: 'dynamic_marker_button_bg' },
-      })
+      strokeWidth: style.borderWidth,
+      shadow: getDynamicMarkerButtonShadow(style),
+      originX: 'center',
+      originY: 'center',
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+      noScaleCache: true,
+      data: { role: 'dynamic_marker_button_bg' },
+    })
     : new fabric.Rect({
         width: style.width,
         height: style.height,
@@ -880,15 +908,18 @@ function createDynamicMarkerButtonChildren(style: DynamicMarkerButtonStyle) {
         strokeWidth: style.borderWidth,
         rx: radius,
         ry: radius,
-        originX: 'center',
-        originY: 'center',
-        selectable: false,
-        evented: false,
-        data: { role: 'dynamic_marker_button_bg' },
-      })
+        shadow: getDynamicMarkerButtonShadow(style),
+      originX: 'center',
+      originY: 'center',
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+      noScaleCache: true,
+      data: { role: 'dynamic_marker_button_bg' },
+    })
 
   const text = new fabric.Textbox(style.label, {
-    width: Math.max(24, style.width - 18),
+    width: layout.textWidth,
     fill: style.textColor,
     fontSize: style.textSize,
     fontFamily: style.fontFamily,
@@ -896,13 +927,39 @@ function createDynamicMarkerButtonChildren(style: DynamicMarkerButtonStyle) {
     textAlign: style.textAlign,
     originX: 'center',
     originY: 'center',
-    left: 0,
-    top: 0,
+    left: layout.textX,
+    top: layout.textY,
+    visible: layout.showText,
     selectable: false,
     evented: false,
+    objectCaching: false,
+    noScaleCache: true,
     data: { role: 'dynamic_marker_button_text' },
   })
-  return [background, text]
+  const objects: any[] = [background]
+  if (layout.showIcon && layout.icon) {
+    const icon = new fabric.Path(layout.icon.path, {
+      stroke: style.iconColor,
+      fill: '',
+      strokeWidth: 1.8,
+      strokeLineCap: 'round',
+      strokeLineJoin: 'round',
+      originX: 'center',
+      originY: 'center',
+      left: layout.iconX,
+      top: layout.iconY,
+      scaleX: style.iconSize / 24,
+      scaleY: style.iconSize / 24,
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+      noScaleCache: true,
+      data: { role: 'dynamic_marker_button_icon', iconId: layout.icon.id },
+    })
+    objects.push(icon)
+  }
+  objects.push(text)
+  return objects
 }
 
 function createDynamicMarkerButtonFabricGroup(style: DynamicMarkerButtonStyle) {
@@ -911,13 +968,15 @@ function createDynamicMarkerButtonFabricGroup(style: DynamicMarkerButtonStyle) {
     top: 0,
     selectable: true,
     evented: true,
+    objectCaching: false,
+    noScaleCache: true,
     data: createDynamicMarkerButtonData(style),
   })
 }
 
 function rebuildDynamicMarkerButtonGroup(obj: any) {
   if (obj?.data?.kind !== DYNAMIC_MARKER_BUTTON_KIND) return obj
-  const style: DynamicMarkerButtonStyle = obj.data.dynamicMarkerButton ?? createDynamicMarkerButtonStyle('solid-rect')
+  const style: DynamicMarkerButtonStyle = normalizeDynamicMarkerButtonStyle(obj.data.dynamicMarkerButton ?? createDynamicMarkerButtonStyle('solid-rect'))
   const transform = {
     left: obj.left,
     top: obj.top,
@@ -947,11 +1006,14 @@ function rebuildDynamicMarkerButtonGroup(obj: any) {
     ...obj.data,
     dynamicMarkerButton: style,
     label: style.label,
+    dynamicMarkerButtonCacheKey: getDynamicMarkerButtonCacheSignature(style),
   }
   obj.set({
     ...transform,
     width: rebuilt.width,
     height: rebuilt.height,
+    objectCaching: false,
+    noScaleCache: true,
     dirty: true,
   })
   obj.addWithUpdate?.()
@@ -962,6 +1024,41 @@ function rebuildDynamicMarkerButtonGroup(obj: any) {
 
 function ensureDynamicMarkerButtonEditorStateForCanvas(canvas: any) {
   canvas?.getObjects?.().forEach((obj: any) => rebuildDynamicMarkerButtonGroup(obj))
+}
+
+function normalizeDynamicMarkerButtonScale(obj: any) {
+  if (obj?.data?.kind !== DYNAMIC_MARKER_BUTTON_KIND) return false
+  const style = normalizeDynamicMarkerButtonStyle(obj.data.dynamicMarkerButton ?? createDynamicMarkerButtonStyle('solid-rect'))
+  const scaleX = obj.scaleX ?? 1
+  const scaleY = obj.scaleY ?? 1
+  if (Math.abs(scaleX - 1) < 0.001 && Math.abs(scaleY - 1) < 0.001) {
+    rebuildDynamicMarkerButtonGroup(obj)
+    return false
+  }
+  const center = obj.getCenterPoint?.()
+  const nextStyle = getDynamicMarkerButtonScaledStyle(style, scaleX, scaleY)
+  obj.data = updateDynamicMarkerButtonStyle(obj.data, nextStyle)
+  obj.set({ scaleX: 1, scaleY: 1 })
+  rebuildDynamicMarkerButtonGroup(obj)
+  if (center && obj.setPositionByOrigin) obj.setPositionByOrigin(center, 'center', 'center')
+  obj.setCoords?.()
+  return true
+}
+
+function refreshCanvasAfterFontsReady(canvas: any) {
+  const fonts = typeof document !== 'undefined' ? document.fonts : null
+  if (!fonts?.ready) return
+  fonts.ready.then(() => {
+    if (canvas?.disposed) return
+    ensureDynamicMarkerButtonEditorStateForCanvas(canvas)
+    canvas.requestRenderAll?.()
+  }).catch(() => {})
+}
+
+function loadDynamicMarkerButtonFont(style: DynamicMarkerButtonStyle) {
+  const fonts = typeof document !== 'undefined' ? document.fonts : null
+  if (!fonts?.load) return Promise.resolve()
+  return fonts.load(`${style.fontWeight} ${style.textSize}px ${style.fontFamily}`).then(() => undefined).catch(() => undefined)
 }
 
 // Tipos de acción de un botón (qué ocurre al hacer clic en el viewer)
@@ -2567,7 +2664,7 @@ export default function EditPublication() {
 
     const W = CANVAS_W
     const H = CANVAS_H
-    const canvas = new fabric.Canvas(canvasRef.current, { width: W, height: H, backgroundColor: bgColor, preserveObjectStacking: true })
+    const canvas = new fabric.Canvas(canvasRef.current, { width: W, height: H, backgroundColor: bgColor, preserveObjectStacking: true, enableRetinaScaling: true })
     canvas.uniformScaling = true   // escalado uniforme por defecto: las esquinas no deforman
     fabricRef.current = canvas
 
@@ -2705,6 +2802,7 @@ export default function EditPublication() {
           rebuildDynamicMarkerButtonGroup(o)
         })
         canvas.renderAll()
+        refreshCanvasAfterFontsReady(canvas)
         if (restoredHistory) {
           syncActiveHistory(restoredHistory)
         } else {
@@ -2863,6 +2961,10 @@ export default function EditPublication() {
     // sin estirarse; el ancho reajusta (reenvuelve) el texto en vez de deformarlo.
     canvas.on('object:modified', (e: any) => {
       const o = e?.target
+      if (normalizeDynamicMarkerButtonScale(o)) {
+        canvas.requestRenderAll()
+        return
+      }
       if (!o || o.type !== 'textbox') return
       if (Math.abs((o.scaleX ?? 1) - 1) < 0.001 && Math.abs((o.scaleY ?? 1) - 1) < 0.001) return
       const newFont = Math.max(6, Math.round((o.fontSize || 24) * (o.scaleY || 1)))
@@ -3074,6 +3176,7 @@ export default function EditPublication() {
     setSelected(button)
     setSelectVersion((value) => value + 1)
     c.requestRenderAll()
+    void loadDynamicMarkerButtonFont(style).then(() => c.requestRenderAll())
     setActiveTool('buttons')
     scheduleAutosave()
   }
@@ -5130,13 +5233,18 @@ function SheetPreviewModal({ data, onClose }: { data: { imageUrl: string; cover:
 
   useEffect(() => {
     if (!canvasRef.current) return
-    const sc = new fabric.StaticCanvas(canvasRef.current, { width: PW, height: PH, backgroundColor: 'transparent' })
+    const sc = new fabric.StaticCanvas(canvasRef.current, { width: PW, height: PH, backgroundColor: 'transparent', enableRetinaScaling: true })
     let disposed = false
     const isCanvasAlive = () => !disposed && !!(sc as any).lowerCanvasEl && !!(sc as any).contextContainer
     // Sin fondo en el canvas: el fondo lo pinta el <img> de abajo (igual que el viewer)
     const objectsOnly = stripBackgroundImage(normalizeFabricAssetJson(Object.assign({}, data.json, { background: '', backgroundImage: null })))
     sc.setZoom(PW / CANVAS_W)
-    sc.loadFromJSON(objectsOnly, () => { if (isCanvasAlive()) sc.renderAll() })
+    sc.loadFromJSON(objectsOnly, () => {
+      if (!isCanvasAlive()) return
+      ensureDynamicMarkerButtonEditorStateForCanvas(sc)
+      sc.renderAll()
+      refreshCanvasAfterFontsReady(sc)
+    })
     return () => { disposed = true; sc.dispose() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -6510,6 +6618,7 @@ function SvgLibProps({ obj, canvas, onChange, onSyncToggle }: { obj: any; canvas
 
 // Propiedades específicas del botón: estilo + acción
 function DynamicMarkerButtonPreview({ preset }: { preset: DynamicMarkerButtonPreset }) {
+  const icon = getDynamicMarkerButtonIcon(preset.iconId)
   return (
     <div style={cp.dynamicButtonPreviewWrap}>
       <div style={{
@@ -6521,8 +6630,10 @@ function DynamicMarkerButtonPreview({ preset }: { preset: DynamicMarkerButtonPre
         border: `${preset.borderWidth}px solid ${preset.borderColor}`,
         opacity: preset.opacity,
         display: 'flex',
+        flexDirection: preset.iconPosition === 'top' ? 'column' : 'row',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: Math.min(5, preset.iconGap),
         fontSize: 10,
         fontFamily: preset.fontFamily,
         fontWeight: preset.fontWeight,
@@ -6530,19 +6641,30 @@ function DynamicMarkerButtonPreview({ preset }: { preset: DynamicMarkerButtonPre
         padding: 4,
         boxSizing: 'border-box',
       }}>
-        {preset.label}
+        {icon && preset.iconPosition !== 'right' && (
+          <svg width={12} height={12} viewBox="0 0 24 24" aria-hidden="true">
+            <path d={icon.path} stroke={preset.iconColor} fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+        {preset.iconPosition !== 'only' && <span>{preset.label}</span>}
+        {icon && preset.iconPosition === 'right' && (
+          <svg width={12} height={12} viewBox="0 0 24 24" aria-hidden="true">
+            <path d={icon.path} stroke={preset.iconColor} fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
       </div>
     </div>
   )
 }
 
 function DynamicMarkerButtonProps({ obj, canvas, publicationId, onChange }: any) {
-  const style: DynamicMarkerButtonStyle = obj.data?.dynamicMarkerButton ?? createDynamicMarkerButtonStyle('solid-rect')
+  const style: DynamicMarkerButtonStyle = normalizeDynamicMarkerButtonStyle(obj.data?.dynamicMarkerButton ?? createDynamicMarkerButtonStyle('solid-rect'))
 
   function patchStyle(patch: Partial<DynamicMarkerButtonStyle>) {
     obj.data = updateDynamicMarkerButtonStyle(obj.data, patch)
     rebuildDynamicMarkerButtonGroup(obj)
     canvas?.requestRenderAll()
+    void loadDynamicMarkerButtonFont(obj.data.dynamicMarkerButton).then(() => canvas?.requestRenderAll())
     onChange()
   }
 
@@ -6584,6 +6706,38 @@ function DynamicMarkerButtonProps({ obj, canvas, publicationId, onChange }: any)
           ))}
         </div>
       </PropGroup>
+      <PropGroup label="Icono">
+        <span style={s.miniLabel}>Tipo de icono</span>
+        <select style={s.propInput} value={style.iconId ?? ''} onChange={(e) => patchStyle({ iconId: e.target.value || undefined })}>
+          <option value="">Sin icono</option>
+          {DYNAMIC_MARKER_BUTTON_ICONS.map((icon) => <option key={icon.id} value={icon.id}>{icon.name}</option>)}
+        </select>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
+          <label>
+            <span style={s.miniLabel}>Posición</span>
+            <select style={s.propInput} value={style.iconPosition} onChange={(e) => patchStyle({ iconPosition: e.target.value as DynamicMarkerButtonStyle['iconPosition'] })}>
+              <option value="left">Izquierda</option>
+              <option value="right">Derecha</option>
+              <option value="top">Arriba</option>
+              <option value="only">Solo icono</option>
+            </select>
+          </label>
+          <label>
+            <span style={s.miniLabel}>Color del icono</span>
+            <input type="color" value={style.iconColor} onChange={(e) => patchStyle({ iconColor: e.target.value })} style={s.colorInput} />
+          </label>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
+          <label>
+            <span style={s.miniLabel}>Tamaño del icono</span>
+            <input style={s.propInput} type="number" min={8} max={64} value={style.iconSize} onChange={(e) => patchStyle({ iconSize: +e.target.value })} />
+          </label>
+          <label>
+            <span style={s.miniLabel}>Espacio entre icono y texto</span>
+            <input style={s.propInput} type="number" min={0} max={40} value={style.iconGap} onChange={(e) => patchStyle({ iconGap: +e.target.value })} />
+          </label>
+        </div>
+      </PropGroup>
       <PropGroup label="Botón">
         <div style={{ display: 'flex', gap: 6 }}>
           <input type="color" value={style.backgroundColor.startsWith('#') ? style.backgroundColor : '#ffffff'} onChange={(e) => patchStyle({ backgroundColor: e.target.value })} style={s.colorInput} />
@@ -6594,6 +6748,24 @@ function DynamicMarkerButtonProps({ obj, canvas, publicationId, onChange }: any)
           <input style={s.propInput} type="number" min={0} max={999} value={style.borderRadius} onChange={(e) => patchStyle({ borderRadius: +e.target.value })} />
         </div>
         <input style={{ width: '100%', marginTop: 8 }} type="range" min={0.1} max={1} step={0.05} value={style.opacity} onChange={(e) => patchStyle({ opacity: +e.target.value })} />
+      </PropGroup>
+      <PropGroup label="Sombra">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151' }}>
+          <input
+            type="checkbox"
+            checked={!!style.shadow.enabled}
+            onChange={(e) => patchStyle({ shadow: { ...style.shadow, enabled: e.target.checked } })}
+          />
+          <span>Activar sombra</span>
+        </label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
+          <input style={s.propInput} type="number" min={0} max={80} value={style.shadow.blur} onChange={(e) => patchStyle({ shadow: { ...style.shadow, blur: +e.target.value } })} />
+          <input type="color" value={style.shadow.color.startsWith('#') ? style.shadow.color : '#111827'} onChange={(e) => patchStyle({ shadow: { ...style.shadow, color: e.target.value } })} style={s.colorInput} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
+          <input style={s.propInput} type="number" min={-40} max={40} value={style.shadow.offsetX} onChange={(e) => patchStyle({ shadow: { ...style.shadow, offsetX: +e.target.value } })} />
+          <input style={s.propInput} type="number" min={-40} max={40} value={style.shadow.offsetY} onChange={(e) => patchStyle({ shadow: { ...style.shadow, offsetY: +e.target.value } })} />
+        </div>
       </PropGroup>
       <PropGroup label="Dimensiones">
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>

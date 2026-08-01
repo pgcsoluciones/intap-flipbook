@@ -55,22 +55,31 @@ try {
     DYNAMIC_MARKER_BUTTON_PRESETS,
     createDynamicMarkerButtonStyle,
     createDynamicMarkerButtonData,
+    getDynamicMarkerButtonIcon,
     getDynamicMarkerButtonCornerRadius,
+    getDynamicMarkerButtonLayout,
+    getDynamicMarkerButtonCacheSignature,
+    getDynamicMarkerButtonScaledStyle,
+    getDynamicMarkerButtonShadow,
     getDynamicMarkerButtonStatusColor,
     isDynamicMarkerButtonLinked,
+    normalizeDynamicMarkerButtonStyle,
     setDynamicMarkerButtonMarker,
     updateDynamicMarkerButtonStyle,
     prepareDuplicatedFabricObjectForEditor,
   } = mod
 
   function createCanonicalGroup(style, markerId) {
+    style = normalizeDynamicMarkerButtonStyle(style)
     const radius = getDynamicMarkerButtonCornerRadius(style)
+    const layout = getDynamicMarkerButtonLayout(style)
     const background = style.shape === 'circle'
       ? new fabric.Circle({
           radius: Math.min(style.width, style.height) / 2,
           fill: style.backgroundColor,
           stroke: style.borderColor,
           strokeWidth: style.borderWidth,
+          shadow: getDynamicMarkerButtonShadow(style),
           originX: 'center',
           originY: 'center',
           selectable: false,
@@ -85,13 +94,15 @@ try {
           strokeWidth: style.borderWidth,
           rx: radius,
           ry: radius,
+          shadow: getDynamicMarkerButtonShadow(style),
           originX: 'center',
           originY: 'center',
           selectable: false,
           evented: false,
           data: { role: 'dynamic_marker_button_bg' },
         })
-    const text = new fabric.Text(style.label, {
+    const text = new fabric.Textbox(style.label, {
+      width: layout.textWidth,
       fill: style.textColor,
       fontSize: style.textSize,
       fontFamily: style.fontFamily,
@@ -99,13 +110,34 @@ try {
       textAlign: style.textAlign,
       originX: 'center',
       originY: 'center',
-      left: 0,
-      top: 0,
+      left: layout.textX,
+      top: layout.textY,
+      visible: layout.showText,
       selectable: false,
       evented: false,
       data: { role: 'dynamic_marker_button_text' },
     })
-    return new fabric.Group([background, text], {
+    const objects = [background]
+    if (layout.showIcon && layout.icon) {
+      objects.push(new fabric.Path(layout.icon.path, {
+        stroke: style.iconColor,
+        fill: '',
+        strokeWidth: 1.8,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round',
+        originX: 'center',
+        originY: 'center',
+        left: layout.iconX,
+        top: layout.iconY,
+        scaleX: style.iconSize / 24,
+        scaleY: style.iconSize / 24,
+        selectable: false,
+        evented: false,
+        data: { role: 'dynamic_marker_button_icon', iconId: layout.icon.id },
+      }))
+    }
+    objects.push(text)
+    return new fabric.Group(objects, {
       left: 120,
       top: 80,
       scaleX: 1.2,
@@ -160,15 +192,16 @@ try {
 
   function assertCanonicalRoundTrip(group, style) {
     const children = group.getObjects()
-    assert.equal(children.length, 2)
     const background = children.find((item) => item.data?.role === 'dynamic_marker_button_bg')
     const text = children.find((item) => item.data?.role === 'dynamic_marker_button_text')
+    const icon = children.find((item) => item.data?.role === 'dynamic_marker_button_icon')
+    const layout = getDynamicMarkerButtonLayout(style)
     assert.ok(background)
     assert.ok(text)
     assert.ok(Math.abs(background.left) < 0.0001)
     assert.ok(Math.abs(background.top) < 0.0001)
-    assert.ok(Math.abs(text.left) < 0.0001)
-    assert.ok(Math.abs(text.top) < 0.0001)
+    assert.ok(Math.abs(text.left) <= style.width / 2)
+    assert.ok(Math.abs(text.top) <= style.height / 2)
     assert.equal(background.originX, 'center')
     assert.equal(background.originY, 'center')
     assert.equal(text.originX, 'center')
@@ -177,6 +210,17 @@ try {
     assert.equal(text.selectable, false)
     assert.equal(background.evented, false)
     assert.equal(text.evented, false)
+    assert.equal(!!icon, layout.showIcon)
+    if (icon) {
+      assert.ok(Math.abs(icon.left) <= style.width / 2)
+      assert.ok(Math.abs(icon.top) <= style.height / 2)
+      if (style.iconPosition === 'left') assert.ok(icon.left < text.left)
+      if (style.iconPosition === 'right') assert.ok(icon.left > text.left)
+      if (style.iconPosition === 'top') assert.ok(icon.top < text.top)
+      assert.equal(icon.stroke, style.iconColor)
+      assert.equal(icon.selectable, false)
+      assert.equal(icon.evented, false)
+    }
     if (style.shape === 'circle') {
       assert.equal(background.radius, Math.min(style.width, style.height) / 2)
     } else {
@@ -185,10 +229,17 @@ try {
       assert.equal(background.rx, getDynamicMarkerButtonCornerRadius(style))
       assert.ok((text.width ?? text.getScaledWidth?.() ?? 0) <= style.width)
     }
+    if (style.shadow.enabled) {
+      assert.equal(background.shadow?.blur, style.shadow.blur)
+      assert.equal(background.shadow?.offsetX, style.shadow.offsetX)
+      assert.equal(background.shadow?.offsetY, style.shadow.offsetY)
+    } else {
+      assert.equal(background.shadow, null)
+    }
   }
 
-  assert.equal(DYNAMIC_MARKER_BUTTON_PRESETS.length, 8)
-  assert.deepEqual(DYNAMIC_MARKER_BUTTON_PRESETS.map((preset) => preset.name), [
+  assert.equal(DYNAMIC_MARKER_BUTTON_PRESETS.length, 12)
+  assert.deepEqual(DYNAMIC_MARKER_BUTTON_PRESETS.slice(0, 8).map((preset) => preset.name), [
     'Rectangular sólido',
     'Rectangular redondeado',
     'Tipo píldora',
@@ -198,6 +249,14 @@ try {
     'Tipo etiqueta o badge',
     'Solo texto',
   ])
+  assert.deepEqual(DYNAMIC_MARKER_BUTTON_PRESETS.slice(8).map((preset) => preset.name), [
+    'Texto con flecha',
+    'Información circular',
+    'Producto destacado',
+    'Botón con sombra',
+  ])
+  assert.ok(getDynamicMarkerButtonIcon('info'))
+  assert.ok(getDynamicMarkerButtonIcon('whatsapp'))
 
   const style = createDynamicMarkerButtonStyle('solid-rect')
   assert.equal(style.label, 'Ver ficha')
@@ -219,6 +278,12 @@ try {
     borderWidth: 2,
     borderRadius: 12,
     opacity: 0.7,
+    iconId: 'info',
+    iconPosition: 'left',
+    iconColor: '#f8fafc',
+    iconSize: 22,
+    iconGap: 10,
+    shadow: { enabled: true, blur: 16, offsetX: 2, offsetY: 5, color: '#111827' },
   })
   assert.equal(styled.label, 'Ficha premium')
   assert.equal(styled.dynamicMarkerButton.backgroundColor, '#111827')
@@ -226,6 +291,55 @@ try {
   assert.equal(styled.dynamicMarkerButton.textSize, 24)
   assert.equal(styled.dynamicMarkerButton.borderWidth, 2)
   assert.equal(styled.dynamicMarkerButton.opacity, 0.7)
+  assert.equal(styled.dynamicMarkerButton.iconId, 'info')
+  assert.equal(styled.dynamicMarkerButton.iconColor, '#f8fafc')
+  assert.equal(styled.dynamicMarkerButton.iconSize, 22)
+  assert.equal(styled.dynamicMarkerButton.iconGap, 10)
+  assert.deepEqual(getDynamicMarkerButtonShadow(styled.dynamicMarkerButton), { color: '#111827', blur: 16, offsetX: 2, offsetY: 5 })
+
+  const textOnlyChange = updateDynamicMarkerButtonStyle(styled, { textSize: 30 }).dynamicMarkerButton
+  assert.equal(textOnlyChange.textSize, 30)
+  assert.equal(textOnlyChange.iconSize, 22)
+  assert.equal(textOnlyChange.iconGap, 10)
+  const iconOnlyChange = updateDynamicMarkerButtonStyle(styled, { iconSize: 34 }).dynamicMarkerButton
+  assert.equal(iconOnlyChange.textSize, 24)
+  assert.equal(iconOnlyChange.iconSize, 34)
+  assert.equal(iconOnlyChange.iconGap, 10)
+  const gapOnlyChange = updateDynamicMarkerButtonStyle(styled, { iconGap: 18 }).dynamicMarkerButton
+  assert.equal(gapOnlyChange.textSize, 24)
+  assert.equal(gapOnlyChange.iconSize, 22)
+  assert.equal(gapOnlyChange.iconGap, 18)
+  assert.notEqual(getDynamicMarkerButtonCacheSignature(styled.dynamicMarkerButton), getDynamicMarkerButtonCacheSignature(textOnlyChange))
+  assert.notEqual(getDynamicMarkerButtonCacheSignature(styled.dynamicMarkerButton), getDynamicMarkerButtonCacheSignature(iconOnlyChange))
+  assert.notEqual(getDynamicMarkerButtonCacheSignature(styled.dynamicMarkerButton), getDynamicMarkerButtonCacheSignature(gapOnlyChange))
+
+  const serializedStyled = JSON.parse(JSON.stringify(styled))
+  assert.equal(serializedStyled.dynamicMarkerButton.textSize, 24)
+  assert.equal(serializedStyled.dynamicMarkerButton.iconSize, 22)
+  assert.equal(serializedStyled.dynamicMarkerButton.iconGap, 10)
+
+  const scaledStyle = getDynamicMarkerButtonScaledStyle(styled.dynamicMarkerButton, 1.5, 0.75)
+  assert.equal(scaledStyle.width, Math.round(styled.dynamicMarkerButton.width * 1.5))
+  assert.equal(scaledStyle.height, Math.round(styled.dynamicMarkerButton.height * 0.75))
+  assert.equal(scaledStyle.textSize, styled.dynamicMarkerButton.textSize)
+  assert.equal(scaledStyle.iconSize, styled.dynamicMarkerButton.iconSize)
+
+  const noIconLayout = getDynamicMarkerButtonLayout(createDynamicMarkerButtonStyle('solid-rect'))
+  assert.equal(noIconLayout.showIcon, false)
+  assert.equal(noIconLayout.showText, true)
+  const leftIconLayout = getDynamicMarkerButtonLayout(styled.dynamicMarkerButton)
+  assert.equal(leftIconLayout.showIcon, true)
+  assert.ok(leftIconLayout.iconX < leftIconLayout.textX)
+  const rightIconStyle = updateDynamicMarkerButtonStyle(styled, { iconPosition: 'right' }).dynamicMarkerButton
+  const rightIconLayout = getDynamicMarkerButtonLayout(rightIconStyle)
+  assert.ok(rightIconLayout.iconX > rightIconLayout.textX)
+  const topIconStyle = updateDynamicMarkerButtonStyle(styled, { iconPosition: 'top' }).dynamicMarkerButton
+  const topIconLayout = getDynamicMarkerButtonLayout(topIconStyle)
+  assert.ok(topIconLayout.iconY < topIconLayout.textY)
+  const onlyIconStyle = updateDynamicMarkerButtonStyle(styled, { iconPosition: 'only' }).dynamicMarkerButton
+  const onlyIconLayout = getDynamicMarkerButtonLayout(onlyIconStyle)
+  assert.equal(onlyIconLayout.showText, false)
+  assert.equal(onlyIconLayout.showIcon, true)
 
   const linked = setDynamicMarkerButtonMarker(styled, 'marker_123')
   assert.deepEqual(linked.action, { type: 'open_dynamic_marker', marker_id: 'marker_123' })
@@ -249,11 +363,13 @@ try {
   ).dynamicMarkerButton
   assert.equal(getDynamicMarkerButtonCornerRadius(resizedPill), 35)
 
-  for (const presetId of ['solid-rect', 'pill', 'circle', 'text-only']) {
+  for (const presetId of ['solid-rect', 'pill', 'circle', 'text-only', 'text-arrow', 'shadow-button']) {
     const roundTripStyle = createDynamicMarkerButtonStyle(presetId)
     const roundTripped = await roundTripGroup(createCanonicalGroup(roundTripStyle, presetId === 'pill' ? 'marker_pill' : undefined))
     assert.equal(roundTripped.data.dynamicMarkerButton.presetId, presetId)
     assert.equal(isDynamicMarkerButtonLinked(roundTripped.data), presetId === 'pill')
+    assert.equal(roundTripped.scaleX, 1.2)
+    assert.equal(roundTripped.scaleY, 0.9)
     assertCanonicalRoundTrip(roundTripped, roundTripStyle)
   }
 
@@ -290,7 +406,10 @@ try {
   assert.equal(duplicate.objects[0].fill, '#111827')
   assert.equal(duplicate.objects[0].stroke, '#f8fafc')
   assert.equal(duplicate.objects[1].text, 'Ficha premium')
-  assert.equal(duplicate.objects[1].fontSize, 24)
+  assert.equal(duplicate.objects.at(-1).text, 'Ficha premium')
+  assert.equal(duplicate.objects.at(-1).fontSize, 24)
+  assert.equal(duplicate.data.dynamicMarkerButton.iconId, 'info')
+  assert.equal(duplicate.data.dynamicMarkerButton.shadow.enabled, true)
 
   const linkedPill = setDynamicMarkerButtonMarker(createDynamicMarkerButtonData(pillStyle), 'marker_pill')
   const pillOriginal = {
