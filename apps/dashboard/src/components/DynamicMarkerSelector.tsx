@@ -1,7 +1,20 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { api, type DynamicMarkerCatalogItem } from '../lib/api'
+import DynamicMarkerUsageDialog from './DynamicMarkerUsageDialog'
+import { canOpenDynamicMarkerUsage, dynamicMarkerUsageBadgeLabel } from '../lib/dynamicMarkerUsageDisplay'
 
-const PAGE_SIZE = 12
+export const DYNAMIC_MARKER_SELECTOR_PAGE_SIZE = 5
+const PAGE_SIZE = DYNAMIC_MARKER_SELECTOR_PAGE_SIZE
+
+export type DynamicMarkerSelectorCatalogPage = {
+  has_more: boolean
+  next_cursor: string | null
+}
+
+const EMPTY_PAGE: DynamicMarkerSelectorCatalogPage = {
+  has_more: false,
+  next_cursor: null,
+}
 
 function statusLabel(status: DynamicMarkerCatalogItem['status']) {
   if (status === 'active') return 'Activa'
@@ -15,13 +28,48 @@ function statusStyle(status: DynamicMarkerCatalogItem['status']): CSSProperties 
   return { color: '#92400e', background: '#fffbeb', borderColor: '#fde68a' }
 }
 
-function mergeUnique(current: DynamicMarkerCatalogItem[], incoming: DynamicMarkerCatalogItem[]) {
-  const known = new Set(current.map((item) => item.id))
-  return [...current, ...incoming.filter((item) => !known.has(item.id))]
-}
-
 function markerLabel(item: DynamicMarkerCatalogItem) {
   return item.name?.trim() || 'Ficha sin nombre'
+}
+
+export function getDynamicMarkerSelectorCursor(cursorHistory: Array<string | null>, pageIndex: number) {
+  return cursorHistory[pageIndex] ?? null
+}
+
+export function rememberDynamicMarkerSelectorCursor(
+  cursorHistory: Array<string | null>,
+  pageIndex: number,
+  cursor: string | null,
+) {
+  const next = cursorHistory.slice(0, pageIndex)
+  next[pageIndex] = cursor
+  return next.length ? next : [null]
+}
+
+export function resetDynamicMarkerSelectorCursorHistory() {
+  return [null] as Array<string | null>
+}
+
+export function replaceDynamicMarkerSelectorResults<T>(_current: T[], incoming: T[]) {
+  return incoming
+}
+
+export function isDynamicMarkerSelectorPreviousDisabled(pageIndex: number, loading = false) {
+  return pageIndex === 0 || loading
+}
+
+export function isDynamicMarkerSelectorNextDisabled(page: DynamicMarkerSelectorCatalogPage, loading = false) {
+  return !page.has_more || !page.next_cursor || loading
+}
+
+export function shouldOpenDynamicMarkerUsage(event: { preventDefault: () => void; stopPropagation: () => void }) {
+  event.preventDefault()
+  event.stopPropagation()
+  return true
+}
+
+export function keepDynamicMarkerSelectorValueOnPageChange(currentValue: string | null | undefined) {
+  return currentValue ?? null
 }
 
 type Props = {
@@ -31,40 +79,52 @@ type Props = {
 }
 
 export default function DynamicMarkerSelector({ value, publicationId, onChange }: Props) {
+  const listRef = useRef<HTMLDivElement | null>(null)
   const [query, setQuery] = useState('')
   const [activeQuery, setActiveQuery] = useState('')
   const [items, setItems] = useState<DynamicMarkerCatalogItem[]>([])
   const [loading, setLoading] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const selected = useMemo(() => items.find((item) => item.id === value) ?? null, [items, value])
+  const [page, setPage] = useState<DynamicMarkerSelectorCatalogPage>(EMPTY_PAGE)
+  const [pageIndex, setPageIndex] = useState(0)
+  const [cursorHistory, setCursorHistory] = useState<Array<string | null>>([null])
+  const [selectedMarker, setSelectedMarker] = useState<DynamicMarkerCatalogItem | null>(null)
+  const [usageDialogItem, setUsageDialogItem] = useState<DynamicMarkerCatalogItem | null>(null)
 
-  async function load({ append = false, cursor = '', term = activeQuery }: { append?: boolean; cursor?: string; term?: string } = {}) {
-    if (append && !cursor) return
-    if (append) setLoadingMore(true)
-    else setLoading(true)
+  async function load({
+    cursor = null,
+    nextPageIndex = 0,
+    term = activeQuery,
+  }: {
+    cursor?: string | null
+    nextPageIndex?: number
+    term?: string
+  } = {}) {
+    setLoading(true)
     setError('')
 
     try {
       const response = await api.dynamicMarkers.catalog({
         limit: PAGE_SIZE,
-        cursor: append ? cursor : null,
+        cursor,
         q: term || undefined,
         publication_id: publicationId,
       })
       const incoming = response.data ?? []
-      setItems((current) => (append ? mergeUnique(current, incoming) : incoming))
-      setNextCursor(response.page?.next_cursor ?? null)
+      setItems((current) => replaceDynamicMarkerSelectorResults(current, incoming))
+      setPage(response.page ?? EMPTY_PAGE)
+      setPageIndex(nextPageIndex)
+      setCursorHistory((current) => rememberDynamicMarkerSelectorCursor(current, nextPageIndex, cursor))
+      setSelectedMarker((current) => incoming.find((item) => item.id === value) ?? current)
       setLoaded(true)
+      listRef.current?.scrollTo({ top: 0 })
     } catch (err) {
-      if (!append) setItems([])
-      setNextCursor(null)
+      setItems([])
+      setPage(EMPTY_PAGE)
       setError(err instanceof Error ? err.message : 'No se pudieron cargar las fichas.')
     } finally {
-      if (append) setLoadingMore(false)
-      else setLoading(false)
+      setLoading(false)
     }
   }
 
@@ -72,24 +132,60 @@ export default function DynamicMarkerSelector({ value, publicationId, onChange }
     setQuery('')
     setActiveQuery('')
     setItems([])
-    setNextCursor(null)
+    setPage(EMPTY_PAGE)
+    setPageIndex(0)
+    setCursorHistory(resetDynamicMarkerSelectorCursorHistory())
+    setSelectedMarker(null)
     setLoaded(false)
-    void load({ term: '' })
+    void load({ term: '', cursor: null, nextPageIndex: 0 })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicationId])
+
+  useEffect(() => {
+    if (!value) {
+      setSelectedMarker(null)
+      return
+    }
+    const match = items.find((item) => item.id === value)
+    if (match) setSelectedMarker(match)
+  }, [items, value])
 
   function runSearch() {
     const term = query.trim()
     setActiveQuery(term)
-    void load({ term })
+    setCursorHistory(resetDynamicMarkerSelectorCursorHistory())
+    void load({ term, cursor: null, nextPageIndex: 0 })
   }
 
   function clearSearch(nextValue: string) {
     setQuery(nextValue)
     if (!nextValue.trim() && activeQuery) {
       setActiveQuery('')
-      void load({ term: '' })
+      setCursorHistory(resetDynamicMarkerSelectorCursorHistory())
+      void load({ term: '', cursor: null, nextPageIndex: 0 })
     }
+  }
+
+  function goToPreviousPage() {
+    if (isDynamicMarkerSelectorPreviousDisabled(pageIndex, loading)) return
+    keepDynamicMarkerSelectorValueOnPageChange(value)
+    const nextPageIndex = pageIndex - 1
+    void load({
+      term: activeQuery,
+      cursor: getDynamicMarkerSelectorCursor(cursorHistory, nextPageIndex),
+      nextPageIndex,
+    })
+  }
+
+  function goToNextPage() {
+    if (isDynamicMarkerSelectorNextDisabled(page, loading)) return
+    keepDynamicMarkerSelectorValueOnPageChange(value)
+    const nextPageIndex = pageIndex + 1
+    void load({
+      term: activeQuery,
+      cursor: page.next_cursor,
+      nextPageIndex,
+    })
   }
 
   return (
@@ -105,10 +201,10 @@ export default function DynamicMarkerSelector({ value, publicationId, onChange }
         </span>
       </button>
 
-      {value && selected && (
+      {value && selectedMarker && (
         <div style={styles.current}>
-          Seleccionada: <strong>{markerLabel(selected)}</strong>
-          {selected.reference ? ` · Ref. ${selected.reference}` : ''}
+          Seleccionada: <strong>{markerLabel(selectedMarker)}</strong>
+          {selectedMarker.reference ? ` · Ref. ${selectedMarker.reference}` : ''}
         </div>
       )}
 
@@ -132,41 +228,82 @@ export default function DynamicMarkerSelector({ value, publicationId, onChange }
       ) : !items.length ? (
         <div style={styles.state}>No hay fichas para mostrar.</div>
       ) : (
-        <div style={styles.list}>
+        <div ref={listRef} style={styles.list}>
           {items.map((item) => {
             const selectedItem = item.id === value
             return (
-              <button
+              <div
                 key={item.id}
-                type="button"
                 style={{ ...styles.item, ...(selectedItem ? styles.selectedOption : {}) }}
-                onClick={() => onChange(item.id)}
               >
-                <span style={styles.itemHead}>
-                  <strong>{markerLabel(item)}</strong>
-                  <span style={{ ...styles.status, ...statusStyle(item.status) }}>{statusLabel(item.status)}</span>
+                <button
+                  type="button"
+                  style={styles.itemSelect}
+                  onClick={() => onChange(item.id)}
+                >
+                  <span style={styles.itemHead}>
+                    <strong>{markerLabel(item)}</strong>
+                    <span style={{ ...styles.status, ...statusStyle(item.status) }}>{statusLabel(item.status)}</span>
+                  </span>
+                  <span style={styles.meta}>
+                    {item.reference ? `Ref. ${item.reference}` : 'Sin referencia'}
+                  </span>
+                  <span style={styles.meta}>
+                    {item.publication_title || 'Publicación'} · {item.page_number ? `Página ${item.page_number}` : 'Página sin identificar'}
+                  </span>
+                </button>
+                <span style={styles.usageRow}>
+                  <span style={{ ...styles.usageBadge, ...(item.is_in_use ? styles.usageBadgeActive : styles.usageBadgeIdle) }}>
+                    {dynamicMarkerUsageBadgeLabel(item.usage_count ?? 0)}
+                  </span>
+                  {canOpenDynamicMarkerUsage(item.usage_count ?? 0) && (
+                    <button
+                      type="button"
+                      style={styles.usageLink}
+                      onClick={(event) => {
+                        shouldOpenDynamicMarkerUsage(event)
+                        setUsageDialogItem(item)
+                      }}
+                    >
+                      Ver dónde se utiliza
+                    </button>
+                  )}
                 </span>
-                <span style={styles.meta}>
-                  {item.reference ? `Ref. ${item.reference}` : 'Sin referencia'}
-                </span>
-                <span style={styles.meta}>
-                  {item.publication_title || 'Publicación'} · {item.page_number ? `Página ${item.page_number}` : 'Página sin identificar'}
-                </span>
-              </button>
+              </div>
             )
           })}
         </div>
       )}
 
-      {nextCursor && (
-        <button
-          type="button"
-          style={styles.moreBtn}
-          disabled={loadingMore}
-          onClick={() => void load({ append: true, cursor: nextCursor })}
-        >
-          {loadingMore ? 'Cargando...' : 'Cargar más fichas'}
-        </button>
+      {loaded && items.length > 0 && (
+        <div style={styles.pagination} aria-label="Paginación de fichas interactivas">
+          <button
+            type="button"
+            style={{ ...styles.pageBtn, ...(isDynamicMarkerSelectorPreviousDisabled(pageIndex, loading) ? styles.pageBtnDisabled : {}) }}
+            disabled={isDynamicMarkerSelectorPreviousDisabled(pageIndex, loading)}
+            onClick={goToPreviousPage}
+          >
+            Anterior
+          </button>
+          <span style={styles.pageIndicator}>Página {pageIndex + 1}</span>
+          <button
+            type="button"
+            style={{ ...styles.pageBtn, ...(isDynamicMarkerSelectorNextDisabled(page, loading) ? styles.pageBtnDisabled : {}) }}
+            disabled={isDynamicMarkerSelectorNextDisabled(page, loading)}
+            onClick={goToNextPage}
+          >
+            Siguiente
+          </button>
+        </div>
+      )}
+
+      {usageDialogItem && (
+        <DynamicMarkerUsageDialog
+          markerId={usageDialogItem.id}
+          markerName={markerLabel(usageDialogItem)}
+          initialUsageCount={usageDialogItem.usage_count ?? 0}
+          onClose={() => setUsageDialogItem(null)}
+        />
       )}
     </div>
   )
@@ -181,11 +318,20 @@ const styles: Record<string, CSSProperties> = {
   selectedOption: { borderColor: '#4f46e5', boxShadow: '0 0 0 2px rgba(79,70,229,.12)' },
   current: { border: '1px solid #e0e7ff', borderRadius: 8, background: '#eef2ff', color: '#3730a3', padding: 9, fontSize: 12 },
   list: { display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 300, overflowY: 'auto', paddingRight: 2 },
-  item: { width: '100%', display: 'flex', flexDirection: 'column', gap: 5, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', padding: 10, textAlign: 'left', cursor: 'pointer' },
+  item: { width: '100%', display: 'flex', flexDirection: 'column', gap: 7, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', padding: 10, textAlign: 'left' },
+  itemSelect: { width: '100%', display: 'flex', flexDirection: 'column', gap: 5, border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' },
   itemHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, color: '#111827', fontSize: 13 },
   status: { border: '1px solid', borderRadius: 999, padding: '2px 7px', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' },
   meta: { color: '#6b7280', fontSize: 12 },
+  usageRow: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  usageBadge: { display: 'inline-flex', border: '1px solid', borderRadius: 999, padding: '3px 8px', fontSize: 11, fontWeight: 850, lineHeight: 1.2 },
+  usageBadgeActive: { color: '#047857', background: '#ecfdf5', borderColor: '#a7f3d0' },
+  usageBadgeIdle: { color: '#6b7280', background: '#f9fafb', borderColor: '#e5e7eb' },
+  usageLink: { border: 'none', background: 'transparent', color: '#4f46e5', padding: 0, fontSize: 11.5, fontWeight: 850, cursor: 'pointer', textDecoration: 'underline' },
   error: { border: '1px solid #fecaca', borderRadius: 8, background: '#fef2f2', color: '#991b1b', padding: 9, fontSize: 12 },
   state: { border: '1px dashed #d1d5db', borderRadius: 8, color: '#6b7280', padding: 12, fontSize: 12, textAlign: 'center' },
-  moreBtn: { border: '1px solid #d1d5db', borderRadius: 8, background: '#fff', padding: '9px 12px', color: '#374151', fontWeight: 800, cursor: 'pointer' },
+  pagination: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, flexWrap: 'wrap', maxWidth: '100%' },
+  pageBtn: { border: '1px solid #d1d5db', borderRadius: 8, background: '#fff', color: '#374151', padding: '8px 9px', fontSize: 12, fontWeight: 800, cursor: 'pointer' },
+  pageBtnDisabled: { cursor: 'not-allowed', opacity: 0.58, borderStyle: 'dashed' },
+  pageIndicator: { color: '#6b7280', fontSize: 12, fontWeight: 800, minWidth: 64, textAlign: 'center' },
 }

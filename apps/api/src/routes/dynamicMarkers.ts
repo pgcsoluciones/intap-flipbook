@@ -2,6 +2,12 @@ import { Hono } from 'hono'
 import { jwtMiddleware } from '../middleware/jwt'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
+import {
+  collectDynamicMarkerUsages,
+  countDynamicMarkerUsages,
+  type DynamicMarkerUsagePage,
+  type DynamicMarkerUsageTarget,
+} from '../lib/dynamicMarkerUsage'
 
 type Variables = AuthVariables
 
@@ -109,6 +115,15 @@ type DynamicMarkerCatalogRow = {
   booking_calendar_id: string | null
   booking_calendar_name: string | null
   updated_at: string
+}
+
+type DynamicMarkerUsagePageRow = {
+  publication_id: string
+  publication_name: string | null
+  public_slug: string | null
+  page_id: string
+  page_number: number | null
+  canvas_json: string | null
 }
 
 const MARKER_COLUMNS = `
@@ -705,6 +720,42 @@ async function ownedMarker(db: D1Database, markerId: string, userId: string) {
   ).bind(markerId, userId).first<DynamicMarkerRow>()
 }
 
+async function getTenantUsagePages(db: D1Database, userId: string): Promise<DynamicMarkerUsagePage[]> {
+  const { results } = await db.prepare(
+    `SELECT
+       p.id AS publication_id,
+       p.title AS publication_name,
+       p.public_slug,
+       pg.id AS page_id,
+       pg.page_number,
+       pg.canvas_json
+     FROM pages pg
+     JOIN publications p ON p.id = pg.publication_id
+     WHERE p.user_id = ?
+       AND p.deleted_at IS NULL
+       AND pg.canvas_json IS NOT NULL
+     ORDER BY p.title ASC, p.id ASC, pg.page_number ASC`,
+  ).bind(userId).all<DynamicMarkerUsagePageRow>()
+
+  return (results ?? []).map((row) => ({
+    publication_id: row.publication_id,
+    publication_name: row.publication_name,
+    public_slug: row.public_slug,
+    page_id: row.page_id,
+    page_number: row.page_number,
+    canvas_json: row.canvas_json,
+  }))
+}
+
+function usageTargetsFromRows(rows: Array<Pick<DynamicMarkerRow | DynamicMarkerCatalogRow, 'id' | 'publication_id' | 'page_id' | 'target_object_id'>>): DynamicMarkerUsageTarget[] {
+  return rows.map((row) => ({
+    marker_id: row.id,
+    publication_id: row.publication_id,
+    page_id: row.page_id,
+    target_object_id: row.target_object_id,
+  }))
+}
+
 async function validatePublicationPage(db: D1Database, publicationId: string, pageId: string, userId: string) {
   const pub = await ownedPublication(db, publicationId, userId)
   if (!pub) throw new Error('Publicacion no encontrada')
@@ -839,30 +890,42 @@ dynamicMarkers.get('/catalog', async (c) => {
   const pageRows = rows.slice(0, limit)
   const last = pageRows[pageRows.length - 1]
 
-  const data = pageRows.map((row) => ({
-    id: row.id,
-    publication_id: row.publication_id,
-    publication_title: row.publication_title,
-    page_id: row.page_id,
-    page_number: row.page_number,
-    target_object_id: row.target_object_id,
-    target_kind: row.target_kind,
-    status: row.status,
-    name: row.name,
-    reference: row.reference,
-    category: row.category,
-    price_minor: row.price_minor,
-    currency: row.currency,
-    availability: row.availability,
-    cover_url: row.publication_cover_url || row.first_page_image_url || null,
-    booking_calendar: row.booking_calendar_id
-      ? {
-        id: row.booking_calendar_id,
-        name: row.booking_calendar_name,
-      }
-      : null,
-    updated_at: row.updated_at,
-  }))
+  const usageCounts = pageRows.length
+    ? countDynamicMarkerUsages(collectDynamicMarkerUsages(
+      await getTenantUsagePages(c.env.DB, userId),
+      usageTargetsFromRows(pageRows),
+    ))
+    : new Map<string, number>()
+
+  const data = pageRows.map((row) => {
+    const usageCount = usageCounts.get(row.id) ?? 0
+    return {
+      id: row.id,
+      publication_id: row.publication_id,
+      publication_title: row.publication_title,
+      page_id: row.page_id,
+      page_number: row.page_number,
+      target_object_id: row.target_object_id,
+      target_kind: row.target_kind,
+      status: row.status,
+      name: row.name,
+      reference: row.reference,
+      category: row.category,
+      price_minor: row.price_minor,
+      currency: row.currency,
+      availability: row.availability,
+      cover_url: row.publication_cover_url || row.first_page_image_url || null,
+      booking_calendar: row.booking_calendar_id
+        ? {
+          id: row.booking_calendar_id,
+          name: row.booking_calendar_name,
+        }
+        : null,
+      usage_count: usageCount,
+      is_in_use: usageCount > 0,
+      updated_at: row.updated_at,
+    }
+  })
 
   return c.json({
     success: true,
@@ -1000,6 +1063,26 @@ dynamicMarkers.post('/:id/reuse', async (c) => {
   ).bind(target.id, userId).first<DynamicMarkerRow>()
 
   return c.json({ success: true, data: updated })
+})
+
+dynamicMarkers.get('/:id/usages', async (c) => {
+  const userId = c.get('user').sub
+  const marker = await ownedMarker(c.env.DB, c.req.param('id'), userId)
+  if (!marker) return c.json({ success: false, error: 'Ficha dinamica no encontrada' }, 404)
+
+  const usages = collectDynamicMarkerUsages(
+    await getTenantUsagePages(c.env.DB, userId),
+    usageTargetsFromRows([marker]),
+  )
+
+  return c.json({
+    success: true,
+    data: {
+      marker_id: marker.id,
+      usage_count: usages.length,
+      usages,
+    },
+  })
 })
 
 dynamicMarkers.get('/:id', async (c) => {

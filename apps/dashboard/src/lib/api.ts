@@ -155,11 +155,32 @@ export type DynamicMarkerCatalogItem = {
   currency: string | null
   availability: string | null
   cover_url: string | null
+  usage_count: number
+  is_in_use: boolean
   booking_calendar: {
     id: string
     name: string | null
   } | null
   updated_at: string
+}
+
+export type DynamicMarkerUsage = {
+  marker_id: string
+  publication_id: string
+  publication_name: string
+  public_slug: string | null
+  page_id: string
+  page_number: number
+  element_id: string | null
+  object_type: string | null
+  object_label: string | null
+  sources: Array<'direct' | 'action'>
+}
+
+export type DynamicMarkerUsageResponse = {
+  marker_id: string
+  usage_count: number
+  usages: DynamicMarkerUsage[]
 }
 
 export type CreateDynamicMarkerInput = {
@@ -651,6 +672,8 @@ export const api = {
     },
     get: (id: string) =>
       request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(id)}`),
+    usages: (id: string) =>
+      request<{ success: true; data: DynamicMarkerUsageResponse }>(`/api/dynamic-markers/${encodeURIComponent(id)}/usages`),
     create: (input: CreateDynamicMarkerInput) =>
       request<{ success: true; data: DynamicMarker }>('/api/dynamic-markers', { method: 'POST', body: JSON.stringify(input) }),
     update: (id: string, input: UpdateDynamicMarkerInput) =>

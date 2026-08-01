@@ -2,8 +2,11 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type DynamicMarker, type DynamicMarkerCatalogItem, type DynamicMarkerStatus } from '../lib/api'
 import DynamicMarkerCommercialEditor from '../components/DynamicMarkerCommercialEditor'
+import DynamicMarkerUsageDialog from '../components/DynamicMarkerUsageDialog'
+import { canOpenDynamicMarkerUsage, dynamicMarkerUsageBadgeLabel } from '../lib/dynamicMarkerUsageDisplay'
 
-const PAGE_SIZE = 24
+export const DYNAMIC_MARKER_CATALOG_PAGE_SIZE = 10
+const PAGE_SIZE = DYNAMIC_MARKER_CATALOG_PAGE_SIZE
 
 
 type CatalogPage = {
@@ -21,6 +24,36 @@ const EMPTY_PAGE: CatalogPage = {
   limit: PAGE_SIZE,
   has_more: false,
   next_cursor: null,
+}
+
+export function getDynamicMarkerCatalogCursor(cursorHistory: Array<string | null>, pageIndex: number) {
+  return cursorHistory[pageIndex] ?? null
+}
+
+export function rememberDynamicMarkerCatalogCursor(
+  cursorHistory: Array<string | null>,
+  pageIndex: number,
+  cursor: string | null,
+) {
+  const next = cursorHistory.slice(0, pageIndex)
+  next[pageIndex] = cursor
+  return next.length ? next : [null]
+}
+
+export function resetDynamicMarkerCatalogCursorHistory() {
+  return [null] as Array<string | null>
+}
+
+export function replaceDynamicMarkerCatalogResults<T>(_current: T[], incoming: T[]) {
+  return incoming
+}
+
+export function isDynamicMarkerCatalogPreviousDisabled(pageIndex: number, loading = false) {
+  return pageIndex === 0 || loading
+}
+
+export function isDynamicMarkerCatalogNextDisabled(page: CatalogPage, loading = false) {
+  return !page.has_more || !page.next_cursor || loading
 }
 
 function mergeUnique(current: DynamicMarkerCatalogItem[], incoming: DynamicMarkerCatalogItem[]) {
@@ -90,12 +123,13 @@ export default function TenantDynamicMarkers() {
   const flushDetailRef = useRef<(() => Promise<boolean>) | null>(null)
   const [items, setItems] = useState<DynamicMarkerCatalogItem[]>([])
   const [page, setPage] = useState<CatalogPage>(EMPTY_PAGE)
+  const [pageIndex, setPageIndex] = useState(0)
+  const [cursorHistory, setCursorHistory] = useState<Array<string | null>>([null])
   const [query, setQuery] = useState('')
   const [activeQuery, setActiveQuery] = useState('')
   const [status, setStatus] = useState<DynamicMarkerStatus | ''>('')
   const [selectedId, setSelectedId] = useState('')
   const [loading, setLoading] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
   const [detailCache, setDetailCache] = useState<Record<string, CachedDetail>>({})
@@ -107,6 +141,7 @@ export default function TenantDynamicMarkers() {
   const [statusError, setStatusError] = useState('')
   const [statusMessage, setStatusMessage] = useState('')
   const [reuseSuccess, setReuseSuccess] = useState('')
+  const [usageDialogItem, setUsageDialogItem] = useState<DynamicMarkerCatalogItem | null>(null)
 
   function clearStatusFeedback() {
     setStatusError('')
@@ -125,60 +160,53 @@ export default function TenantDynamicMarkers() {
   }
 
   async function loadCatalog({
-    append = false,
-    cursor = '',
+    cursor = null,
+    nextPageIndex = 0,
     term = activeQuery,
     statusFilter = status,
   }: {
-    append?: boolean
-    cursor?: string
+    cursor?: string | null
+    nextPageIndex?: number
     term?: string
     statusFilter?: DynamicMarkerStatus | ''
   } = {}) {
-    if (append && !cursor) return
-
-    if (append) setLoadingMore(true)
-    else setLoading(true)
+    setLoading(true)
     setError('')
 
     try {
       const response = await api.dynamicMarkers.catalog({
         limit: PAGE_SIZE,
-        cursor: append ? cursor : null,
+        cursor,
         q: term || undefined,
         status: statusFilter || undefined,
       })
 
       const incoming = response.data ?? []
       setPage(response.page ?? EMPTY_PAGE)
+      setPageIndex(nextPageIndex)
+      setCursorHistory((current) => rememberDynamicMarkerCatalogCursor(current, nextPageIndex, cursor))
 
-      if (append) {
-        setItems((current) => mergeUnique(current, incoming))
-      } else {
-        detailRequestRef.current += 1
-        setItems(incoming)
-        setSelectedId('')
-        setDetail(null)
-        setDetailError('')
-        setDetailLoading(false)
-        setDetailDirty(false)
-        clearStatusFeedback()
-        setReuseSuccess('')
-      }
+      detailRequestRef.current += 1
+      setItems((current) => replaceDynamicMarkerCatalogResults(current, incoming))
+      setSelectedId('')
+      setDetail(null)
+      setDetailError('')
+      setDetailLoading(false)
+      setDetailDirty(false)
+      clearStatusFeedback()
+      setReuseSuccess('')
+      listRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
 
       setLoaded(true)
     } catch (err) {
-      if (!append) {
-        setItems([])
-        setSelectedId('')
-        setDetail(null)
-      }
+      setItems([])
+      setSelectedId('')
+      setDetail(null)
       setPage(EMPTY_PAGE)
       setLoaded(true)
       setError(err instanceof Error ? err.message : 'No se pudieron cargar las fichas interactivas.')
     } finally {
-      if (append) setLoadingMore(false)
-      else setLoading(false)
+      setLoading(false)
     }
   }
 
@@ -214,7 +242,8 @@ export default function TenantDynamicMarkers() {
     if (!await closeDetail()) return
     const term = query.trim()
     setActiveQuery(term)
-    await loadCatalog({ term })
+    setCursorHistory(resetDynamicMarkerCatalogCursorHistory())
+    await loadCatalog({ term, cursor: null, nextPageIndex: 0 })
   }
 
   function handleQueryChange(value: string) {
@@ -224,7 +253,8 @@ export default function TenantDynamicMarkers() {
       void (async () => {
         if (!await closeDetail()) return
         setActiveQuery('')
-        await loadCatalog({ term: '' })
+        setCursorHistory(resetDynamicMarkerCatalogCursorHistory())
+        await loadCatalog({ term: '', cursor: null, nextPageIndex: 0 })
       })()
     }
   }
@@ -233,14 +263,44 @@ export default function TenantDynamicMarkers() {
     void (async () => {
       if (!await closeDetail()) return
       setStatus(value)
-      await loadCatalog({ term: activeQuery, statusFilter: value })
+      setCursorHistory(resetDynamicMarkerCatalogCursorHistory())
+      await loadCatalog({ term: activeQuery, statusFilter: value, cursor: null, nextPageIndex: 0 })
     })()
   }
 
   function refreshCatalog() {
     void (async () => {
       if (!await closeDetail()) return
-      await loadCatalog({ term: activeQuery })
+      const cursor = getDynamicMarkerCatalogCursor(cursorHistory, pageIndex)
+      await loadCatalog({ term: activeQuery, statusFilter: status, cursor, nextPageIndex: pageIndex })
+    })()
+  }
+
+  function goToPreviousPage() {
+    void (async () => {
+      if (pageIndex <= 0 || loading) return
+      if (!await closeDetail()) return
+      const nextPageIndex = pageIndex - 1
+      await loadCatalog({
+        term: activeQuery,
+        statusFilter: status,
+        cursor: getDynamicMarkerCatalogCursor(cursorHistory, nextPageIndex),
+        nextPageIndex,
+      })
+    })()
+  }
+
+  function goToNextPage() {
+    void (async () => {
+      if (!page.has_more || !page.next_cursor || loading) return
+      if (!await closeDetail()) return
+      const nextPageIndex = pageIndex + 1
+      await loadCatalog({
+        term: activeQuery,
+        statusFilter: status,
+        cursor: page.next_cursor,
+        nextPageIndex,
+      })
     })()
   }
 
@@ -437,7 +497,7 @@ export default function TenantDynamicMarkers() {
         <button
           type="button"
           style={s.refresh}
-          disabled={loading || loadingMore}
+          disabled={loading}
           onClick={refreshCatalog}
         >
           {loading ? 'Actualizando...' : 'Actualizar'}
@@ -476,7 +536,7 @@ export default function TenantDynamicMarkers() {
       </section>
 
       <div style={s.summary}>
-        <span>{loading && !loaded ? 'Cargando fichas...' : `${items.length} ficha${items.length === 1 ? '' : 's'} mostrada${items.length === 1 ? '' : 's'}`}</span>
+        <span>{loading && !loaded ? 'Cargando fichas...' : `${items.length} ficha${items.length === 1 ? '' : 's'} en esta página`}</span>
         {activeQuery && <span>Búsqueda: {activeQuery}</span>}
       </div>
 
@@ -529,12 +589,33 @@ export default function TenantDynamicMarkers() {
                       <span style={s.cardMetaLine}>
                         {item.publication_title || 'Publicación'} · {item.page_number ? `Página ${item.page_number}` : 'Página sin identificar'}
                       </span>
+                      <div style={s.usageRow}>
+                        <span style={{ ...s.usageBadge, ...(item.is_in_use ? s.usageBadgeActive : s.usageBadgeIdle) }}>
+                          {dynamicMarkerUsageBadgeLabel(item.usage_count ?? 0)}
+                        </span>
+                      </div>
                     </div>
 
                     <span style={s.cardChevron} aria-hidden="true">
                       {selected ? '⌃' : '⌄'}
                     </span>
                   </button>
+
+                  {canOpenDynamicMarkerUsage(item.usage_count ?? 0) && (
+                    <div style={s.cardUsageActions}>
+                      <button
+                        type="button"
+                        style={s.usageLink}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          setUsageDialogItem(item)
+                        }}
+                      >
+                        Ver dónde se utiliza
+                      </button>
+                    </div>
+                  )}
 
                   {selected && (
                     <div style={s.cardDetail}>
@@ -566,23 +647,37 @@ export default function TenantDynamicMarkers() {
             })}
           </div>
 
-          {page.has_more && page.next_cursor && (
-            <div style={s.loadMoreWrap}>
-              <button
-                type="button"
-                style={s.refresh}
-                disabled={loadingMore}
-                onClick={() => void loadCatalog({
-                  append: true,
-                  cursor: page.next_cursor ?? '',
-                  term: activeQuery,
-                })}
-              >
-                {loadingMore ? 'Cargando...' : 'Cargar más'}
-              </button>
-            </div>
-          )}
+          <div style={s.paginationWrap} aria-label="Paginación de fichas interactivas">
+            <button
+              type="button"
+              style={{ ...s.refresh, ...(isDynamicMarkerCatalogPreviousDisabled(pageIndex, loading) ? s.paginationBtnDisabled : {}) }}
+              disabled={isDynamicMarkerCatalogPreviousDisabled(pageIndex, loading)}
+              onClick={goToPreviousPage}
+            >
+              Anterior
+            </button>
+
+            <span style={s.pageIndicator}>Página {pageIndex + 1}</span>
+
+            <button
+              type="button"
+              style={{ ...s.refresh, ...(isDynamicMarkerCatalogNextDisabled(page, loading) ? s.paginationBtnDisabled : {}) }}
+              disabled={isDynamicMarkerCatalogNextDisabled(page, loading)}
+              onClick={goToNextPage}
+            >
+              Siguiente
+            </button>
+          </div>
         </>
+      )}
+
+      {usageDialogItem && (
+        <DynamicMarkerUsageDialog
+          markerId={usageDialogItem.id}
+          markerName={usageDialogItem.name || 'Ficha sin nombre'}
+          initialUsageCount={usageDialogItem.usage_count ?? 0}
+          onClose={() => setUsageDialogItem(null)}
+        />
       )}
     </div>
   )
@@ -1096,6 +1191,9 @@ const s: Record<string, CSSProperties> = {
   error: { border: '1px solid #fecaca', borderRadius: 8, background: '#fef2f2', color: '#991b1b', padding: 10, fontSize: 13 },
   empty: { border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', minHeight: 160, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 7, color: '#6b7280', textAlign: 'center', padding: 18, fontSize: 13 },
   accordionList: { display: 'flex', flexDirection: 'column', gap: 10 },
+  paginationWrap: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 18, maxWidth: '100%' },
+  pageIndicator: { color: '#6b7280', fontSize: 12, fontWeight: 800, minWidth: 80, textAlign: 'center' },
+  paginationBtnDisabled: { cursor: 'not-allowed', opacity: 0.58, borderStyle: 'dashed' },
   card: { border: '1px solid #e5e7eb', borderRadius: 14, background: '#fff', overflow: 'hidden', boxShadow: '0 1px 2px rgba(15,23,42,.05)' },
   cardSelected: { borderColor: '#4f46e5', boxShadow: '0 0 0 2px rgba(79,70,229,.14)' },
   cardToggle: { width: '100%', border: 'none', background: '#fff', color: '#111827', padding: 10, display: 'flex', alignItems: 'center', gap: 11, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' },
@@ -1107,6 +1205,12 @@ const s: Record<string, CSSProperties> = {
   cardIdentity: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 9 },
   cardTitle: { margin: 0, color: '#111827', fontSize: 15, lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   cardMetaLine: { color: '#6b7280', fontSize: 12, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  usageRow: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 2 },
+  usageBadge: { display: 'inline-flex', border: '1px solid', borderRadius: 999, padding: '3px 8px', fontSize: 11.5, fontWeight: 850, lineHeight: 1.2 },
+  usageBadgeActive: { color: '#047857', background: '#ecfdf5', borderColor: '#a7f3d0' },
+  usageBadgeIdle: { color: '#6b7280', background: '#f9fafb', borderColor: '#e5e7eb' },
+  usageLink: { border: 'none', background: 'transparent', color: '#4f46e5', padding: 0, fontSize: 11.5, fontWeight: 850, cursor: 'pointer', textDecoration: 'underline' },
+  cardUsageActions: { borderTop: '1px solid #f3f4f6', padding: '0 10px 10px 93px', display: 'flex', justifyContent: 'flex-start' },
   cardChevron: { color: '#6b7280', fontSize: 18, fontWeight: 800, padding: '0 3px', flexShrink: 0 },
   cardDetail: { borderTop: '1px solid #e5e7eb', background: '#fbfdff', padding: 14 },
   metaGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 9 },
