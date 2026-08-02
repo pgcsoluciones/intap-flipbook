@@ -29,6 +29,30 @@ type CreateInput = {
   target_kind?: unknown
 }
 
+type CreateIndependentInput = {
+  publication_id?: unknown
+  name?: unknown
+  reference?: unknown
+  category?: unknown
+  description?: unknown
+  price_minor?: unknown
+  previous_price_minor?: unknown
+  currency?: unknown
+  availability?: unknown
+  promotion_text?: unknown
+  accent_color?: unknown
+  badge_text?: unknown
+  promotion_ends_at?: unknown
+  post_promotion_price_minor?: unknown
+  colors_json?: unknown
+  materials_json?: unknown
+  sizes_json?: unknown
+  measurements_json?: unknown
+  media_json?: unknown
+  actions_json?: unknown
+  custom_fields_json?: unknown
+}
+
 type ReuseInput = {
   target_marker_id?: unknown
   name?: unknown
@@ -72,8 +96,8 @@ type DynamicMarkerRow = {
   id: string
   user_id: string
   publication_id: string
-  page_id: string
-  target_object_id: string
+  page_id: string | null
+  target_object_id: string | null
   target_kind: string | null
   status: DynamicMarkerStatus
   name: string | null
@@ -108,9 +132,9 @@ type DynamicMarkerCatalogRow = {
   publication_title: string | null
   publication_cover_url: string | null
   first_page_image_url: string | null
-  page_id: string
+  page_id: string | null
   page_number: number | null
-  target_object_id: string
+  target_object_id: string | null
   target_kind: string | null
   status: DynamicMarkerStatus
   name: string | null
@@ -162,6 +186,38 @@ type CloneDynamicMarkerPayload = {
   actions_json: string
   custom_fields_json: string
   cloned_from_marker_id: string
+}
+
+type IndependentDynamicMarkerPayload = {
+  id: string
+  user_id: string
+  publication_id: string
+  page_id: null
+  target_object_id: null
+  target_kind: null
+  status: 'draft'
+  name: string
+  reference: string | null
+  category: string | null
+  description: string | null
+  price_minor: number | null
+  previous_price_minor: number | null
+  currency: string | null
+  availability: string | null
+  promotion_text: string | null
+  accent_color: string
+  badge_text: string | null
+  promotion_ends_at: string | null
+  post_promotion_price_minor: number | null
+  colors_json: string
+  materials_json: string
+  sizes_json: string
+  measurements_json: string
+  media_json: string
+  actions_json: string
+  custom_fields_json: string
+  booking_calendar_id: null
+  cloned_from_marker_id: null
 }
 
 const MARKER_COLUMNS = `
@@ -831,6 +887,59 @@ export function buildCloneDynamicMarkerPayload(
   }
 }
 
+function buildIndependentDynamicMarkerActions(value: unknown): string {
+  const actions = JSON.parse(cleanActions(value)) as Record<string, unknown>
+  if (actions.booking && typeof actions.booking === 'object' && !Array.isArray(actions.booking)) {
+    actions.booking = {
+      ...(actions.booking as Record<string, unknown>),
+      enabled: false,
+    }
+  }
+  normalizeOfferCtaForFinalActions(actions)
+  return JSON.stringify(actions)
+}
+
+export function buildIndependentDynamicMarkerPayload(
+  body: CreateIndependentInput,
+  identity: {
+    id: string
+    user_id: string
+    publication_id: string
+  },
+): IndependentDynamicMarkerPayload {
+  return {
+    id: identity.id,
+    user_id: identity.user_id,
+    publication_id: identity.publication_id,
+    page_id: null,
+    target_object_id: null,
+    target_kind: null,
+    status: 'draft',
+    name: cleanRequiredText(body.name, 'name', 160),
+    reference: cleanText(body.reference, 'reference', 120),
+    category: cleanText(body.category, 'category', 120),
+    description: cleanText(body.description, 'description', 2000),
+    price_minor: cleanMoneyMinor(body.price_minor, 'price_minor'),
+    previous_price_minor: cleanMoneyMinor(body.previous_price_minor, 'previous_price_minor'),
+    currency: cleanCurrency(body.currency),
+    availability: cleanText(body.availability, 'availability', 80),
+    promotion_text: cleanText(body.promotion_text, 'promotion_text', 200),
+    accent_color: cleanAccentColor(body.accent_color),
+    badge_text: cleanText(body.badge_text, 'badge_text', 80),
+    promotion_ends_at: cleanIsoDateTime(body.promotion_ends_at, 'promotion_ends_at'),
+    post_promotion_price_minor: cleanMoneyMinor(body.post_promotion_price_minor, 'post_promotion_price_minor'),
+    colors_json: cleanColors(body.colors_json),
+    materials_json: cleanMaterials(body.materials_json),
+    sizes_json: cleanSizes(body.sizes_json),
+    measurements_json: cleanMeasurements(body.measurements_json),
+    media_json: cleanMedia(body.media_json),
+    actions_json: buildIndependentDynamicMarkerActions(body.actions_json),
+    custom_fields_json: cleanCustomFields(body.custom_fields_json),
+    booking_calendar_id: null,
+    cloned_from_marker_id: null,
+  }
+}
+
 function dbError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
   if (message.toLowerCase().includes('unique')) {
@@ -1079,6 +1188,113 @@ dynamicMarkers.get('/catalog', async (c) => {
       next_cursor: hasMore && last ? `${last.updated_at}|${last.id}` : null,
     },
   })
+})
+
+dynamicMarkers.post('/independent', async (c) => {
+  const userId = c.get('user').sub
+  const body = await c.req.json<CreateIndependentInput & Record<string, unknown>>().catch(() => null)
+  if (!body || typeof body !== 'object') return c.json({ success: false, error: 'JSON invalido' }, 400)
+
+  let publicationId: string
+  try {
+    publicationId = cleanRequiredText(body.publication_id, 'publication_id', 80)
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 400)
+  }
+
+  const pub = await ownedPublication(c.env.DB, publicationId, userId)
+  if (!pub) return c.json({ success: false, error: 'Publicacion no encontrada' }, 404)
+
+  let payload: IndependentDynamicMarkerPayload
+  try {
+    payload = buildIndependentDynamicMarkerPayload(body, {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      publication_id: publicationId,
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 400)
+  }
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO dynamic_markers (
+        id,
+        user_id,
+        publication_id,
+        page_id,
+        target_object_id,
+        target_kind,
+        status,
+        name,
+        reference,
+        category,
+        description,
+        price_minor,
+        previous_price_minor,
+        currency,
+        availability,
+        promotion_text,
+        accent_color,
+        badge_text,
+        promotion_ends_at,
+        post_promotion_price_minor,
+        colors_json,
+        materials_json,
+        sizes_json,
+        measurements_json,
+        media_json,
+        actions_json,
+        custom_fields_json,
+        booking_calendar_id,
+        cloned_from_marker_id
+      ) VALUES (?, ?, ?, NULL, NULL, NULL, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+    ).bind(
+      payload.id,
+      payload.user_id,
+      payload.publication_id,
+      payload.name,
+      payload.reference,
+      payload.category,
+      payload.description,
+      payload.price_minor,
+      payload.previous_price_minor,
+      payload.currency,
+      payload.availability,
+      payload.promotion_text,
+      payload.accent_color,
+      payload.badge_text,
+      payload.promotion_ends_at,
+      payload.post_promotion_price_minor,
+      payload.colors_json,
+      payload.materials_json,
+      payload.sizes_json,
+      payload.measurements_json,
+      payload.media_json,
+      payload.actions_json,
+      payload.custom_fields_json,
+    ).run()
+  } catch (error) {
+    const result = dbError(error)
+    return c.json({ success: false, error: result.error }, result.status as any)
+  }
+
+  const created = await c.env.DB.prepare(
+    `SELECT ${MARKER_COLUMNS}
+     FROM dynamic_markers
+     WHERE id = ? AND user_id = ?`,
+  ).bind(payload.id, userId).first<DynamicMarkerRow>()
+
+  return c.json({
+    success: true,
+    data: created
+      ? {
+        ...created,
+        usage_count: 0,
+        is_in_use: false,
+      }
+      : created,
+  }, 201)
 })
 
 dynamicMarkers.post('/:id/reuse', async (c) => {

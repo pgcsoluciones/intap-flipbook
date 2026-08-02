@@ -97,6 +97,7 @@ function editorUrl(item: DynamicMarkerCatalogItem) {
 }
 
 function locateEditorUrl(item: DynamicMarkerCatalogItem) {
+  if (!item.page_id || !item.target_object_id) return editorUrl(item)
   const params = new URLSearchParams({
     page: item.page_id,
     marker: item.id,

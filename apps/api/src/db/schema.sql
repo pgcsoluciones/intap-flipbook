@@ -312,10 +312,10 @@ CREATE TABLE IF NOT EXISTS watermark_config (
 
 CREATE TABLE IF NOT EXISTS dynamic_markers (
   id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  publication_id TEXT NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
-  page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  target_object_id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  publication_id TEXT NOT NULL REFERENCES publications(id),
+  page_id TEXT REFERENCES pages(id),
+  target_object_id TEXT,
   target_kind TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'inactive')),
   name TEXT,
@@ -342,7 +342,17 @@ CREATE TABLE IF NOT EXISTS dynamic_markers (
   booking_calendar_id TEXT REFERENCES appointment_calendars(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(publication_id, page_id, target_object_id)
+  UNIQUE(publication_id, page_id, target_object_id),
+  CHECK (status <> 'active' OR (name IS NOT NULL AND length(trim(name)) > 0)),
+  CHECK (
+    price_minor IS NULL OR
+    (typeof(price_minor) = 'integer' AND price_minor >= 0)
+  ),
+  CHECK (
+    previous_price_minor IS NULL OR
+    (typeof(previous_price_minor) = 'integer' AND previous_price_minor >= 0)
+  ),
+  CHECK (currency IS NULL OR length(currency) = 3)
 );
 
 CREATE TABLE IF NOT EXISTS product_details (

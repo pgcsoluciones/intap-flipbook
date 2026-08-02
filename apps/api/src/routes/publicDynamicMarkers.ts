@@ -5,9 +5,9 @@ const publicDynamicMarkers = new Hono<{ Bindings: Env }>()
 
 type MarkerRow = {
   id: string
-  page_id: string
+  page_id: string | null
   page_number: number | null
-  target_object_id: string
+  target_object_id: string | null
   target_kind: string | null
   name: string | null
   reference: string | null

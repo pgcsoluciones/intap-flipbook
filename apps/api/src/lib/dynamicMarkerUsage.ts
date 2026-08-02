@@ -25,7 +25,7 @@ export type DynamicMarkerUsagePage = {
 export type DynamicMarkerUsageTarget = {
   marker_id: string
   publication_id: string
-  page_id: string
+  page_id: string | null
   target_object_id: string | null
 }
 
@@ -157,7 +157,7 @@ export function collectDynamicMarkerUsages(
   const usages = new Map<string, DynamicMarkerUsage>()
 
   for (const target of targets) {
-    if (!target.target_object_id) continue
+    if (!target.page_id || !target.target_object_id) continue
     const key = `${target.publication_id}::${target.page_id}`
     const pageTargets = directTargetsByPage.get(key) ?? []
     pageTargets.push(target)

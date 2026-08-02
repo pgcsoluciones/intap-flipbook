@@ -109,8 +109,8 @@ export type DynamicMarker = {
   id: string
   user_id: string
   publication_id: string
-  page_id: string
-  target_object_id: string
+  page_id: string | null
+  target_object_id: string | null
   target_kind: string | null
   status: DynamicMarkerStatus
   name: string | null
@@ -135,6 +135,8 @@ export type DynamicMarker = {
   custom_fields_json: string
   booking_calendar_id: string | null
   cloned_from_marker_id: string | null
+  usage_count?: number
+  is_in_use?: boolean
   created_at: string
   updated_at: string
 }
@@ -143,9 +145,9 @@ export type DynamicMarkerCatalogItem = {
   id: string
   publication_id: string
   publication_title: string | null
-  page_id: string
+  page_id: string | null
   page_number: number | null
-  target_object_id: string
+  target_object_id: string | null
   target_kind: string | null
   status: DynamicMarkerStatus
   name: string | null
@@ -188,6 +190,30 @@ export type CreateDynamicMarkerInput = {
   page_id: string
   target_object_id: string
   target_kind?: string | null
+}
+
+export type CreateIndependentDynamicMarkerInput = {
+  publication_id: string
+  name: string
+  reference?: string | null
+  category?: string | null
+  description?: string | null
+  price_minor?: number | null
+  previous_price_minor?: number | null
+  currency?: string | null
+  availability?: string | null
+  promotion_text?: string | null
+  accent_color?: string | null
+  badge_text?: string | null
+  promotion_ends_at?: string | null
+  post_promotion_price_minor?: number | null
+  colors_json?: unknown[] | string | null
+  materials_json?: unknown[] | string | null
+  sizes_json?: unknown[] | string | null
+  measurements_json?: unknown[] | string | null
+  media_json?: unknown[] | string | null
+  actions_json?: DynamicMarkerActions | string | null
+  custom_fields_json?: unknown[] | string | null
 }
 
 export type UpdateDynamicMarkerInput = {
@@ -683,6 +709,8 @@ export const api = {
       request<{ success: true; data: DynamicMarkerUsageResponse }>(`/api/dynamic-markers/${encodeURIComponent(id)}/usages`),
     create: (input: CreateDynamicMarkerInput) =>
       request<{ success: true; data: DynamicMarker }>('/api/dynamic-markers', { method: 'POST', body: JSON.stringify(input) }),
+    createIndependent: (input: CreateIndependentDynamicMarkerInput) =>
+      request<{ success: true; data: DynamicMarker }>('/api/dynamic-markers/independent', { method: 'POST', body: JSON.stringify(input) }),
     update: (id: string, input: UpdateDynamicMarkerInput) =>
       request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
     setStatus: (id: string, status: DynamicMarkerStatus) =>
