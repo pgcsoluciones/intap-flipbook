@@ -4,6 +4,7 @@ import { api, type DynamicMarker, type DynamicMarkerCatalogItem, type DynamicMar
 import DynamicMarkerCommercialEditor from '../components/DynamicMarkerCommercialEditor'
 import DynamicMarkerUsageDialog from '../components/DynamicMarkerUsageDialog'
 import { canOpenDynamicMarkerUsage, dynamicMarkerUsageBadgeLabel } from '../lib/dynamicMarkerUsageDisplay'
+import { dynamicMarkerCardToneStyles, dynamicMarkerPreviewToneStyles } from '../lib/dynamicMarkerReuse'
 
 export const DYNAMIC_MARKER_CATALOG_PAGE_SIZE = 10
 const PAGE_SIZE = DYNAMIC_MARKER_CATALOG_PAGE_SIZE
@@ -554,11 +555,12 @@ export default function TenantDynamicMarkers() {
           <div ref={listRef} style={s.accordionList}>
             {items.map((item) => {
               const selected = selectedId === item.id
+              const inUse = (item.usage_count ?? 0) > 0 || item.is_in_use
 
               return (
                 <article
                   key={item.id}
-                  style={{ ...s.card, ...(selected ? s.cardSelected : {}) }}
+                  style={{ ...s.card, ...dynamicMarkerCardToneStyles(inUse), ...(selected ? s.cardSelected : {}) }}
                 >
                   <button
                     type="button"
@@ -566,7 +568,7 @@ export default function TenantDynamicMarkers() {
                     aria-expanded={selected}
                     onClick={() => void loadDetail(item)}
                   >
-                    <div style={s.cover}>
+                    <div style={{ ...s.cover, ...dynamicMarkerPreviewToneStyles(inUse) }}>
                       {item.cover_url ? (
                         <img src={item.cover_url} alt="" style={s.coverImg} />
                       ) : (

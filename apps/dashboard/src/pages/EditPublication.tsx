@@ -56,6 +56,7 @@ import {
   type DynamicMarkerButtonPreset,
   type DynamicMarkerButtonStyle,
 } from '../lib/dynamicMarkerButtons'
+import type { DynamicMarkerCloneTarget } from '../lib/dynamicMarkerReuse'
 import {
   appendMediaPickerUrls,
   MEDIA_PICKER_REPLACEMENT_ERROR,
@@ -6399,7 +6400,7 @@ function PropsPanel({
 
         {/* ── BOTÓN: estilo visual + acción ── */}
         {kind === DYNAMIC_MARKER_BUTTON_KIND && (
-          <DynamicMarkerButtonProps obj={obj} canvas={canvas} publicationId={publicationId} onChange={onChange} />
+          <DynamicMarkerButtonProps obj={obj} canvas={canvas} publicationId={publicationId} pageId={pageId} onChange={onChange} />
         )}
 
         {kind === 'button' && (
@@ -6490,6 +6491,8 @@ function PropsPanel({
               setData={setData}
               targets={namedTargets}
               publicationId={publicationId}
+              pageId={pageId}
+              targetObject={obj}
               openImageBank={(request) => openActionGalleryMediaPicker?.(obj, request)}
             />
           </>
@@ -6657,8 +6660,25 @@ function DynamicMarkerButtonPreview({ preset }: { preset: DynamicMarkerButtonPre
   )
 }
 
-function DynamicMarkerButtonProps({ obj, canvas, publicationId, onChange }: any) {
+function buildDynamicMarkerCloneTarget(
+  publicationId: string | undefined,
+  pageId: string | undefined,
+  targetObject: any,
+  fallbackKind: string | undefined,
+): DynamicMarkerCloneTarget | null {
+  const elementId = typeof targetObject?.data?.elementId === 'string' ? targetObject.data.elementId.trim() : ''
+  if (!publicationId || !pageId || !elementId) return null
+  return {
+    publication_id: publicationId,
+    page_id: pageId,
+    target_object_id: elementId,
+    target_kind: targetObject?.type || fallbackKind || null,
+  }
+}
+
+function DynamicMarkerButtonProps({ obj, canvas, publicationId, pageId, onChange }: any) {
   const style: DynamicMarkerButtonStyle = normalizeDynamicMarkerButtonStyle(obj.data?.dynamicMarkerButton ?? createDynamicMarkerButtonStyle('solid-rect'))
+  const cloneTarget = buildDynamicMarkerCloneTarget(publicationId, pageId, obj, DYNAMIC_MARKER_BUTTON_KIND)
 
   function patchStyle(patch: Partial<DynamicMarkerButtonStyle>) {
     obj.data = updateDynamicMarkerButtonStyle(obj.data, patch)
@@ -6687,7 +6707,7 @@ function DynamicMarkerButtonProps({ obj, canvas, publicationId, onChange }: any)
         <div style={{ ...s.statusBadge, ...(isLinked ? s.statusBadgeLinked : s.statusBadgeEmpty) }}>
           {isLinked ? 'Ficha vinculada' : 'Sin ficha'}
         </div>
-        <DynamicMarkerSelector publicationId={publicationId} value={markerId} onChange={setMarker} />
+        <DynamicMarkerSelector publicationId={publicationId} value={markerId} cloneTarget={cloneTarget} onChange={setMarker} />
       </PropGroup>
       <PropGroup label="Texto">
         <select style={s.propInput} value={style.fontFamily} onChange={(e) => patchStyle({ fontFamily: e.target.value })}>
@@ -8037,17 +8057,22 @@ function ActionEditor({
   targets = [],
   openImageBank,
   publicationId,
+  pageId,
+  targetObject,
 }: {
   data: any
   pages: any[]
   setData: (p: any) => void
   targets?: { id: string; name: string }[]
   publicationId?: string
+  pageId?: string
+  targetObject?: any
   openImageBank?: OpenWidgetGalleryMediaPicker
 }) {
   const action = data.action ?? { type: 'link' }
   const setAction = (patch: any) => setData({ action: { ...action, ...patch } })
   const current = action.type ?? 'none'
+  const cloneTarget = buildDynamicMarkerCloneTarget(publicationId, pageId, targetObject, targetObject?.data?.kind)
 
   return (
     <>
@@ -8271,6 +8296,7 @@ function ActionEditor({
           <DynamicMarkerSelector
             value={action.marker_id}
             publicationId={publicationId}
+            cloneTarget={cloneTarget}
             onChange={(markerId) => {
               if (!markerId) setData({ action: undefined })
               else setData({ action: { type: 'open_dynamic_marker', marker_id: markerId } })

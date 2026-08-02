@@ -2,6 +2,15 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { api, type DynamicMarkerCatalogItem } from '../lib/api'
 import DynamicMarkerUsageDialog from './DynamicMarkerUsageDialog'
 import { canOpenDynamicMarkerUsage, dynamicMarkerUsageBadgeLabel } from '../lib/dynamicMarkerUsageDisplay'
+import DynamicMarkerReuseDialog from './DynamicMarkerReuseDialog'
+import {
+  buildDynamicMarkerCloneBody,
+  canCloneDynamicMarkerToTarget,
+  dynamicMarkerCardToneStyles,
+  dynamicMarkerCloneErrorMessage,
+  getDynamicMarkerSelectionDecision,
+  type DynamicMarkerCloneTarget,
+} from '../lib/dynamicMarkerReuse'
 
 export const DYNAMIC_MARKER_SELECTOR_PAGE_SIZE = 5
 const PAGE_SIZE = DYNAMIC_MARKER_SELECTOR_PAGE_SIZE
@@ -28,8 +37,21 @@ function statusStyle(status: DynamicMarkerCatalogItem['status']): CSSProperties 
   return { color: '#92400e', background: '#fffbeb', borderColor: '#fde68a' }
 }
 
-function markerLabel(item: DynamicMarkerCatalogItem) {
+function markerLabel(item: Pick<DynamicMarkerCatalogItem, 'name'>) {
   return item.name?.trim() || 'Ficha sin nombre'
+}
+
+type SelectedMarkerInfo = Pick<DynamicMarkerCatalogItem, 'id' | 'name' | 'reference'>
+
+function selectedMarkerFromClone(
+  marker: SelectedMarkerInfo,
+  fallback: DynamicMarkerCatalogItem,
+): SelectedMarkerInfo {
+  return {
+    id: marker.id,
+    name: marker.name ?? fallback.name,
+    reference: marker.reference ?? fallback.reference,
+  }
 }
 
 export function getDynamicMarkerSelectorCursor(cursorHistory: Array<string | null>, pageIndex: number) {
@@ -75,11 +97,13 @@ export function keepDynamicMarkerSelectorValueOnPageChange(currentValue: string 
 type Props = {
   value?: string | null
   publicationId?: string
+  cloneTarget?: DynamicMarkerCloneTarget | null
   onChange: (markerId: string | null) => void
 }
 
-export default function DynamicMarkerSelector({ value, publicationId, onChange }: Props) {
+export default function DynamicMarkerSelector({ value, publicationId, cloneTarget, onChange }: Props) {
   const listRef = useRef<HTMLDivElement | null>(null)
+  const cloningRef = useRef(false)
   const [query, setQuery] = useState('')
   const [activeQuery, setActiveQuery] = useState('')
   const [items, setItems] = useState<DynamicMarkerCatalogItem[]>([])
@@ -89,8 +113,11 @@ export default function DynamicMarkerSelector({ value, publicationId, onChange }
   const [page, setPage] = useState<DynamicMarkerSelectorCatalogPage>(EMPTY_PAGE)
   const [pageIndex, setPageIndex] = useState(0)
   const [cursorHistory, setCursorHistory] = useState<Array<string | null>>([null])
-  const [selectedMarker, setSelectedMarker] = useState<DynamicMarkerCatalogItem | null>(null)
+  const [selectedMarker, setSelectedMarker] = useState<SelectedMarkerInfo | null>(null)
   const [usageDialogItem, setUsageDialogItem] = useState<DynamicMarkerCatalogItem | null>(null)
+  const [reuseDialogItem, setReuseDialogItem] = useState<DynamicMarkerCatalogItem | null>(null)
+  const [cloneError, setCloneError] = useState('')
+  const [cloning, setCloning] = useState(false)
 
   async function load({
     cursor = null,
@@ -188,6 +215,62 @@ export default function DynamicMarkerSelector({ value, publicationId, onChange }
     })
   }
 
+  function refreshAfterClone() {
+    setCursorHistory(resetDynamicMarkerSelectorCursorHistory())
+    void load({
+      term: activeQuery,
+      cursor: null,
+      nextPageIndex: 0,
+    })
+  }
+
+  function selectMarker(item: DynamicMarkerCatalogItem) {
+    const decision = getDynamicMarkerSelectionDecision(item, value)
+    if (decision === 'noop') return
+    if (decision === 'select') {
+      onChange(item.id)
+      setSelectedMarker(item)
+      return
+    }
+    setCloneError('')
+    setReuseDialogItem(item)
+  }
+
+  function useSameMarker() {
+    if (!reuseDialogItem) return
+    onChange(reuseDialogItem.id)
+    setSelectedMarker(reuseDialogItem)
+    setReuseDialogItem(null)
+    setCloneError('')
+  }
+
+  async function cloneMarker() {
+    const target = cloneTarget
+    if (!reuseDialogItem || !canCloneDynamicMarkerToTarget(target) || cloningRef.current) return
+    cloningRef.current = true
+    setCloning(true)
+    setCloneError('')
+    try {
+      const response = await api.dynamicMarkers.clone(reuseDialogItem.id, buildDynamicMarkerCloneBody(target))
+      onChange(response.data.id)
+      setSelectedMarker(selectedMarkerFromClone(response.data, reuseDialogItem))
+      setReuseDialogItem(null)
+      setCloneError('')
+      refreshAfterClone()
+    } catch (err) {
+      setCloneError(dynamicMarkerCloneErrorMessage(err))
+    } finally {
+      cloningRef.current = false
+      setCloning(false)
+    }
+  }
+
+  function closeReuseDialog() {
+    if (cloning) return
+    setReuseDialogItem(null)
+    setCloneError('')
+  }
+
   return (
     <div style={styles.wrap}>
       <button
@@ -231,15 +314,16 @@ export default function DynamicMarkerSelector({ value, publicationId, onChange }
         <div ref={listRef} style={styles.list}>
           {items.map((item) => {
             const selectedItem = item.id === value
+            const inUse = (item.usage_count ?? 0) > 0 || item.is_in_use
             return (
               <div
                 key={item.id}
-                style={{ ...styles.item, ...(selectedItem ? styles.selectedOption : {}) }}
+                style={{ ...styles.item, ...dynamicMarkerCardToneStyles(inUse), ...(selectedItem ? styles.selectedOption : {}) }}
               >
                 <button
                   type="button"
                   style={styles.itemSelect}
-                  onClick={() => onChange(item.id)}
+                  onClick={() => selectMarker(item)}
                 >
                   <span style={styles.itemHead}>
                     <strong>{markerLabel(item)}</strong>
@@ -303,6 +387,19 @@ export default function DynamicMarkerSelector({ value, publicationId, onChange }
           markerName={markerLabel(usageDialogItem)}
           initialUsageCount={usageDialogItem.usage_count ?? 0}
           onClose={() => setUsageDialogItem(null)}
+        />
+      )}
+
+      {reuseDialogItem && (
+        <DynamicMarkerReuseDialog
+          markerName={markerLabel(reuseDialogItem)}
+          cloning={cloning}
+          cloneDisabled={!canCloneDynamicMarkerToTarget(cloneTarget)}
+          cloneDisabledReason="No pudimos preparar una copia para este elemento."
+          error={cloneError}
+          onUseSame={useSameMarker}
+          onClone={() => void cloneMarker()}
+          onCancel={closeReuseDialog}
         />
       )}
     </div>

@@ -35,6 +35,13 @@ type ReuseInput = {
   reference?: unknown
 }
 
+type CloneInput = {
+  publication_id?: unknown
+  page_id?: unknown
+  target_object_id?: unknown
+  target_kind?: unknown
+}
+
 type UpdateInput = {
   status?: unknown
   name?: unknown
@@ -124,6 +131,37 @@ type DynamicMarkerUsagePageRow = {
   page_id: string
   page_number: number | null
   canvas_json: string | null
+}
+
+type CloneDynamicMarkerPayload = {
+  id: string
+  user_id: string
+  publication_id: string
+  page_id: string
+  target_object_id: string
+  target_kind: string | null
+  status: DynamicMarkerStatus
+  name: string
+  reference: string | null
+  category: string | null
+  description: string | null
+  price_minor: number | null
+  previous_price_minor: number | null
+  currency: string | null
+  availability: string | null
+  promotion_text: string | null
+  accent_color: string
+  badge_text: string | null
+  promotion_ends_at: string | null
+  post_promotion_price_minor: number | null
+  colors_json: string
+  materials_json: string
+  sizes_json: string
+  measurements_json: string
+  media_json: string
+  actions_json: string
+  custom_fields_json: string
+  cloned_from_marker_id: string
 }
 
 const MARKER_COLUMNS = `
@@ -253,6 +291,50 @@ function cleanCatalogCursor(value: unknown) {
 
   if (!valid) throw new Error('Cursor de fichas dinamicas invalido')
   return { updatedAt, id }
+}
+
+function parseCanvasJson(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw ?? null
+  if (!raw.trim()) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+export function dynamicMarkerCanvasHasElementId(rawCanvasJson: unknown, targetObjectId: string): boolean {
+  const target = targetObjectId.trim()
+  if (!target) return false
+
+  const parsed = parseCanvasJson(rawCanvasJson)
+  const visited = new WeakSet<object>()
+
+  const visit = (node: unknown): boolean => {
+    if (!node || typeof node !== 'object') return false
+    if (visited.has(node as object)) return false
+    visited.add(node as object)
+
+    if (Array.isArray(node)) return node.some(visit)
+
+    const record = node as Record<string, unknown>
+    const data = record.data
+    if (
+      data
+      && typeof data === 'object'
+      && !Array.isArray(data)
+      && (data as Record<string, unknown>).elementId === target
+    ) {
+      return true
+    }
+
+    return Object.entries(record).some(([key, child]) => {
+      if (key === 'data') return false
+      return visit(child)
+    })
+  }
+
+  return visit(parsed)
 }
 
 async function validateOwnedCalendar(db: D1Database, calendarId: string, userId: string) {
@@ -688,6 +770,67 @@ function buildReuseActions(source: DynamicMarkerRow, target: DynamicMarkerRow): 
   return JSON.stringify(combined)
 }
 
+export function clonedDynamicMarkerName(name: string | null): string {
+  const base = name?.trim() || 'Ficha sin nombre'
+  const suffix = ' (copia)'
+  return `${base.slice(0, 160 - suffix.length)}${suffix}`
+}
+
+export function buildCloneDynamicMarkerPayload(
+  source: DynamicMarkerRow,
+  destination: {
+    id: string
+    user_id: string
+    publication_id: string
+    page_id: string
+    target_object_id: string
+    target_kind: string | null
+  },
+): CloneDynamicMarkerPayload {
+  const targetForActions: DynamicMarkerRow = {
+    ...source,
+    id: destination.id,
+    user_id: destination.user_id,
+    publication_id: destination.publication_id,
+    page_id: destination.page_id,
+    target_object_id: destination.target_object_id,
+    target_kind: destination.target_kind,
+    booking_calendar_id: null,
+    actions_json: source.actions_json,
+  }
+
+  return {
+    id: destination.id,
+    user_id: destination.user_id,
+    publication_id: destination.publication_id,
+    page_id: destination.page_id,
+    target_object_id: destination.target_object_id,
+    target_kind: destination.target_kind,
+    status: source.status,
+    name: clonedDynamicMarkerName(source.name),
+    reference: source.reference,
+    category: source.category,
+    description: source.description,
+    price_minor: source.price_minor,
+    previous_price_minor: source.previous_price_minor,
+    currency: source.currency,
+    availability: source.availability,
+    promotion_text: source.promotion_text,
+    accent_color: cleanAccentColor(source.accent_color),
+    badge_text: source.badge_text,
+    promotion_ends_at: source.promotion_ends_at,
+    post_promotion_price_minor: source.post_promotion_price_minor,
+    colors_json: cleanColors(source.colors_json),
+    materials_json: cleanMaterials(source.materials_json),
+    sizes_json: cleanSizes(source.sizes_json),
+    measurements_json: cleanMeasurements(source.measurements_json),
+    media_json: cloneMediaWithNewIds(source.media_json),
+    actions_json: buildReuseActions(source, targetForActions),
+    custom_fields_json: cloneCustomFieldsWithNewIds(source.custom_fields_json),
+    cloned_from_marker_id: source.id,
+  }
+}
+
 function dbError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
   if (message.toLowerCase().includes('unique')) {
@@ -1063,6 +1206,143 @@ dynamicMarkers.post('/:id/reuse', async (c) => {
   ).bind(target.id, userId).first<DynamicMarkerRow>()
 
   return c.json({ success: true, data: updated })
+})
+
+dynamicMarkers.post('/:id/clone', async (c) => {
+  const userId = c.get('user').sub
+  const sourceId = c.req.param('id')
+  const body = await c.req.json<CloneInput & Record<string, unknown>>().catch(() => null)
+  if (!body || typeof body !== 'object') return c.json({ success: false, error: 'JSON invalido' }, 400)
+
+  let publicationId: string
+  let pageId: string
+  let targetObjectId: string
+  let targetKind: string | null
+
+  try {
+    publicationId = cleanRequiredText(body.publication_id, 'publication_id', 80)
+    pageId = cleanRequiredText(body.page_id, 'page_id', 80)
+    targetObjectId = cleanRequiredText(body.target_object_id, 'target_object_id', 160)
+    targetKind = cleanText(body.target_kind, 'target_kind', 80)
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 400)
+  }
+
+  const source = await ownedMarker(c.env.DB, sourceId, userId)
+  if (!source) return c.json({ success: false, error: 'Ficha fuente no encontrada para este tenant' }, 404)
+
+  const pub = await ownedPublication(c.env.DB, publicationId, userId)
+  if (!pub) return c.json({ success: false, error: 'Publicacion no encontrada' }, 404)
+
+  const page = await c.env.DB.prepare(
+    `SELECT id, canvas_json
+     FROM pages
+     WHERE id = ? AND publication_id = ?`,
+  ).bind(pageId, publicationId).first<{ id: string; canvas_json: string | null }>()
+  if (!page) return c.json({ success: false, error: 'Pagina no encontrada para esta publicacion' }, 404)
+
+  if (!dynamicMarkerCanvasHasElementId(page.canvas_json, targetObjectId)) {
+    return c.json({ success: false, error: 'El objeto destino no existe en la pagina indicada' }, 400)
+  }
+
+  const existing = await c.env.DB.prepare(
+    `SELECT id FROM dynamic_markers
+     WHERE publication_id = ? AND page_id = ? AND target_object_id = ?
+     LIMIT 1`,
+  ).bind(publicationId, pageId, targetObjectId).first<{ id: string }>()
+  if (existing) {
+    return c.json({ success: false, error: 'Ya existe una ficha para este objeto o area en esta pagina' }, 409)
+  }
+
+  let payload: CloneDynamicMarkerPayload
+  try {
+    payload = buildCloneDynamicMarkerPayload(source, {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      publication_id: publicationId,
+      page_id: pageId,
+      target_object_id: targetObjectId,
+      target_kind: targetKind,
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 400)
+  }
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO dynamic_markers (
+        id,
+        user_id,
+        publication_id,
+        page_id,
+        target_object_id,
+        target_kind,
+        status,
+        name,
+        reference,
+        category,
+        description,
+        price_minor,
+        previous_price_minor,
+        currency,
+        availability,
+        promotion_text,
+        accent_color,
+        badge_text,
+        promotion_ends_at,
+        post_promotion_price_minor,
+        colors_json,
+        materials_json,
+        sizes_json,
+        measurements_json,
+        media_json,
+        actions_json,
+        custom_fields_json,
+        booking_calendar_id,
+        cloned_from_marker_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+    ).bind(
+      payload.id,
+      payload.user_id,
+      payload.publication_id,
+      payload.page_id,
+      payload.target_object_id,
+      payload.target_kind,
+      payload.status,
+      payload.name,
+      payload.reference,
+      payload.category,
+      payload.description,
+      payload.price_minor,
+      payload.previous_price_minor,
+      payload.currency,
+      payload.availability,
+      payload.promotion_text,
+      payload.accent_color,
+      payload.badge_text,
+      payload.promotion_ends_at,
+      payload.post_promotion_price_minor,
+      payload.colors_json,
+      payload.materials_json,
+      payload.sizes_json,
+      payload.measurements_json,
+      payload.media_json,
+      payload.actions_json,
+      payload.custom_fields_json,
+      payload.cloned_from_marker_id,
+    ).run()
+  } catch (error) {
+    const result = dbError(error)
+    return c.json({ success: false, error: result.error }, result.status as any)
+  }
+
+  const created = await c.env.DB.prepare(
+    `SELECT ${MARKER_COLUMNS}
+     FROM dynamic_markers
+     WHERE id = ? AND user_id = ?`,
+  ).bind(payload.id, userId).first<DynamicMarkerRow>()
+
+  return c.json({ success: true, data: created }, 201)
 })
 
 dynamicMarkers.get('/:id/usages', async (c) => {

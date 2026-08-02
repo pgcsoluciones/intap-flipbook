@@ -319,6 +319,13 @@ export type ReuseDynamicMarkerInput = {
   reference?: string | null
 }
 
+export type CloneDynamicMarkerInput = {
+  publication_id: string
+  page_id: string
+  target_object_id: string
+  target_kind?: string | null
+}
+
 export type LeadIntakeStatus = 'new' | 'contacted' | 'quoted' | 'won' | 'lost'
 export type LeadIntakeRequestType = 'quote' | 'booking'
 
@@ -682,6 +689,8 @@ export const api = {
       request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
     reuse: (sourceId: string, body: ReuseDynamicMarkerInput) =>
       request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(sourceId)}/reuse`, { method: 'POST', body: JSON.stringify(body) }),
+    clone: (sourceId: string, body: CloneDynamicMarkerInput) =>
+      request<{ success: true; data: DynamicMarker }>(`/api/dynamic-markers/${encodeURIComponent(sourceId)}/clone`, { method: 'POST', body: JSON.stringify(body) }),
   },
   productDetails: {
     list: (params: { q?: string; status?: ProductDetailStatus | ''; limit?: number; offset?: number } = {}) => {
