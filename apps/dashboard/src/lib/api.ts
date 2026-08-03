@@ -1000,7 +1000,7 @@ export const api = {
   },
 
   mediaAssets: {
-    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number; folder_id?: string | null; hidden?: boolean; needs_thumbnail?: boolean; needs_optimization?: boolean }) => {
+    list: (params: { publication_id: string; q?: string; limit?: number; cursor?: string | null; page?: number; folder_id?: string | null; hidden?: boolean; needs_thumbnail?: boolean; needs_optimization?: boolean; kind?: 'image' | 'media' }) => {
       const qs = new URLSearchParams()
       qs.set('publication_id', params.publication_id)
       if (params.q) qs.set('q', params.q)
@@ -1011,6 +1011,7 @@ export const api = {
       if (params.hidden) qs.set('hidden', 'true')
       if (params.needs_thumbnail) qs.set('needs_thumbnail', 'true')
       if (params.needs_optimization) qs.set('needs_optimization', 'true')
+      if (params.kind) qs.set('kind', params.kind)
       return request<{
         success: true
         data: MediaAsset[]

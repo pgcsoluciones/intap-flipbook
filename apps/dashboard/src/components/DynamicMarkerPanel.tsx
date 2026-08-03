@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import type { AppointmentCalendar, DynamicMarker, DynamicMarkerStatus } from '../lib/api'
+import {
+  DYNAMIC_MARKER_LINKED_LOAD_ERROR,
+  getDynamicMarkerActionMarkerId,
+  resolveDynamicMarkerLinkedSelection,
+  shouldCreateDirectDynamicMarker,
+} from '../lib/dynamicMarkerLinkedSelection'
 import FileField from './FileField'
 
 type Props = {
@@ -512,6 +518,11 @@ function formFromMarker(marker: DynamicMarker): FormState {
 
 export default function DynamicMarkerPanel({ publicationId, pageId, selectedObject, targetKind, ensureElementId, openImageBank }: Props) {
   const targetObjectId = selectedObject?.data?.elementId ?? ''
+  const linkedActionMarkerId = getDynamicMarkerActionMarkerId(selectedObject)
+  const linkedSelection = useMemo(
+    () => resolveDynamicMarkerLinkedSelection(selectedObject),
+    [linkedActionMarkerId, selectedObject, targetObjectId],
+  )
   const [marker, setMarker] = useState<DynamicMarker | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm)
   const [loading, setLoading] = useState(false)
@@ -570,25 +581,35 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
     setMarker(null)
     setForm(emptyForm)
 
-    if (!selectedObject || !canUseApi || !targetObjectId) return
+    if (!selectedObject || !canUseApi || linkedSelection.kind === 'none') return
 
     setLoading(true)
-    api.dynamicMarkers.list(publicationId!, pageId!)
+    ;(linkedSelection.kind === 'linked-marker'
+      ? api.dynamicMarkers.get(linkedSelection.markerId)
+      : api.dynamicMarkers.list(publicationId!, pageId!))
       .then((res) => {
         if (cancelled) return
-        const found = (res.data ?? []).find((item) => item.target_object_id === targetObjectId) ?? null
+        if (linkedSelection.kind === 'linked-marker') {
+          const found = res.data as DynamicMarker
+          setMarker(found)
+          setForm(formFromMarker(found))
+          return
+        }
+        const found = ((res.data ?? []) as DynamicMarker[]).find((item) => item.target_object_id === linkedSelection.targetObjectId) ?? null
         setMarker(found)
         setForm(found ? formFromMarker(found) : emptyForm)
       })
       .catch((err: any) => {
-        if (!cancelled) setError(err?.message ?? 'No se pudo cargar la ficha interactiva')
+        if (!cancelled) setError(linkedSelection.kind === 'linked-marker'
+          ? DYNAMIC_MARKER_LINKED_LOAD_ERROR
+          : err?.message ?? 'No se pudo cargar la ficha interactiva')
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
 
     return () => { cancelled = true }
-  }, [canUseApi, pageId, publicationId, selectedObject, targetObjectId])
+  }, [canUseApi, linkedSelection, pageId, publicationId, selectedObject])
 
   useEffect(() => {
     let cancelled = false
@@ -870,6 +891,11 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
   }
 
   const activateArea = async () => {
+    if (!shouldCreateDirectDynamicMarker(linkedSelection)) {
+      setError('')
+      setSaved('')
+      return
+    }
     if (!canUseApi) {
       setError('No se pudo identificar la publicacion o la pagina activa')
       return

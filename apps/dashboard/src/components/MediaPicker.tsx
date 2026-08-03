@@ -4,6 +4,7 @@ import { optimizeImageFile, type OptimizedImageResult } from '../lib/imageOptimi
 import { normalizeMediaPickerFolderId, type MediaPickerFolderId } from '../lib/mediaPickerIntent'
 
 const ACCEPT_IMAGE = 'image/jpeg,image/png,image/webp,image/svg+xml,image/gif'
+const ACCEPT_MEDIA = `${ACCEPT_IMAGE},audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/x-wav,audio/mp4,audio/aac,video/mp4,video/webm,video/ogg`
 const ACCEPT_SVG = '.svg,image/svg+xml'
 const MAX_PDF_BYTES = 50 * 1024 * 1024
 const BANK_PAGE_SIZE = 12
@@ -32,7 +33,7 @@ function perfMeasure(name: string, start: string, detail?: Record<string, unknow
   } catch {}
 }
 
-type MediaPickerMode = 'image' | 'pages' | 'svg'
+type MediaPickerMode = 'image' | 'media' | 'pages' | 'svg'
 
 type MediaPickerProps = {
   open: boolean
@@ -217,11 +218,31 @@ function isSvgUrl(url: string) {
 
 function isAllowedLegacyUrl(url: string, mode: MediaPickerMode) {
   if (mode === 'svg') return isSvgUrl(url)
+  if (mode === 'media') return /\.(jpe?g|png|webp|svg|gif|mp3|m4a|aac|ogg|wav|mp4|webm|ogv)($|[?#])/i.test(url)
   return true
 }
 
 function isAllowedAsset(asset: MediaAsset, mode: MediaPickerMode) {
   if (mode === 'svg') return asset.mime_type === 'image/svg+xml'
+  if (mode === 'media') {
+    return [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/svg+xml',
+      'image/gif',
+      'audio/mpeg',
+      'audio/mp3',
+      'audio/ogg',
+      'audio/wav',
+      'audio/x-wav',
+      'audio/mp4',
+      'audio/aac',
+      'video/mp4',
+      'video/webm',
+      'video/ogg',
+    ].includes(asset.mime_type)
+  }
   return ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif'].includes(asset.mime_type)
 }
 
@@ -334,7 +355,7 @@ export default function MediaPicker({
   const pdfInputRef = useRef<HTMLInputElement | null>(null)
   const [foldersLoaded, setFoldersLoaded] = useState(false)
   const isMulti = multiple ?? mode !== 'image'
-  const accept = mode === 'svg' ? ACCEPT_SVG : ACCEPT_IMAGE
+  const accept = mode === 'svg' ? ACCEPT_SVG : mode === 'media' ? ACCEPT_MEDIA : ACCEPT_IMAGE
 
   useEffect(() => {
     onFolderChangeRef.current = onFolderChange
@@ -439,6 +460,7 @@ export default function MediaPicker({
         page: nextPage,
         folder_id: activeFolderId,
         hidden: showHiddenAssets,
+        kind: mode === 'media' ? 'media' : 'image',
       })
       if (seq !== loadSeqRef.current) return
       setAssets(res.data ?? [])
@@ -926,20 +948,26 @@ export default function MediaPicker({
         const file = files[index]
         try {
           setOptimizationStatus(`Optimizando ${index + 1} de ${files.length}`)
-          const optimized = await optimizeImageFile(file)
+          const optimized = file.type.startsWith('image/') ? await optimizeImageFile(file) : null
           setOptimizing(false)
           setOptimizationStatus(`Subiendo ${index + 1} de ${files.length}`)
-          const res = await api.mediaAssets.upload({
-            publication_id: publicationId,
-            folder_id: uploadTargetFolderId,
-            file: optimized.displayFile,
-            thumbnail: optimized.thumbnailFile,
-            width: optimized.metadata.optimized_width,
-            height: optimized.metadata.optimized_height,
-            optimization: optimized.metadata,
-          })
+          const res = optimized
+            ? await api.mediaAssets.upload({
+              publication_id: publicationId,
+              folder_id: uploadTargetFolderId,
+              file: optimized.displayFile,
+              thumbnail: optimized.thumbnailFile,
+              width: optimized.metadata.optimized_width,
+              height: optimized.metadata.optimized_height,
+              optimization: optimized.metadata,
+            })
+            : await api.mediaAssets.upload({
+              publication_id: publicationId,
+              folder_id: uploadTargetFolderId,
+              file,
+            })
           const asset = res.data.asset
-          results.push({ file, optimized, asset, url: toCanvasSafeAssetUrl(asset.display_url || asset.optimized_url || res.data.url), reused: res.data.reused })
+          results.push({ file, optimized: optimized ?? undefined, asset, url: toCanvasSafeAssetUrl(asset.display_url || asset.optimized_url || res.data.url), reused: res.data.reused })
           setAssets((prev) => {
             if (prev.some((item) => item.id === asset.id)) return prev
             return [asset, ...prev]

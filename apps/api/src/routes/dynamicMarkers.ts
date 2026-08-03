@@ -143,9 +143,42 @@ type DynamicMarkerCatalogRow = {
   price_minor: number | null
   currency: string | null
   availability: string | null
+  media_json: string
   booking_calendar_id: string | null
   booking_calendar_name: string | null
   updated_at: string
+}
+
+function dynamicMarkerCatalogCoverFromMedia(value: string | null | undefined) {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value || '[]')
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed)) return null
+
+  const items = parsed
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const aOrder = typeof a.item.sort_order === 'number' && Number.isFinite(a.item.sort_order) ? a.item.sort_order : a.index
+      const bOrder = typeof b.item.sort_order === 'number' && Number.isFinite(b.item.sort_order) ? b.item.sort_order : b.index
+      return aOrder - bOrder
+    })
+    .map(({ item }) => item)
+    .filter((item) => (typeof item.visibility === 'string' ? item.visibility : 'public') === 'public')
+
+  const images = items.filter((item) => item.type === 'image' && typeof item.url === 'string' && item.url.trim())
+  const cover = images.find((item) => item.cover === true || item.is_cover === true || item.featured === true) ?? images[0]
+  if (cover) {
+    const thumbnail = typeof cover.thumbnail_url === 'string' ? cover.thumbnail_url.trim() : ''
+    const url = typeof cover.url === 'string' ? cover.url.trim() : ''
+    return thumbnail || url || null
+  }
+
+  const video = items.find((item) => item.type === 'video' && typeof item.poster_url === 'string' && item.poster_url.trim())
+  return video && typeof video.poster_url === 'string' ? video.poster_url.trim() : null
 }
 
 type DynamicMarkerUsagePageRow = {
@@ -1120,6 +1153,7 @@ dynamicMarkers.get('/catalog', async (c) => {
        dm.price_minor,
        dm.currency,
        dm.availability,
+       dm.media_json,
        dm.booking_calendar_id,
        ac.name AS booking_calendar_name,
        dm.updated_at
@@ -1166,7 +1200,7 @@ dynamicMarkers.get('/catalog', async (c) => {
       price_minor: row.price_minor,
       currency: row.currency,
       availability: row.availability,
-      cover_url: row.publication_cover_url || row.first_page_image_url || null,
+      cover_url: dynamicMarkerCatalogCoverFromMedia(row.media_json) || row.publication_cover_url || row.first_page_image_url || null,
       booking_calendar: row.booking_calendar_id
         ? {
           id: row.booking_calendar_id,

@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
-import { api, type DynamicMarker, type DynamicMarkerCatalogItem, type DynamicMarkerStatus } from '../lib/api'
+import { api, type CreateIndependentDynamicMarkerInput, type DynamicMarker, type DynamicMarkerCatalogItem, type DynamicMarkerStatus } from '../lib/api'
 import DynamicMarkerCommercialEditor from '../components/DynamicMarkerCommercialEditor'
+import DynamicMarkerMediaEditor from '../components/DynamicMarkerMediaEditor'
+import DynamicMarkerCreateDialog from '../components/DynamicMarkerCreateDialog'
 import DynamicMarkerUsageDialog from '../components/DynamicMarkerUsageDialog'
 import { canOpenDynamicMarkerUsage, dynamicMarkerUsageBadgeLabel } from '../lib/dynamicMarkerUsageDisplay'
+import {
+  NEW_DYNAMIC_MARKER_BUTTON_LABEL,
+  catalogItemFromIndependentDynamicMarker,
+  dynamicMarkerCreateSuccessPlan,
+  mergeCreatedDynamicMarkerCatalogItem,
+  normalizeDynamicMarkerCreatePublications,
+  type DynamicMarkerCreatePublication,
+} from '../lib/dynamicMarkerCreate'
 import { dynamicMarkerCardToneStyles, dynamicMarkerPreviewToneStyles } from '../lib/dynamicMarkerReuse'
 
 export const DYNAMIC_MARKER_CATALOG_PAGE_SIZE = 10
@@ -19,6 +29,11 @@ type CatalogPage = {
 type CachedDetail = {
   marker: DynamicMarker
   updated_at: string
+}
+
+type CatalogLoadCreatedSelection = {
+  marker: DynamicMarker
+  item: DynamicMarkerCatalogItem
 }
 
 const EMPTY_PAGE: CatalogPage = {
@@ -144,6 +159,10 @@ export default function TenantDynamicMarkers() {
   const [statusMessage, setStatusMessage] = useState('')
   const [reuseSuccess, setReuseSuccess] = useState('')
   const [usageDialogItem, setUsageDialogItem] = useState<DynamicMarkerCatalogItem | null>(null)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [publications, setPublications] = useState<DynamicMarkerCreatePublication[]>([])
+  const [publicationsLoading, setPublicationsLoading] = useState(false)
+  const [publicationsError, setPublicationsError] = useState('')
 
   function clearStatusFeedback() {
     setStatusError('')
@@ -166,11 +185,13 @@ export default function TenantDynamicMarkers() {
     nextPageIndex = 0,
     term = activeQuery,
     statusFilter = status,
+    selectCreated,
   }: {
     cursor?: string | null
     nextPageIndex?: number
     term?: string
     statusFilter?: DynamicMarkerStatus | ''
+    selectCreated?: CatalogLoadCreatedSelection
   } = {}) {
     setLoading(true)
     setError('')
@@ -184,14 +205,26 @@ export default function TenantDynamicMarkers() {
       })
 
       const incoming = response.data ?? []
+      const nextItems = selectCreated
+        ? mergeCreatedDynamicMarkerCatalogItem(incoming, selectCreated.item, PAGE_SIZE)
+        : incoming
       setPage(response.page ?? EMPTY_PAGE)
       setPageIndex(nextPageIndex)
       setCursorHistory((current) => rememberDynamicMarkerCatalogCursor(current, nextPageIndex, cursor))
 
       detailRequestRef.current += 1
-      setItems((current) => replaceDynamicMarkerCatalogResults(current, incoming))
-      setSelectedId('')
-      setDetail(null)
+      setItems((current) => replaceDynamicMarkerCatalogResults(current, nextItems))
+      setSelectedId(selectCreated?.marker.id ?? '')
+      setDetail(selectCreated?.marker ?? null)
+      if (selectCreated) {
+        setDetailCache((current) => ({
+          ...current,
+          [selectCreated.marker.id]: {
+            marker: selectCreated.marker,
+            updated_at: selectCreated.marker.updated_at,
+          },
+        }))
+      }
       setDetailError('')
       setDetailLoading(false)
       setDetailDirty(false)
@@ -215,6 +248,23 @@ export default function TenantDynamicMarkers() {
   useEffect(() => {
     void loadCatalog({ term: '' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    setPublicationsLoading(true)
+    setPublicationsError('')
+
+    api.publications.list()
+      .then((response) => {
+        setPublications(normalizeDynamicMarkerCreatePublications(response.data ?? []))
+      })
+      .catch((err) => {
+        setPublications([])
+        setPublicationsError(err instanceof Error ? err.message : 'No se pudieron cargar las publicaciones.')
+      })
+      .finally(() => {
+        setPublicationsLoading(false)
+      })
   }, [])
 
   useEffect(() => {
@@ -276,6 +326,33 @@ export default function TenantDynamicMarkers() {
       const cursor = getDynamicMarkerCatalogCursor(cursorHistory, pageIndex)
       await loadCatalog({ term: activeQuery, statusFilter: status, cursor, nextPageIndex: pageIndex })
     })()
+  }
+
+  async function createIndependentMarker(input: CreateIndependentDynamicMarkerInput) {
+    const response = await api.dynamicMarkers.createIndependent(input)
+    const marker = response.data
+    const publication = publications.find((item) => item.id === marker.publication_id)
+    const createdItem = catalogItemFromIndependentDynamicMarker(marker, publication?.title ?? null)
+    const plan = dynamicMarkerCreateSuccessPlan(marker.id)
+
+    setCreateOpen(false)
+    setQuery(plan.activeQuery)
+    setActiveQuery(plan.activeQuery)
+    setStatus(plan.status as DynamicMarkerStatus | '')
+    setCursorHistory(plan.cursorHistory)
+    clearStatusFeedback()
+    setReuseSuccess('')
+
+    await loadCatalog({
+      term: plan.activeQuery,
+      statusFilter: plan.status as DynamicMarkerStatus | '',
+      cursor: null,
+      nextPageIndex: plan.pageIndex,
+      selectCreated: {
+        marker,
+        item: createdItem,
+      },
+    })
   }
 
   function goToPreviousPage() {
@@ -496,14 +573,24 @@ export default function TenantDynamicMarkers() {
           <p style={s.subtitle}>Consulta central de fichas interactivas existentes del tenant.</p>
         </div>
 
-        <button
-          type="button"
-          style={s.refresh}
-          disabled={loading}
-          onClick={refreshCatalog}
-        >
-          {loading ? 'Actualizando...' : 'Actualizar'}
-        </button>
+        <div style={s.headerActions}>
+          <button
+            type="button"
+            style={s.primaryAction}
+            onClick={() => setCreateOpen(true)}
+          >
+            {NEW_DYNAMIC_MARKER_BUTTON_LABEL}
+          </button>
+
+          <button
+            type="button"
+            style={s.refresh}
+            disabled={loading}
+            onClick={refreshCatalog}
+          >
+            {loading ? 'Actualizando...' : 'Actualizar'}
+          </button>
+        </div>
       </header>
 
       <section style={s.toolbar}>
@@ -682,6 +769,16 @@ export default function TenantDynamicMarkers() {
           onClose={() => setUsageDialogItem(null)}
         />
       )}
+
+      {createOpen && (
+        <DynamicMarkerCreateDialog
+          publications={publications}
+          publicationsLoading={publicationsLoading}
+          publicationsError={publicationsError}
+          onClose={() => setCreateOpen(false)}
+          onCreate={createIndependentMarker}
+        />
+      )}
     </div>
   )
 }
@@ -726,6 +823,10 @@ function DetailPanel({
   const marker = detail
   const [reuseOpen, setReuseOpen] = useState(false)
   const [reuseBlocked, setReuseBlocked] = useState('')
+  const [commercialDirty, setCommercialDirty] = useState(false)
+  const [mediaDirty, setMediaDirty] = useState(false)
+  const commercialFlushRef = useRef<(() => Promise<boolean>) | null>(null)
+  const mediaFlushRef = useRef<(() => Promise<boolean>) | null>(null)
   const currentPrice = marker ? formatMoney(marker.price_minor, marker.currency) : ''
   const canLocate = Boolean(item.page_id && item.target_object_id)
   const hasCommercialData = Boolean(
@@ -749,6 +850,19 @@ function DetailPanel({
     if (reuseOpen) setReuseOpen(false)
     setReuseBlocked('Guarda o descarta los cambios comerciales antes de reutilizar datos.')
   }, [detailDirty, reuseOpen])
+
+  useEffect(() => {
+    onDirtyChange(commercialDirty || mediaDirty)
+  }, [commercialDirty, mediaDirty, onDirtyChange])
+
+  useEffect(() => {
+    onRegisterFlush(async () => {
+      const commercialOk = commercialFlushRef.current ? await commercialFlushRef.current() : true
+      const mediaOk = mediaFlushRef.current ? await mediaFlushRef.current() : true
+      return commercialOk && mediaOk
+    })
+    return () => onRegisterFlush(null)
+  }, [onRegisterFlush])
 
   return (
     <aside style={s.detailPanel}>
@@ -828,9 +942,20 @@ function DetailPanel({
             <DynamicMarkerCommercialEditor
               key={marker.id}
               marker={marker}
-              onDirtyChange={onDirtyChange}
+              onDirtyChange={setCommercialDirty}
               onSaved={onSaved}
-              onRegisterFlush={onRegisterFlush}
+              onRegisterFlush={(flush) => {
+                commercialFlushRef.current = flush
+              }}
+            />
+            <DynamicMarkerMediaEditor
+              key={`${marker.id}:media`}
+              marker={marker}
+              onDirtyChange={setMediaDirty}
+              onSaved={onSaved}
+              onRegisterFlush={(flush) => {
+                mediaFlushRef.current = flush
+              }}
             />
           </section>
 
@@ -1180,8 +1305,10 @@ function DetailRow({
 const s: Record<string, CSSProperties> = {
   wrap: { maxWidth: 1280, margin: '0 auto', padding: 24 },
   header: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 18 },
+  headerActions: { display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' },
   title: { margin: 0, color: '#111827', fontSize: 25 },
   subtitle: { margin: '5px 0 0', color: '#6b7280', fontSize: 13, lineHeight: 1.5 },
+  primaryAction: { border: 'none', borderRadius: 8, background: '#4f46e5', color: '#fff', padding: '9px 13px', fontSize: 13, fontWeight: 850, cursor: 'pointer' },
   refresh: { border: '1px solid #d1d5db', borderRadius: 8, background: '#fff', color: '#374151', padding: '9px 12px', fontSize: 13, fontWeight: 800, cursor: 'pointer' },
   toolbar: { border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', padding: 14, display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 },
   searchRow: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 },

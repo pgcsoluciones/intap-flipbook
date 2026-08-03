@@ -16,6 +16,8 @@ async function loadPaginationHelpers() {
       build.onResolve({ filter: /^react\/jsx-runtime$/ }, () => ({ path: 'react-jsx-runtime', namespace: 'stub' }))
       build.onResolve({ filter: /^react-router-dom$/ }, () => ({ path: 'react-router-dom', namespace: 'stub' }))
       build.onResolve({ filter: /\/components\/DynamicMarkerCommercialEditor$/ }, () => ({ path: 'commercial-editor', namespace: 'stub' }))
+      build.onResolve({ filter: /\/components\/DynamicMarkerMediaEditor$/ }, () => ({ path: 'media-editor', namespace: 'stub' }))
+      build.onResolve({ filter: /\/components\/DynamicMarkerCreateDialog$/ }, () => ({ path: 'create-dialog', namespace: 'stub' }))
       build.onResolve({ filter: /\/components\/DynamicMarkerUsageDialog$/ }, () => ({ path: 'usage-dialog', namespace: 'stub' }))
       build.onResolve({ filter: /\/lib\/dynamicMarkerUsageDisplay$/ }, () => ({ path: 'usage-display', namespace: 'stub' }))
       build.onResolve({ filter: /\/lib\/api$/ }, () => ({ path: 'api', namespace: 'stub' }))
@@ -47,8 +49,14 @@ async function loadPaginationHelpers() {
         if (path === 'commercial-editor') {
           return { contents: 'export default function DynamicMarkerCommercialEditor() { return null }', loader: 'js' }
         }
+        if (path === 'media-editor') {
+          return { contents: 'export default function DynamicMarkerMediaEditor() { return null }', loader: 'js' }
+        }
         if (path === 'usage-dialog') {
           return { contents: 'export default function DynamicMarkerUsageDialog() { return null }', loader: 'js' }
+        }
+        if (path === 'create-dialog') {
+          return { contents: 'export default function DynamicMarkerCreateDialog() { return null }', loader: 'js' }
         }
         if (path === 'usage-display') {
           return {

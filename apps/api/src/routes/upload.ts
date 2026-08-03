@@ -1063,6 +1063,10 @@ upload.get('/media-assets', async (c) => {
   const hiddenOnly = c.req.query('hidden') === 'true'
   const needsThumbnail = c.req.query('needs_thumbnail') === 'true'
   const needsOptimization = c.req.query('needs_optimization') === 'true'
+  const assetKind = (c.req.query('kind') ?? 'image').trim()
+  if (assetKind && !['image', 'media'].includes(assetKind)) {
+    return c.json({ success: false, error: 'kind debe ser image o media' }, 400)
+  }
   const limit = boundedMediaAssetLimit(c.req.query('limit') ?? null)
   const pageNumber = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1)
   const offset = (pageNumber - 1) * limit
@@ -1072,7 +1076,9 @@ upload.get('/media-assets', async (c) => {
     'publication_id = ?',
     'storage_bucket = ?',
     'deleted_at IS NULL',
-    "mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif')",
+    assetKind === 'media'
+      ? "mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif', 'audio/mpeg', 'audio/mp3', 'audio/ogg', 'audio/wav', 'audio/x-wav', 'audio/mp4', 'audio/aac', 'video/mp4', 'video/webm', 'video/ogg')"
+      : "mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif')",
   ]
   const params: unknown[] = [userId, publicationId, 'MEDIA']
   conditions.push(
