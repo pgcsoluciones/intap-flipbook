@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { api, type DynamicMarkerCatalogItem } from '../lib/api'
+import {
+  api,
+  type CreateIndependentDynamicMarkerInput,
+  type DynamicMarkerCatalogItem,
+} from '../lib/api'
+import DynamicMarkerCreateDialog from './DynamicMarkerCreateDialog'
 import DynamicMarkerUsageDialog from './DynamicMarkerUsageDialog'
 import { canOpenDynamicMarkerUsage, dynamicMarkerUsageBadgeLabel } from '../lib/dynamicMarkerUsageDisplay'
 import DynamicMarkerReuseDialog from './DynamicMarkerReuseDialog'
@@ -11,6 +16,10 @@ import {
   getDynamicMarkerSelectionDecision,
   type DynamicMarkerCloneTarget,
 } from '../lib/dynamicMarkerReuse'
+import {
+  normalizeDynamicMarkerCreatePublications,
+  type DynamicMarkerCreatePublication,
+} from '../lib/dynamicMarkerCreate'
 
 export const DYNAMIC_MARKER_SELECTOR_PAGE_SIZE = 5
 const PAGE_SIZE = DYNAMIC_MARKER_SELECTOR_PAGE_SIZE
@@ -118,6 +127,10 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
   const [reuseDialogItem, setReuseDialogItem] = useState<DynamicMarkerCatalogItem | null>(null)
   const [cloneError, setCloneError] = useState('')
   const [cloning, setCloning] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createPublications, setCreatePublications] = useState<DynamicMarkerCreatePublication[]>([])
+  const [createPublicationsLoading, setCreatePublicationsLoading] = useState(false)
+  const [createPublicationsError, setCreatePublicationsError] = useState('')
 
   async function load({
     cursor = null,
@@ -164,6 +177,9 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
     setCursorHistory(resetDynamicMarkerSelectorCursorHistory())
     setSelectedMarker(null)
     setLoaded(false)
+    setCreateOpen(false)
+    setCreatePublications([])
+    setCreatePublicationsError('')
     void load({ term: '', cursor: null, nextPageIndex: 0 })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicationId])
@@ -271,6 +287,56 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
     setCloneError('')
   }
 
+  async function openCreateDialog() {
+    setCreateOpen(true)
+    setCreatePublicationsError('')
+
+    if (createPublications.length || createPublicationsLoading) return
+
+    setCreatePublicationsLoading(true)
+    try {
+      const response = await api.publications.list()
+      const normalized = normalizeDynamicMarkerCreatePublications(response.data ?? [])
+      const scoped = publicationId
+        ? normalized.filter((publication) => publication.id === publicationId)
+        : normalized
+
+      setCreatePublications(scoped)
+      if (publicationId && !scoped.length) {
+        setCreatePublicationsError('No pudimos identificar la publicación actual.')
+      }
+    } catch (err) {
+      setCreatePublications([])
+      setCreatePublicationsError(
+        err instanceof Error ? err.message : 'No se pudieron cargar las publicaciones.',
+      )
+    } finally {
+      setCreatePublicationsLoading(false)
+    }
+  }
+
+  async function createAndSelectMarker(input: CreateIndependentDynamicMarkerInput) {
+    const response = await api.dynamicMarkers.createIndependent(input)
+    const marker = response.data
+
+    onChange(marker.id)
+    setSelectedMarker({
+      id: marker.id,
+      name: marker.name,
+      reference: marker.reference,
+    })
+    setCreateOpen(false)
+    setQuery('')
+    setActiveQuery('')
+    setCursorHistory(resetDynamicMarkerSelectorCursorHistory())
+
+    await load({
+      term: '',
+      cursor: null,
+      nextPageIndex: 0,
+    })
+  }
+
   return (
     <div style={styles.wrap}>
       <button
@@ -290,6 +356,14 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
           {selectedMarker.reference ? ` · Ref. ${selectedMarker.reference}` : ''}
         </div>
       )}
+
+      <button
+        type="button"
+        style={styles.createBtn}
+        onClick={() => void openCreateDialog()}
+      >
+        + Nueva ficha
+      </button>
 
       <div style={styles.searchRow}>
         <input
@@ -402,12 +476,34 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
           onCancel={closeReuseDialog}
         />
       )}
+
+      {createOpen && (
+        <DynamicMarkerCreateDialog
+          publications={createPublications}
+          publicationsLoading={createPublicationsLoading}
+          publicationsError={createPublicationsError}
+          preferredPublicationId={publicationId}
+          onClose={() => setCreateOpen(false)}
+          onCreate={createAndSelectMarker}
+        />
+      )}
     </div>
   )
 }
 
 const styles: Record<string, CSSProperties> = {
   wrap: { display: 'flex', flexDirection: 'column', gap: 10 },
+  createBtn: {
+    width: '100%',
+    border: '1px solid #4f46e5',
+    borderRadius: 8,
+    background: '#eef2ff',
+    color: '#3730a3',
+    padding: '9px 12px',
+    fontSize: 12,
+    fontWeight: 850,
+    cursor: 'pointer',
+  },
   searchRow: { display: 'flex', gap: 8 },
   input: { flex: 1, minWidth: 0, border: '1px solid #d1d5db', borderRadius: 8, padding: '9px 10px', fontSize: 13 },
   searchBtn: { border: '1px solid #4f46e5', borderRadius: 8, background: '#4f46e5', color: '#fff', padding: '0 12px', fontWeight: 800, cursor: 'pointer' },

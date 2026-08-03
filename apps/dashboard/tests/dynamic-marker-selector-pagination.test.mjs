@@ -15,6 +15,7 @@ async function loadSelectorHelpers() {
       build.onResolve({ filter: /^react$/ }, () => ({ path: 'react', namespace: 'stub' }))
       build.onResolve({ filter: /^react\/jsx-runtime$/ }, () => ({ path: 'react-jsx-runtime', namespace: 'stub' }))
       build.onResolve({ filter: /\/DynamicMarkerUsageDialog$/ }, () => ({ path: 'usage-dialog', namespace: 'stub' }))
+      build.onResolve({ filter: /\/DynamicMarkerCreateDialog$/ }, () => ({ path: 'create-dialog', namespace: 'stub' }))
       build.onResolve({ filter: /\/lib\/dynamicMarkerUsageDisplay$/ }, () => ({ path: 'usage-display', namespace: 'stub' }))
       build.onResolve({ filter: /\/lib\/api$/ }, () => ({ path: 'api', namespace: 'stub' }))
 
@@ -41,6 +42,9 @@ async function loadSelectorHelpers() {
         }
         if (path === 'usage-dialog') {
           return { contents: 'export default function DynamicMarkerUsageDialog() { return null }', loader: 'js' }
+        }
+        if (path === 'create-dialog') {
+          return { contents: 'export default function DynamicMarkerCreateDialog() { return null }', loader: 'js' }
         }
         if (path === 'usage-display') {
           return {
