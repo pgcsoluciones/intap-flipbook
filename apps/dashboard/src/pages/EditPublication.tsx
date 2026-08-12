@@ -6506,14 +6506,28 @@ function PropsPanel({
       )}
       {insTab === 'dynamic' && (
       <div style={s.props}>
-        <DynamicMarkerPanel
-          publicationId={publicationId}
-          pageId={pageId}
-          selectedObject={obj}
-          targetKind={kind}
-          ensureElementId={ensureElementId}
-          openImageBank={openDynamicMarkerImagePicker}
-        />
+        {kind === DYNAMIC_MARKER_BUTTON_KIND ? (
+          <DynamicMarkerSelector
+            publicationId={publicationId}
+            value={obj.data?.action?.type === 'open_dynamic_marker' ? obj.data.action.marker_id : undefined}
+            cloneTarget={buildDynamicMarkerCloneTarget(publicationId, pageId, obj, DYNAMIC_MARKER_BUTTON_KIND)}
+            onChange={(markerId) => {
+              obj.data = setDynamicMarkerButtonMarker(obj.data, markerId ?? undefined)
+              rebuildDynamicMarkerButtonGroup(obj)
+              canvas?.requestRenderAll()
+              onChange()
+            }}
+          />
+        ) : (
+          <DynamicMarkerPanel
+            publicationId={publicationId}
+            pageId={pageId}
+            selectedObject={obj}
+            targetKind={kind}
+            ensureElementId={ensureElementId}
+            openImageBank={openDynamicMarkerImagePicker}
+          />
+        )}
       </div>
       )}
     </div>

@@ -48,3 +48,24 @@ test('ficha creada refresca el selector desde la primera página', async () => {
   assert.match(source, /cursor: null/)
   assert.match(source, /nextPageIndex: 0/)
 })
+
+test('pestaña Fichas interactivas usa selector para Botón de ficha y conserva panel para otros objetos', async () => {
+  const editorPath = new URL(
+    '../src/pages/EditPublication.tsx',
+    import.meta.url,
+  )
+  const source = await readFile(editorPath, 'utf8')
+
+  assert.match(
+    source,
+    /insTab === 'dynamic'[\s\S]*?kind === DYNAMIC_MARKER_BUTTON_KIND \? \([\s\S]*?<DynamicMarkerSelector/,
+  )
+  assert.match(
+    source,
+    /onChange=\{\(markerId\) => \{[\s\S]*?setDynamicMarkerButtonMarker\(obj\.data, markerId \?\? undefined\)/,
+  )
+  assert.match(
+    source,
+    /kind === DYNAMIC_MARKER_BUTTON_KIND \? \([\s\S]*?: \([\s\S]*?<DynamicMarkerPanel/,
+  )
+})
