@@ -146,3 +146,42 @@ test('catalogo publicado toma cover_url desde media_json antes que portada de pu
   assert.match(source, /dm\.media_json/)
   assert.match(source, /dynamicMarkerCatalogCoverFromMedia\(row\.media_json\) \|\| row\.publication_cover_url/)
 })
+
+test('ficha vinculada que no carga nunca ofrece crear o activar otra ficha directa', async () => {
+  const source = await readFile(
+    'apps/dashboard/src/components/DynamicMarkerPanel.tsx',
+    'utf8',
+  )
+
+  assert.match(
+    source,
+    /linkedSelection\.kind === 'linked-marker' && !marker/,
+  )
+
+  assert.match(
+    source,
+    /El vínculo existente se mantiene\. No crearemos otra ficha encima de esta asociación\./,
+  )
+
+  assert.match(
+    source,
+    /Reintentar cargar ficha/,
+  )
+})
+
+test('activar ficha explica cuando falta el nombre requerido', async () => {
+  const source = await readFile(
+    'apps/dashboard/src/components/DynamicMarkerPanel.tsx',
+    'utf8',
+  )
+
+  assert.match(
+    source,
+    /Para activar esta ficha, primero agrega un nombre en “Información principal”\./,
+  )
+
+  assert.match(
+    source,
+    /disabled=\{saving \|\| !canActivate\}/,
+  )
+})

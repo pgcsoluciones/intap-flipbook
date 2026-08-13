@@ -541,6 +541,7 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
     next_cursor: null,
   })
   const [calendarMessage, setCalendarMessage] = useState('')
+  const [linkedLoadRetry, setLinkedLoadRetry] = useState(0)
 
   const canUseApi = !!publicationId && !!pageId
   const canActivate = !!form.name.trim()
@@ -609,7 +610,7 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
       })
 
     return () => { cancelled = true }
-  }, [canUseApi, linkedSelection, pageId, publicationId, selectedObject])
+  }, [canUseApi, linkedLoadRetry, linkedSelection, pageId, publicationId, selectedObject])
 
   useEffect(() => {
     let cancelled = false
@@ -1035,6 +1036,27 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
   }
 
   if (loading) return <div style={styles.empty}>Cargando ficha...</div>
+
+  if (linkedSelection.kind === 'linked-marker' && !marker) {
+    return (
+      <div style={styles.stack}>
+        <div style={styles.error}>
+          {error || 'La ficha está vinculada, pero no pudimos cargar su información.'}
+        </div>
+        <p style={styles.copy}>
+          El vínculo existente se mantiene. No crearemos otra ficha encima de esta asociación.
+        </p>
+        <button
+          type="button"
+          style={styles.secondaryBtn}
+          disabled={loading}
+          onClick={() => setLinkedLoadRetry((current) => current + 1)}
+        >
+          {loading ? 'Reintentando...' : 'Reintentar cargar ficha'}
+        </button>
+      </div>
+    )
+  }
 
   if (!targetObjectId || !marker) {
     return (
@@ -1720,9 +1742,21 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
             Desactivar
           </button>
         ) : (
-          <button type="button" style={{ ...styles.primaryBtn, opacity: canActivate && !saving ? 1 : 0.45 }} disabled={saving || !canActivate} onClick={() => setStatus('active')}>
-            Activar ficha
-          </button>
+          <div style={{ width: '100%' }}>
+            {!canActivate && (
+              <div style={styles.requirementWarning}>
+                Para activar esta ficha, primero agrega un nombre en “Información principal”.
+              </div>
+            )}
+            <button
+              type="button"
+              style={{ ...styles.primaryBtn, opacity: canActivate && !saving ? 1 : 0.45 }}
+              disabled={saving || !canActivate}
+              onClick={() => setStatus('active')}
+            >
+              Activar ficha
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -1762,6 +1796,16 @@ const styles: Record<string, React.CSSProperties> = {
   stack: { display: 'flex', flexDirection: 'column', gap: 14 },
   empty: { fontSize: 12, color: '#9ca3af', lineHeight: 1.5, padding: '8px 0' },
   copy: { fontSize: 12, color: '#6b7280', lineHeight: 1.5, margin: 0 },
+  requirementWarning: {
+    border: '1px solid #fde68a',
+    borderRadius: 8,
+    background: '#fffbeb',
+    color: '#92400e',
+    padding: '9px 10px',
+    fontSize: 12,
+    lineHeight: 1.45,
+    marginBottom: 8,
+  },
   headerRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   badge: { display: 'inline-flex', alignItems: 'center', border: '1px solid', borderRadius: 999, padding: '3px 8px', fontSize: 11, fontWeight: 700 },
   field: { display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 },
