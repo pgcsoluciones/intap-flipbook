@@ -6400,7 +6400,16 @@ function PropsPanel({
 
         {/* ── BOTÓN: estilo visual + acción ── */}
         {kind === DYNAMIC_MARKER_BUTTON_KIND && (
-          <DynamicMarkerButtonProps obj={obj} canvas={canvas} publicationId={publicationId} pageId={pageId} onChange={onChange} />
+          <DynamicMarkerButtonProps
+            obj={obj}
+            canvas={canvas}
+            publicationId={publicationId}
+            pageId={pageId}
+            onChange={() => {
+              onChange()
+              setTick((t) => t + 1)
+            }}
+          />
         )}
 
         {kind === 'button' && (
@@ -6517,6 +6526,7 @@ function PropsPanel({
                 rebuildDynamicMarkerButtonGroup(obj)
                 canvas?.requestRenderAll()
                 onChange()
+                setTick((t) => t + 1)
               }}
             />
 

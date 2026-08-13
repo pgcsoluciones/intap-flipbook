@@ -87,3 +87,29 @@ test('Botón de ficha mantiene selector y recupera editor completo cuando existe
     /obj\.data\?\.action\?\.type === 'open_dynamic_marker' && obj\.data\.action\.marker_id[\s\S]*?<DynamicMarkerPanel/,
   )
 })
+
+test('cambiar ficha desde pestaña Fichas interactivas refresca PropsPanel', async () => {
+  const editorPath = new URL(
+    '../src/pages/EditPublication.tsx',
+    import.meta.url,
+  )
+  const source = await readFile(editorPath, 'utf8')
+
+  assert.match(
+    source,
+    /onChange=\{\(markerId\) => \{[\s\S]*?setDynamicMarkerButtonMarker[\s\S]*?onChange\(\)[\s\S]*?setTick\(\(t\) => t \+ 1\)/,
+  )
+})
+
+test('cambiar ficha desde Propiedades también refresca PropsPanel', async () => {
+  const editorPath = new URL(
+    '../src/pages/EditPublication.tsx',
+    import.meta.url,
+  )
+  const source = await readFile(editorPath, 'utf8')
+
+  assert.match(
+    source,
+    /<DynamicMarkerButtonProps[\s\S]*?onChange=\{\(\) => \{[\s\S]*?onChange\(\)[\s\S]*?setTick\(\(t\) => t \+ 1\)/,
+  )
+})
