@@ -6507,17 +6507,33 @@ function PropsPanel({
       {insTab === 'dynamic' && (
       <div style={s.props}>
         {kind === DYNAMIC_MARKER_BUTTON_KIND ? (
-          <DynamicMarkerSelector
-            publicationId={publicationId}
-            value={obj.data?.action?.type === 'open_dynamic_marker' ? obj.data.action.marker_id : undefined}
-            cloneTarget={buildDynamicMarkerCloneTarget(publicationId, pageId, obj, DYNAMIC_MARKER_BUTTON_KIND)}
-            onChange={(markerId) => {
-              obj.data = setDynamicMarkerButtonMarker(obj.data, markerId ?? undefined)
-              rebuildDynamicMarkerButtonGroup(obj)
-              canvas?.requestRenderAll()
-              onChange()
-            }}
-          />
+          <>
+            <DynamicMarkerSelector
+              publicationId={publicationId}
+              value={obj.data?.action?.type === 'open_dynamic_marker' ? obj.data.action.marker_id : undefined}
+              cloneTarget={buildDynamicMarkerCloneTarget(publicationId, pageId, obj, DYNAMIC_MARKER_BUTTON_KIND)}
+              onChange={(markerId) => {
+                obj.data = setDynamicMarkerButtonMarker(obj.data, markerId ?? undefined)
+                rebuildDynamicMarkerButtonGroup(obj)
+                canvas?.requestRenderAll()
+                onChange()
+              }}
+            />
+
+            {obj.data?.action?.type === 'open_dynamic_marker' && obj.data.action.marker_id && (
+              <>
+                <div style={{ borderTop: '1px solid #e5e7eb', margin: '8px 0 2px' }} />
+                <DynamicMarkerPanel
+                  publicationId={publicationId}
+                  pageId={pageId}
+                  selectedObject={obj}
+                  targetKind={kind}
+                  ensureElementId={ensureElementId}
+                  openImageBank={openDynamicMarkerImagePicker}
+                />
+              </>
+            )}
+          </>
         ) : (
           <DynamicMarkerPanel
             publicationId={publicationId}

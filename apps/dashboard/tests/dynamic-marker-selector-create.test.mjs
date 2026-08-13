@@ -69,3 +69,21 @@ test('pestaña Fichas interactivas usa selector para Botón de ficha y conserva 
     /kind === DYNAMIC_MARKER_BUTTON_KIND \? \([\s\S]*?: \([\s\S]*?<DynamicMarkerPanel/,
   )
 })
+
+test('Botón de ficha mantiene selector y recupera editor completo cuando existe marker_id', async () => {
+  const editorPath = new URL(
+    '../src/pages/EditPublication.tsx',
+    import.meta.url,
+  )
+  const source = await readFile(editorPath, 'utf8')
+
+  assert.match(
+    source,
+    /kind === DYNAMIC_MARKER_BUTTON_KIND \? \([\s\S]*?<DynamicMarkerSelector/,
+  )
+
+  assert.match(
+    source,
+    /obj\.data\?\.action\?\.type === 'open_dynamic_marker' && obj\.data\.action\.marker_id[\s\S]*?<DynamicMarkerPanel/,
+  )
+})
