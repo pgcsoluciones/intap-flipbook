@@ -131,6 +131,7 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
   const [createPublications, setCreatePublications] = useState<DynamicMarkerCreatePublication[]>([])
   const [createPublicationsLoading, setCreatePublicationsLoading] = useState(false)
   const [createPublicationsError, setCreatePublicationsError] = useState('')
+  const [pickerOpen, setPickerOpen] = useState(!value)
 
   async function load({
     cursor = null,
@@ -193,6 +194,10 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
     if (match) setSelectedMarker(match)
   }, [items, value])
 
+  useEffect(() => {
+    setPickerOpen(!value)
+  }, [value])
+
   function runSearch() {
     const term = query.trim()
     setActiveQuery(term)
@@ -246,6 +251,7 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
     if (decision === 'select') {
       onChange(item.id)
       setSelectedMarker(item)
+      setPickerOpen(false)
       return
     }
     setCloneError('')
@@ -256,6 +262,7 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
     if (!reuseDialogItem) return
     onChange(reuseDialogItem.id)
     setSelectedMarker(reuseDialogItem)
+    setPickerOpen(false)
     setReuseDialogItem(null)
     setCloneError('')
   }
@@ -270,6 +277,7 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
       const response = await api.dynamicMarkers.clone(reuseDialogItem.id, buildDynamicMarkerCloneBody(target))
       onChange(response.data.id)
       setSelectedMarker(selectedMarkerFromClone(response.data, reuseDialogItem))
+      setPickerOpen(false)
       setReuseDialogItem(null)
       setCloneError('')
       refreshAfterClone()
@@ -320,6 +328,7 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
     const marker = response.data
 
     onChange(marker.id)
+    setPickerOpen(false)
     setSelectedMarker({
       id: marker.id,
       name: marker.name,
@@ -357,6 +366,27 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
         </div>
       )}
 
+      {value && (
+        <div style={styles.pickerActions}>
+          <button
+            type="button"
+            style={styles.compactBtn}
+            onClick={() => setPickerOpen((current) => !current)}
+          >
+            {pickerOpen ? 'Ocultar opciones' : 'Cambiar ficha'}
+          </button>
+          <button
+            type="button"
+            style={styles.unlinkBtn}
+            onClick={() => onChange(null)}
+          >
+            Desvincular
+          </button>
+        </div>
+      )}
+
+      {pickerOpen && (
+        <>
       <button
         type="button"
         style={styles.createBtn}
@@ -409,6 +439,13 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
                   <span style={styles.meta}>
                     {item.publication_title || 'Publicación'} · {item.page_number ? `Página ${item.page_number}` : 'Página sin identificar'}
                   </span>
+                  <span style={styles.assignLabel}>
+                    {selectedItem
+                      ? 'Ficha seleccionada'
+                      : inUse
+                        ? 'Elegir cómo reutilizar'
+                        : 'Asignar esta ficha'}
+                  </span>
                 </button>
                 <span style={styles.usageRow}>
                   <span style={{ ...styles.usageBadge, ...(item.is_in_use ? styles.usageBadgeActive : styles.usageBadgeIdle) }}>
@@ -455,6 +492,9 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
         </div>
       )}
 
+        </>
+      )}
+
       {usageDialogItem && (
         <DynamicMarkerUsageDialog
           markerId={usageDialogItem.id}
@@ -493,6 +533,42 @@ export default function DynamicMarkerSelector({ value, publicationId, cloneTarge
 
 const styles: Record<string, CSSProperties> = {
   wrap: { display: 'flex', flexDirection: 'column', gap: 10 },
+  pickerActions: {
+    display: 'grid',
+    gridTemplateColumns: '1fr auto',
+    gap: 7,
+  },
+  compactBtn: {
+    border: '1px solid #c7d2fe',
+    borderRadius: 8,
+    background: '#eef2ff',
+    color: '#3730a3',
+    padding: '8px 10px',
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
+  unlinkBtn: {
+    border: '1px solid #e5e7eb',
+    borderRadius: 8,
+    background: '#fff',
+    color: '#6b7280',
+    padding: '8px 10px',
+    fontSize: 12,
+    fontWeight: 750,
+    cursor: 'pointer',
+  },
+  assignLabel: {
+    display: 'inline-flex',
+    alignSelf: 'flex-start',
+    marginTop: 3,
+    borderRadius: 999,
+    background: '#eef2ff',
+    color: '#3730a3',
+    padding: '3px 7px',
+    fontSize: 10.5,
+    fontWeight: 850,
+  },
   createBtn: {
     width: '100%',
     border: '1px solid #4f46e5',

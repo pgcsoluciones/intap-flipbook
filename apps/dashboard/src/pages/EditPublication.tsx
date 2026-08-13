@@ -963,7 +963,7 @@ function createDynamicMarkerButtonChildren(style: DynamicMarkerButtonStyle) {
   return objects
 }
 
-function createDynamicMarkerButtonFabricGroup(style: DynamicMarkerButtonStyle) {
+function createDynamicMarkerButtonFabricGroup(style: DynamicMarkerButtonStyle, elementId?: string) {
   return new fabric.Group(createDynamicMarkerButtonChildren(style), {
     left: 0,
     top: 0,
@@ -971,7 +971,10 @@ function createDynamicMarkerButtonFabricGroup(style: DynamicMarkerButtonStyle) {
     evented: true,
     objectCaching: false,
     noScaleCache: true,
-    data: createDynamicMarkerButtonData(style),
+    data: {
+      ...createDynamicMarkerButtonData(style),
+      ...(elementId ? { elementId } : {}),
+    },
   })
 }
 
@@ -3160,7 +3163,10 @@ export default function EditPublication() {
     const c = fabricRef.current
     if (!c) return
     const style = createDynamicMarkerButtonStyle(preset.presetId)
-    const button = createDynamicMarkerButtonFabricGroup(style)
+    const button = createDynamicMarkerButtonFabricGroup(
+      style,
+      createFabricElementId(),
+    )
     const zoom = c.getZoom?.() || 1
     const vpt = c.viewportTransform || [1, 0, 0, 1, 0, 0]
     const center = {
@@ -6100,6 +6106,20 @@ function PropsPanel({
     setData({ elementId })
     return elementId
   }
+  React.useEffect(() => {
+    if (
+      kind === DYNAMIC_MARKER_BUTTON_KIND
+      && !(obj as any).data?.elementId
+    ) {
+      ;(obj as any).data = {
+        ...((obj as any).data ?? {}),
+        elementId: createFabricElementId(),
+      }
+      onChange()
+      setTick((t) => t + 1)
+    }
+  }, [kind, obj, onChange])
+
   const [closeWarning, setCloseWarning] = React.useState('')
 
   const fill = typeof obj.fill === 'string' ? obj.fill : '#4f46e5'

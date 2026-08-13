@@ -169,19 +169,54 @@ test('ficha vinculada que no carga nunca ofrece crear o activar otra ficha direc
   )
 })
 
-test('activar ficha explica cuando falta el nombre requerido', async () => {
+test('activar ficha explica dentro de Preparar ficha cuando falta el nombre requerido', async () => {
   const source = await readFile(
     'apps/dashboard/src/components/DynamicMarkerPanel.tsx',
     'utf8',
   )
 
-  assert.match(
-    source,
-    /Para activar esta ficha, primero agrega un nombre en “Información principal”\./,
-  )
+  assert.match(source, /<Accordion title="Preparar ficha" open>/)
+  assert.match(source, /Requisitos para activar/)
+  assert.match(source, /Agrega un nombre a la ficha/)
+  assert.match(source, /Falta 1 paso para poder activar esta ficha\./)
 
   assert.match(
     source,
     /disabled=\{saving \|\| !canActivate\}/,
   )
+})
+
+
+test('ficha vinculada y cargada no exige elementId para mostrar configuración', async () => {
+  const source = await readFile(
+    'apps/dashboard/src/components/DynamicMarkerPanel.tsx',
+    'utf8',
+  )
+
+  assert.doesNotMatch(
+    source,
+    /if\s*\(\s*!targetObjectId\s*\|\|\s*!marker\s*\)/,
+  )
+
+  assert.match(
+    source,
+    /if\s*\(\s*!marker\s*\)\s*\{/,
+  )
+})
+
+test('activación está dentro de Preparar ficha y explica requisitos', async () => {
+  const source = await readFile(
+    'apps/dashboard/src/components/DynamicMarkerPanel.tsx',
+    'utf8',
+  )
+
+  const prepare = source.indexOf('<Accordion title="Preparar ficha" open>')
+  const price = source.indexOf('<Accordion title="Precio y presentación">')
+  const activate = source.indexOf('Requisitos para activar')
+  const media = source.indexOf('Multimedia · ${form.media.length}')
+  const offer = source.indexOf('<Accordion title="Oferta limitada">')
+
+  assert.ok(prepare >= 0)
+  assert.ok(activate > prepare && activate < price)
+  assert.ok(media > price && media < offer)
 })

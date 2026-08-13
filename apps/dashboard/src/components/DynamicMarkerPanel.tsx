@@ -1058,7 +1058,7 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
     )
   }
 
-  if (!targetObjectId || !marker) {
+  if (!marker) {
     return (
       <div style={styles.stack}>
         <p style={styles.copy}>
@@ -1115,11 +1115,11 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
         </button>
       </div>
 
-      <Accordion title="Información principal" open>
+      <Accordion title="Preparar ficha" open>
         <div style={styles.headerRow}>
           <span style={{ ...styles.badge, ...statusStyle(marker.status) }}>{statusLabel(marker.status)}</span>
         </div>
-        <Field label="Nombre de la ficha">
+        <Field label="Nombre de la ficha *">
           <input style={styles.input} value={form.name} onChange={(e) => patchForm({ name: e.target.value })} placeholder="Ej: Vaso térmico personalizado" />
         </Field>
         <Field label="Descripción">
@@ -1138,9 +1138,65 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
             ))}
           </select>
         </Field>
+
+        <div style={styles.readinessBox}>
+          <div style={styles.readinessTitle}>Requisitos para activar</div>
+
+          <div style={styles.readinessRow}>
+            <span style={styles.readinessOk}>✓</span>
+            <span>Ficha vinculada</span>
+          </div>
+
+          <div style={styles.readinessRow}>
+            <span style={canActivate ? styles.readinessOk : styles.readinessMissing}>
+              {canActivate ? '✓' : '!'}
+            </span>
+            <span>
+              {canActivate
+                ? 'Nombre definido'
+                : 'Agrega un nombre a la ficha'}
+            </span>
+          </div>
+
+          {marker.status === 'active' ? (
+            <>
+              <div style={styles.readinessSuccess}>
+                Esta ficha está activa.
+              </div>
+              <button
+                type="button"
+                style={styles.secondaryBtn}
+                disabled={saving}
+                onClick={() => setStatus('inactive')}
+              >
+                {saving ? 'Procesando...' : 'Desactivar ficha'}
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={canActivate ? styles.readinessSuccess : styles.requirementWarning}>
+                {canActivate
+                  ? 'Todo listo. Ya puedes activar esta ficha.'
+                  : 'Falta 1 paso para poder activar esta ficha.'}
+              </div>
+
+              <button
+                type="button"
+                style={{
+                  ...styles.primaryBtn,
+                  opacity: canActivate && !saving ? 1 : 0.45,
+                }}
+                disabled={saving || !canActivate}
+                onClick={() => setStatus('active')}
+              >
+                {saving ? 'Activando...' : 'Activar ficha'}
+              </button>
+            </>
+          )}
+        </div>
       </Accordion>
 
-      <Accordion title="Precio y conversión">
+      <Accordion title="Precio y presentación">
         <div style={styles.adaptiveGrid}>
           {!offerEnabled && (
             <>
@@ -1182,6 +1238,96 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
           </div>
           <span style={{ ...styles.accentPreview, background: normalizeAccentColor(form.accentColor) }} />
         </Field>
+      </Accordion>
+
+      <Accordion title={`Multimedia · ${form.media.length}`}>
+        <div style={styles.section}>
+        <div style={styles.sectionTitle}>Multimedia manual</div>
+        {form.media.map((item, index) => (
+          <div key={item.id} style={styles.customField}>
+            <select style={styles.input} value={item.type} onChange={(e) => updateListItem('media', index, { type: e.target.value as MediaType })}>
+              {mediaTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+            </select>
+            <div style={styles.mediaUpload}>
+              <div style={styles.mediaUploadTitle}>{mediaUploadConfig[item.type].label}</div>
+              {item.type === 'image' && openImageBank ? (
+                <div>
+                  {item.url ? (
+                    <img
+                      src={item.url}
+                      alt={item.alt || item.title || 'Vista previa'}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        maxHeight: 130,
+                        objectFit: 'contain',
+                        borderRadius: 8,
+                        background: '#f8fafc',
+                        marginBottom: 8,
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        border: '2px dashed #c7d2fe',
+                        borderRadius: 10,
+                        padding: '18px 12px',
+                        textAlign: 'center',
+                        color: '#9ca3af',
+                        fontSize: 12,
+                        background: '#f8fafc',
+                        marginBottom: 8,
+                      }}
+                    >
+                      Sin imagen seleccionada
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    style={{ ...styles.secondaryBtn, width: '100%' }}
+                    onClick={() => openImageBank((url, thumbnailUrl) => {
+                      updateListItem('media', index, {
+                        url,
+                        thumbnail_url: thumbnailUrl ?? '',
+                      })
+                    })}
+                  >
+                    Examinar imagen
+                  </button>
+
+                  <input
+                    style={{ ...styles.input, marginTop: 6 }}
+                    value={item.url}
+                    onChange={(event) => updateListItem('media', index, {
+                      url: event.target.value,
+                    })}
+                    placeholder="…o pega una URL: https://…"
+                  />
+                </div>
+              ) : (
+                <FileField
+                  value={item.url}
+                  onChange={(url) => updateListItem('media', index, { url })}
+                  accept={mediaUploadConfig[item.type].accept}
+                  hint={mediaUploadConfig[item.type].hint}
+                  browseLabel={mediaUploadConfig[item.type].label}
+                />
+              )}
+            </div>
+            <input style={styles.input} value={item.thumbnail_url} onChange={(e) => updateListItem('media', index, { thumbnail_url: e.target.value })} placeholder="URL miniatura opcional" />
+            <input style={styles.input} value={item.title} onChange={(e) => updateListItem('media', index, { title: e.target.value })} placeholder="Título opcional" />
+            <input style={styles.input} value={item.alt} onChange={(e) => updateListItem('media', index, { alt: e.target.value })} placeholder="Texto alternativo opcional" />
+            <select style={styles.input} value={item.visibility} onChange={(e) => updateListItem('media', index, { visibility: e.target.value as Visibility })}>
+              {visibilityOptions.map((option) => <option key={option} value={option}>{visibilityLabel(option)}</option>)}
+            </select>
+            <button type="button" style={styles.removeBtn} onClick={() => removeListItem('media', index)}>Eliminar</button>
+          </div>
+        ))}
+        <button type="button" style={styles.secondaryBtn} onClick={() => addListItem('media', { id: localId(), type: 'image', url: '', thumbnail_url: '', title: '', alt: '', sort_order: form.media.length, visibility: 'public' })}>
+          Agregar multimedia
+        </button>
+      </div>
       </Accordion>
 
       <Accordion title="Oferta limitada">
@@ -1311,95 +1457,7 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
       </div>
       </Accordion>
 
-      <Accordion title={`Multimedia · ${form.media.length}`}>
-        <div style={styles.section}>
-        <div style={styles.sectionTitle}>Multimedia manual</div>
-        {form.media.map((item, index) => (
-          <div key={item.id} style={styles.customField}>
-            <select style={styles.input} value={item.type} onChange={(e) => updateListItem('media', index, { type: e.target.value as MediaType })}>
-              {mediaTypes.map((type) => <option key={type} value={type}>{type}</option>)}
-            </select>
-            <div style={styles.mediaUpload}>
-              <div style={styles.mediaUploadTitle}>{mediaUploadConfig[item.type].label}</div>
-              {item.type === 'image' && openImageBank ? (
-                <div>
-                  {item.url ? (
-                    <img
-                      src={item.url}
-                      alt={item.alt || item.title || 'Vista previa'}
-                      style={{
-                        display: 'block',
-                        width: '100%',
-                        maxHeight: 130,
-                        objectFit: 'contain',
-                        borderRadius: 8,
-                        background: '#f8fafc',
-                        marginBottom: 8,
-                      }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        border: '2px dashed #c7d2fe',
-                        borderRadius: 10,
-                        padding: '18px 12px',
-                        textAlign: 'center',
-                        color: '#9ca3af',
-                        fontSize: 12,
-                        background: '#f8fafc',
-                        marginBottom: 8,
-                      }}
-                    >
-                      Sin imagen seleccionada
-                    </div>
-                  )}
 
-                  <button
-                    type="button"
-                    style={{ ...styles.secondaryBtn, width: '100%' }}
-                    onClick={() => openImageBank((url, thumbnailUrl) => {
-                      updateListItem('media', index, {
-                        url,
-                        thumbnail_url: thumbnailUrl ?? '',
-                      })
-                    })}
-                  >
-                    Examinar imagen
-                  </button>
-
-                  <input
-                    style={{ ...styles.input, marginTop: 6 }}
-                    value={item.url}
-                    onChange={(event) => updateListItem('media', index, {
-                      url: event.target.value,
-                    })}
-                    placeholder="…o pega una URL: https://…"
-                  />
-                </div>
-              ) : (
-                <FileField
-                  value={item.url}
-                  onChange={(url) => updateListItem('media', index, { url })}
-                  accept={mediaUploadConfig[item.type].accept}
-                  hint={mediaUploadConfig[item.type].hint}
-                  browseLabel={mediaUploadConfig[item.type].label}
-                />
-              )}
-            </div>
-            <input style={styles.input} value={item.thumbnail_url} onChange={(e) => updateListItem('media', index, { thumbnail_url: e.target.value })} placeholder="URL miniatura opcional" />
-            <input style={styles.input} value={item.title} onChange={(e) => updateListItem('media', index, { title: e.target.value })} placeholder="Título opcional" />
-            <input style={styles.input} value={item.alt} onChange={(e) => updateListItem('media', index, { alt: e.target.value })} placeholder="Texto alternativo opcional" />
-            <select style={styles.input} value={item.visibility} onChange={(e) => updateListItem('media', index, { visibility: e.target.value as Visibility })}>
-              {visibilityOptions.map((option) => <option key={option} value={option}>{visibilityLabel(option)}</option>)}
-            </select>
-            <button type="button" style={styles.removeBtn} onClick={() => removeListItem('media', index)}>Eliminar</button>
-          </div>
-        ))}
-        <button type="button" style={styles.secondaryBtn} onClick={() => addListItem('media', { id: localId(), type: 'image', url: '', thumbnail_url: '', title: '', alt: '', sort_order: form.media.length, visibility: 'public' })}>
-          Agregar multimedia
-        </button>
-      </div>
-      </Accordion>
 
       <Accordion title="Acciones de ficha">
         <div style={styles.section}>
@@ -1736,29 +1794,6 @@ export default function DynamicMarkerPanel({ publicationId, pageId, selectedObje
 
       {error && <div style={styles.error}>{error}</div>}
 
-      <div style={styles.actions}>
-        {marker.status === 'active' ? (
-          <button type="button" style={styles.secondaryBtn} disabled={saving} onClick={() => setStatus('inactive')}>
-            Desactivar
-          </button>
-        ) : (
-          <div style={{ width: '100%' }}>
-            {!canActivate && (
-              <div style={styles.requirementWarning}>
-                Para activar esta ficha, primero agrega un nombre en “Información principal”.
-              </div>
-            )}
-            <button
-              type="button"
-              style={{ ...styles.primaryBtn, opacity: canActivate && !saving ? 1 : 0.45 }}
-              disabled={saving || !canActivate}
-              onClick={() => setStatus('active')}
-            >
-              Activar ficha
-            </button>
-          </div>
-        )}
-      </div>
     </div>
   )
 }
@@ -1805,6 +1840,59 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     lineHeight: 1.45,
     marginBottom: 8,
+  },
+  readinessBox: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    border: '1px solid #e0e7ff',
+    borderRadius: 9,
+    background: '#f8faff',
+    padding: 10,
+    marginTop: 4,
+  },
+  readinessTitle: {
+    fontSize: 12,
+    fontWeight: 850,
+    color: '#312e81',
+  },
+  readinessRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 7,
+    fontSize: 12,
+    color: '#374151',
+  },
+  readinessOk: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    background: '#ecfdf5',
+    color: '#047857',
+    fontWeight: 900,
+  },
+  readinessMissing: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    background: '#fffbeb',
+    color: '#b45309',
+    fontWeight: 900,
+  },
+  readinessSuccess: {
+    border: '1px solid #a7f3d0',
+    borderRadius: 8,
+    background: '#ecfdf5',
+    color: '#047857',
+    padding: '8px 9px',
+    fontSize: 12,
+    lineHeight: 1.4,
   },
   headerRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   badge: { display: 'inline-flex', alignItems: 'center', border: '1px solid', borderRadius: 999, padding: '3px 8px', fontSize: 11, fontWeight: 700 },

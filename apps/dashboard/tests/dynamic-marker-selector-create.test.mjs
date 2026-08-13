@@ -113,3 +113,42 @@ test('cambiar ficha desde Propiedades también refresca PropsPanel', async () =>
     /<DynamicMarkerButtonProps[\s\S]*?onChange=\{\(\) => \{[\s\S]*?onChange\(\)[\s\S]*?setTick\(\(t\) => t \+ 1\)/,
   )
 })
+
+
+test('selector presenta vínculo compacto y acción explícita de asignación', async () => {
+  const source = await readFile(
+    'apps/dashboard/src/components/DynamicMarkerSelector.tsx',
+    'utf8',
+  )
+
+  assert.match(source, /Cambiar ficha/)
+  assert.match(source, /Desvincular/)
+  assert.match(source, /Asignar esta ficha/)
+  assert.match(source, /pickerOpen/)
+})
+
+test('Botón de ficha nuevo nace con identidad estructural permanente', async () => {
+  const editorPath = new URL(
+    '../src/pages/EditPublication.tsx',
+    import.meta.url,
+  )
+  const source = await readFile(editorPath, 'utf8')
+
+  assert.match(
+    source,
+    /createDynamicMarkerButtonFabricGroup\(\s*style,\s*createFabricElementId\(\),?\s*\)/,
+  )
+})
+
+test('Botón de ficha legacy sin elementId se repara al entrar al inspector', async () => {
+  const editorPath = new URL(
+    '../src/pages/EditPublication.tsx',
+    import.meta.url,
+  )
+  const source = await readFile(editorPath, 'utf8')
+
+  assert.match(
+    source,
+    /kind === DYNAMIC_MARKER_BUTTON_KIND[\s\S]*?!\(obj as any\)\.data\?\.elementId[\s\S]*?elementId:\s*createFabricElementId\(\)/,
+  )
+})
