@@ -56,6 +56,7 @@ import {
   type DynamicMarkerButtonPreset,
   type DynamicMarkerButtonStyle,
 } from '../lib/dynamicMarkerButtons'
+import { findInteractiveOverlaps } from '../lib/interactiveOverlaps'
 import type { DynamicMarkerCloneTarget } from '../lib/dynamicMarkerReuse'
 import {
   appendMediaPickerUrls,
@@ -6129,6 +6130,28 @@ function PropsPanel({
   const [insTab, setInsTab] = React.useState<'config' | 'actions' | 'dynamic'>('config')
   const isWidget = kind === 'widget'
 
+  const overlapConflicts = findInteractiveOverlaps(
+    obj,
+    canvas?.getObjects?.() ?? [],
+  )
+
+  const selectOverlapObject = (target: any) => {
+    if (!canvas || !target) return
+    canvas.setActiveObject(target)
+    canvas.requestRenderAll()
+  }
+
+  const moveOverlapLayer = (direction: 'forward' | 'backward') => {
+    if (!canvas || !obj) return
+
+    if (direction === 'forward') obj.bringForward?.()
+    else obj.sendBackwards?.()
+
+    canvas.requestRenderAll()
+    onChange()
+    setTick((t) => t + 1)
+  }
+
   // Elementos de esta página que tienen nombre asignado (excepto el actual): posibles
   // objetivos para la acción "Mostrar / ocultar". Se muestra el nombre, se guarda el elementId.
   const namedTargets = (canvas?.getObjects?.() ?? [])
@@ -6187,6 +6210,102 @@ function PropsPanel({
         <button style={{ ...s.insTabBtn, ...(insTab === 'actions' ? s.insTabActive : {}) }} onClick={() => setInsTab('actions')}>Acciones</button>
         <button style={{ ...s.insTabBtn, ...(insTab === 'dynamic' ? s.insTabActive : {}) }} onClick={() => setInsTab('dynamic')}>Fichas interactivas</button>
       </div>
+
+      {overlapConflicts.length > 0 && (
+        <div
+          style={{
+            margin: '12px 14px 4px',
+            padding: 12,
+            border: '1px solid #f59e0b',
+            borderRadius: 8,
+            background: '#fffbeb',
+            color: '#78350f',
+            fontSize: 12,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>
+            ⚠ Se superpone con {overlapConflicts.length}{' '}
+            {overlapConflicts.length === 1
+              ? 'elemento interactivo'
+              : 'elementos interactivos'}
+          </div>
+
+          {overlapConflicts.map((conflict) => (
+            <div
+              key={`${conflict.objectIndex}-${conflict.elementId ?? conflict.label}`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                padding: '6px 0',
+                borderTop: '1px solid #fde68a',
+              }}
+            >
+              <div>
+                <strong>
+                  {conflict.position === 'above' ? 'Encima' : 'Debajo'}:
+                </strong>{' '}
+                {conflict.label}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => selectOverlapObject(conflict.object)}
+                style={{
+                  border: '1px solid #d97706',
+                  background: '#fff',
+                  color: '#92400e',
+                  borderRadius: 6,
+                  padding: '4px 7px',
+                  cursor: 'pointer',
+                  fontSize: 11,
+                }}
+              >
+                Seleccionar
+              </button>
+            </div>
+          ))}
+
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => moveOverlapLayer('forward')}
+              style={{
+                flex: 1,
+                border: '1px solid #d97706',
+                background: '#fff',
+                color: '#92400e',
+                borderRadius: 6,
+                padding: '6px 8px',
+                cursor: 'pointer',
+                fontSize: 11,
+                fontWeight: 600,
+              }}
+            >
+              Adelantar
+            </button>
+
+            <button
+              type="button"
+              onClick={() => moveOverlapLayer('backward')}
+              style={{
+                flex: 1,
+                border: '1px solid #d97706',
+                background: '#fff',
+                color: '#92400e',
+                borderRadius: 6,
+                padding: '6px 8px',
+                cursor: 'pointer',
+                fontSize: 11,
+                fontWeight: 600,
+              }}
+            >
+              Atrasar
+            </button>
+          </div>
+        </div>
+      )}
 
       {insTab === 'config' && (
       <div style={s.props}>
