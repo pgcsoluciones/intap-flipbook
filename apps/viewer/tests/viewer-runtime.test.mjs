@@ -77,3 +77,28 @@ test('precarga paginas de dos spreads, espera decode y no repite descargas', asy
   ])
   assert.deepEqual(decoded, created)
 })
+
+test('z-index interactivo conserva el orden Fabric', () => {
+  const interactiveOverlayZIndex =
+    runtime.default?.interactiveOverlayZIndex
+    ?? runtime.interactiveOverlayZIndex
+
+  assert.equal(interactiveOverlayZIndex(0), 20)
+  assert.equal(interactiveOverlayZIndex(1), 21)
+  assert.equal(interactiveOverlayZIndex(7), 27)
+
+  assert.ok(
+    interactiveOverlayZIndex(5) > interactiveOverlayZIndex(4),
+    'un objeto Fabric posterior debe quedar encima del anterior',
+  )
+})
+
+test('z-index interactivo normaliza indices invalidos sin romper el overlay', () => {
+  const interactiveOverlayZIndex =
+    runtime.default?.interactiveOverlayZIndex
+    ?? runtime.interactiveOverlayZIndex
+
+  assert.equal(interactiveOverlayZIndex(-1), 20)
+  assert.equal(interactiveOverlayZIndex('abc'), 20)
+  assert.equal(interactiveOverlayZIndex(2.9), 22)
+})

@@ -53,6 +53,12 @@
     return out
   }
 
+  function interactiveOverlayZIndex(objectIndex) {
+    var index = Number(objectIndex)
+    if (!Number.isFinite(index) || index < 0) index = 0
+    return 20 + Math.floor(index)
+  }
+
   function createImagePreloader(ImageCtor) {
     var cache = new Map()
     return {
@@ -115,6 +121,7 @@
     nearbyRealPageNumbers: nearbyRealPageNumbers,
     startupRealPageNumbers: startupRealPageNumbers,
     targetRealPageNumbers: targetRealPageNumbers,
+    interactiveOverlayZIndex: interactiveOverlayZIndex,
     createImagePreloader: createImagePreloader,
   }
   root.IntapViewerRuntime = api

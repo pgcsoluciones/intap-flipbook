@@ -64,6 +64,10 @@ const viewerRuntime = window.IntapViewerRuntime || {
   nearbyRealPageNumbers: (currentRealPage, totalPages) => [currentRealPage - 1, currentRealPage, currentRealPage + 1].filter((pageNumber) => pageNumber >= 1 && pageNumber <= totalPages),
   startupRealPageNumbers: (totalPages, portrait) => Array.from({ length: Math.min(totalPages, portrait ? 2 : 3) }, (_, index) => index + 1),
   targetRealPageNumbers: (targetRealPage, totalPages) => [targetRealPage, targetRealPage + 1].filter((pageNumber) => pageNumber >= 1 && pageNumber <= totalPages),
+  interactiveOverlayZIndex: (objectIndex) => {
+    const index = Number(objectIndex)
+    return 20 + Math.floor(Number.isFinite(index) && index >= 0 ? index : 0)
+  },
   createImagePreloader: () => ({ preload: () => Promise.resolve(null), has: () => false, size: () => 0 }),
 }
 const imagePreloader = viewerRuntime.createImagePreloader(Image)
@@ -4453,9 +4457,12 @@ async function init() {
         }).catch(() => {})
       }
       let widgetIdx = 0
-      // slice(): vamos a remover widgets del canvas mientras iteramos
-      fcanvas.getObjects().slice().forEach((obj) => {
+      // El orden de fcanvas.getObjects() es la fuente de verdad para las capas.
+      // Todo overlay interactivo debe conservar ese mismo orden público.
+      const overlayObjects = fcanvas.getObjects().slice()
+      overlayObjects.forEach((obj, objectIndex) => {
        try {
+        const interactiveZ = viewerRuntime.interactiveOverlayZIndex(objectIndex)
         const d = obj.data || {}
         sharpenDynamicMarkerButtonObject(obj)
         obj.__showHideWrap = wrap
@@ -4478,6 +4485,7 @@ async function init() {
             'margin:0',
             'background:transparent',
             'cursor:pointer',
+            `z-index:${interactiveZ}`,
             'pointer-events:auto',
             clipPath ? `clip-path:${clipPath}` : '',
           ].filter(Boolean).join(';')
@@ -4500,7 +4508,7 @@ async function init() {
           const animClass = hsStyle === 'blink' ? 'hs-blink' : hsStyle === 'ripple' ? 'hs-ring' : 'hs-pulse'
           const color = hsColor || '#ef4444'
           const hs = document.createElement('div')
-          hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:7;pointer-events:auto;`
+          hs.style.cssText = `position:absolute;left:${r.left + r.width/2 - 18}px;top:${r.top + r.height/2 - 18}px;width:36px;height:36px;cursor:pointer;z-index:${interactiveZ};pointer-events:auto;`
           hs.dataset.flipInteractive = 'true'
           hs.innerHTML = `<div class="${animClass}" style="width:36px;height:36px;border-radius:50%;background:${color}44;border:2.5px solid ${color};display:flex;align-items:center;justify-content:center;"><div style="width:14px;height:14px;border-radius:50%;background:${color};"></div></div>`
           const hotspotAction = d.action || obj.action
@@ -4520,7 +4528,7 @@ async function init() {
           const node = buildWidget(d.widget, r.width, r.height, `${slug}_${widgetIdx++}`, { rect: r, wrap }, pageIndex)
           if (node) {
             const holder = document.createElement('div')
-            holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:6;pointer-events:auto;`
+            holder.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:${interactiveZ};pointer-events:auto;`
             holder.dataset.flipInteractive = 'true'
             holder.__widget = d.widget || {}
             // Visibilidad inicial para widgets con startHidden
@@ -4541,7 +4549,7 @@ async function init() {
         const hot = document.createElement('a')
         hot.href = 'javascript:void(0)'
         hot.title = ''
-        hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:5;pointer-events:auto;`
+        hot.style.cssText = `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;cursor:pointer;z-index:${interactiveZ};pointer-events:auto;`
         hot.dataset.flipInteractive = 'true'
         hot.addEventListener('click', (e) => {
           e.preventDefault()
