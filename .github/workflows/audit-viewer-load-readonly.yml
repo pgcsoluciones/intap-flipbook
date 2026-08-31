@@ -6,6 +6,7 @@ on:
       - audit/viewer-load-resilience-20260831
     paths:
       - scripts/audit-viewer-catalog.mjs
+      - scripts/audit-viewer-media-load.mjs
       - .github/workflows/audit-viewer-load-readonly.yml
   workflow_dispatch:
 
@@ -26,7 +27,7 @@ jobs:
           echo "sha=$GITHUB_SHA"
           git status --short
 
-      - name: Probe public catalog and media
+      - name: Probe public catalog and media headers
         env:
           INTAP_AUDIT_API_URL: https://intap-flipbook-api.fliaprince.workers.dev/view/catalogo-padres-2026
           INTAP_AUDIT_OUTPUT: audit-output.json
@@ -34,11 +35,21 @@ jobs:
           INTAP_AUDIT_CONCURRENCY: '3'
         run: node scripts/audit-viewer-catalog.mjs
 
+      - name: Measure real media payload
+        env:
+          INTAP_AUDIT_API_URL: https://intap-flipbook-api.fliaprince.workers.dev/view/catalogo-padres-2026
+          INTAP_MEDIA_AUDIT_OUTPUT: audit-media-load.json
+          INTAP_AUDIT_TIMEOUT_MS: '20000'
+          INTAP_AUDIT_CONCURRENCY: '3'
+        run: node scripts/audit-viewer-media-load.mjs
+
       - name: Upload forensic report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: viewer-load-forensic-report
-          path: audit-output.json
+          path: |
+            audit-output.json
+            audit-media-load.json
           if-no-files-found: warn
           retention-days: 7
