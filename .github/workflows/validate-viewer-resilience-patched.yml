@@ -1,0 +1,87 @@
+name: Validate patched viewer lifecycle
+
+on:
+  push:
+    branches:
+      - audit/viewer-load-resilience-20260831
+    paths:
+      - .github/workflows/validate-viewer-resilience-patched.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout patched branch
+        uses: actions/checkout@v4
+        with:
+          ref: audit/viewer-load-resilience-20260831
+
+      - name: Validate code and tests
+        run: |
+          set -euo pipefail
+          node --check apps/viewer/src/flipbook.js
+          node --check apps/viewer/src/viewerRuntime.js
+          node --test apps/viewer/tests/*.test.mjs
+
+      - name: Serve patched Viewer locally
+        run: |
+          python3 -m http.server 4174 --bind 127.0.0.1 --directory apps/viewer/src > /tmp/intap-viewer-http.log 2>&1 &
+          echo $! > /tmp/intap-viewer-http.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4174/ >/dev/null; then exit 0; fi
+            sleep 0.2
+          done
+          cat /tmp/intap-viewer-http.log
+          exit 1
+
+      - name: Allow local QA to read public cross-origin API/media
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/audit-viewer-browser.mjs')
+          s = p.read_text()
+          needle = "  '--disable-background-networking',\n"
+          assert needle in s
+          s = s.replace(needle, needle + "  '--disable-web-security',\n", 1)
+          p.write_text(s)
+          PY
+
+      - name: Desktop lifecycle QA
+        env:
+          INTAP_AUDIT_VIEWER_URL: http://127.0.0.1:4174/?publication=catalogo-padres-2026&preview=1&api_base=https%3A%2F%2Fintap-flipbook-api.fliaprince.workers.dev
+          INTAP_BROWSER_AUDIT_OUTPUT: audit-browser-patched-desktop.json
+          INTAP_CHROME_DEBUG_PORT: '9222'
+        run: node scripts/audit-viewer-browser.mjs
+
+      - name: Switch browser probe to mobile viewport
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/audit-viewer-browser.mjs')
+          s = p.read_text()
+          assert "'--window-size=1365,900'" in s
+          p.write_text(s.replace("'--window-size=1365,900'", "'--window-size=390,844'", 1))
+          PY
+
+      - name: Mobile lifecycle QA
+        env:
+          INTAP_AUDIT_VIEWER_URL: http://127.0.0.1:4174/?publication=catalogo-padres-2026&preview=1&api_base=https%3A%2F%2Fintap-flipbook-api.fliaprince.workers.dev
+          INTAP_BROWSER_AUDIT_OUTPUT: audit-browser-patched-mobile.json
+          INTAP_CHROME_DEBUG_PORT: '9223'
+        run: node scripts/audit-viewer-browser.mjs
+
+      - name: Upload patched QA reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-resilience-lifecycle-qa
+          path: |
+            audit-browser-patched-desktop.json
+            audit-browser-patched-mobile.json
+          if-no-files-found: warn
+          retention-days: 7
