@@ -1,0 +1,62 @@
+name: Build clean viewer resilience branch
+
+on:
+  push:
+    branches:
+      - audit/viewer-load-resilience-20260831
+    paths:
+      - '.github/workflows/build-clean-viewer-resilience-branch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-clean-branch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout full repository history
+        uses: actions/checkout@v4
+        with:
+          ref: audit/viewer-load-resilience-20260831
+          fetch-depth: 0
+
+      - name: Create clean branch from production base and cherry-pick only resilience changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA="6a73cec45ca698abac8764cfa1e8c46132626ecb"
+          TEST_SHA="766f66298ec4780c2539b1326df53b63cd2a31e6"
+          PATCH_SHA="8b5ece6f389639c9fa6055531a5cc285ffe35a10"
+          TARGET_BRANCH="fix/viewer-load-resilience-20260831"
+
+          git config user.name "pgcsoluciones"
+          git config user.email "fliaprince@gmail.com"
+          git fetch origin "$BASE_SHA" "$TEST_SHA" "$PATCH_SHA"
+
+          if git ls-remote --exit-code --heads origin "$TARGET_BRANCH" >/dev/null 2>&1; then
+            echo "ERROR: $TARGET_BRANCH already exists remotely. Refusing to overwrite it."
+            exit 1
+          fi
+
+          git checkout --detach "$BASE_SHA"
+          git switch -c "$TARGET_BRANCH"
+          git cherry-pick "$TEST_SHA"
+          git cherry-pick "$PATCH_SHA"
+
+          node --check apps/viewer/src/flipbook.js
+          node --check apps/viewer/src/viewerRuntime.js
+          node --test apps/viewer/tests/*.test.mjs
+          git diff --check "$BASE_SHA"..HEAD
+
+          echo "=== CLEAN DIFF ==="
+          git diff --stat "$BASE_SHA"..HEAD
+          git diff --name-only "$BASE_SHA"..HEAD
+
+          COUNT="$(git diff --name-only "$BASE_SHA"..HEAD | wc -l | tr -d ' ')"
+          test "$COUNT" = "3"
+          git diff --name-only "$BASE_SHA"..HEAD | grep -Fx 'apps/viewer/src/flipbook.js'
+          git diff --name-only "$BASE_SHA"..HEAD | grep -Fx 'apps/viewer/src/viewerRuntime.js'
+          git diff --name-only "$BASE_SHA"..HEAD | grep -Fx 'apps/viewer/tests/viewer-load-resilience.test.mjs'
+
+          git push origin "HEAD:$TARGET_BRANCH"
