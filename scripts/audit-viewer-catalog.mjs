@@ -1,3 +1,4 @@
+// Read-only forensic probe. It performs GET/HEAD requests only and never writes production data.
 import fs from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
 
