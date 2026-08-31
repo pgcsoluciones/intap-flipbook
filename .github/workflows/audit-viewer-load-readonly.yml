@@ -7,6 +7,7 @@ on:
     paths:
       - scripts/audit-viewer-catalog.mjs
       - scripts/audit-viewer-media-load.mjs
+      - scripts/audit-viewer-browser.mjs
       - .github/workflows/audit-viewer-load-readonly.yml
   workflow_dispatch:
 
@@ -16,7 +17,7 @@ permissions:
 jobs:
   catalog-probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - name: Checkout audit branch
         uses: actions/checkout@v4
@@ -35,13 +36,19 @@ jobs:
           INTAP_AUDIT_CONCURRENCY: '3'
         run: node scripts/audit-viewer-catalog.mjs
 
-      - name: Measure real media payload
+      - name: Measure real media payload and decoded footprint
         env:
           INTAP_AUDIT_API_URL: https://intap-flipbook-api.fliaprince.workers.dev/view/catalogo-padres-2026
           INTAP_MEDIA_AUDIT_OUTPUT: audit-media-load.json
           INTAP_AUDIT_TIMEOUT_MS: '20000'
           INTAP_AUDIT_CONCURRENCY: '3'
         run: node scripts/audit-viewer-media-load.mjs
+
+      - name: Reproduce Viewer lifecycle in headless Chrome
+        env:
+          INTAP_AUDIT_VIEWER_URL: https://flip.intaprd.com/?publication=catalogo-padres-2026
+          INTAP_BROWSER_AUDIT_OUTPUT: audit-browser.json
+        run: node scripts/audit-viewer-browser.mjs
 
       - name: Upload forensic report
         if: always()
@@ -51,5 +58,6 @@ jobs:
           path: |
             audit-output.json
             audit-media-load.json
+            audit-browser.json
           if-no-files-found: warn
           retention-days: 7
