@@ -1,0 +1,83 @@
+name: Apply isolated viewer resilience patch
+
+on:
+  push:
+    branches:
+      - audit/viewer-load-resilience-20260831
+    paths:
+      - scripts/apply-viewer-resilience-patch.mjs
+      - apps/viewer/tests/viewer-load-resilience.test.mjs
+      - .github/workflows/apply-viewer-resilience-patch.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout isolated audit branch
+        uses: actions/checkout@v4
+        with:
+          ref: audit/viewer-load-resilience-20260831
+          fetch-depth: 0
+
+      - name: Confirm branch and base
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = "audit/viewer-load-resilience-20260831"
+          echo "HEAD=$(git rev-parse HEAD)"
+          git status --short
+
+      - name: Apply deterministic resilience patch
+        run: node scripts/apply-viewer-resilience-patch.mjs
+
+      - name: Validate Viewer syntax and tests
+        run: |
+          set -euo pipefail
+          node --check apps/viewer/src/flipbook.js
+          node --check apps/viewer/src/viewerRuntime.js
+          node --test apps/viewer/tests/*.test.mjs
+          git diff --check
+          git diff --stat
+
+      - name: Serve patched Viewer locally
+        run: |
+          python3 -m http.server 4174 --bind 127.0.0.1 --directory apps/viewer/src > /tmp/intap-viewer-http.log 2>&1 &
+          echo $! > /tmp/intap-viewer-http.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4174/ >/dev/null; then exit 0; fi
+            sleep 0.2
+          done
+          cat /tmp/intap-viewer-http.log
+          exit 1
+
+      - name: Browser QA patched Viewer against read-only public API
+        env:
+          INTAP_AUDIT_VIEWER_URL: http://127.0.0.1:4174/?publication=catalogo-padres-2026&preview=1&api_base=https%3A%2F%2Fintap-flipbook-api.fliaprince.workers.dev
+          INTAP_BROWSER_AUDIT_OUTPUT: audit-browser-patched.json
+        run: node scripts/audit-viewer-browser.mjs
+
+      - name: Commit patch only to isolated branch
+        run: |
+          set -euo pipefail
+          git config user.name "pgcsoluciones"
+          git config user.email "fliaprince@gmail.com"
+          git add apps/viewer/src/flipbook.js apps/viewer/src/viewerRuntime.js
+          if git diff --cached --quiet; then
+            echo "No patch changes to commit."
+            exit 0
+          fi
+          git commit -m "perf(viewer): virtualize page overlays and harden deferred loading"
+          git push origin HEAD:audit/viewer-load-resilience-20260831
+
+      - name: Upload patched browser QA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-resilience-patched-qa
+          path: audit-browser-patched.json
+          if-no-files-found: warn
+          retention-days: 7
