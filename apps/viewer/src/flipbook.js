@@ -2274,6 +2274,13 @@ async function init() {
     if (animEntries.length && !animRunning) { animRunning = true; requestAnimationFrame(animTick) }
   }
 
+  function unregisterAnimations(fcanvas) {
+    for (let index = animEntries.length - 1; index >= 0; index -= 1) {
+      if (animEntries[index].fcanvas === fcanvas) animEntries.splice(index, 1)
+    }
+    if (!animEntries.length) animRunning = false
+  }
+
   function animTick(now) {
     const dirty = new Set()
     for (const e of animEntries) {
@@ -2296,6 +2303,10 @@ async function init() {
       dirty.add(e.fcanvas)
     }
     dirty.forEach((fc) => fc.requestRenderAll ? fc.requestRenderAll() : fc.renderAll())
+    if (!animEntries.length) {
+      animRunning = false
+      return
+    }
     requestAnimationFrame(animTick)
   }
 
@@ -3821,7 +3832,14 @@ async function init() {
         let timer = null
         const restart = () => {
           if (timer) clearInterval(timer)
-          if (cfg.autoplay !== false && imgs.length > 1) timer = setInterval(() => go(cur + 1), Math.max(1, cfg.interval || 4) * 1000)
+          if (cfg.autoplay !== false && imgs.length > 1) timer = setInterval(() => {
+            if (!box.isConnected) {
+              clearInterval(timer)
+              timer = null
+              return
+            }
+            go(cur + 1)
+          }, Math.max(1, cfg.interval || 4) * 1000)
         }
         const go = (n) => { cur = (n + imgs.length) % imgs.length; layout(true); paintDots() }
         if (cfg.arrows !== false && imgs.length > 1) {
@@ -4283,14 +4301,20 @@ async function init() {
     applyCoverStyle(sheet, page.cover_json, pageImageUrl, pageWidth / pageHeight)
 
     const task = Promise.resolve(imagePreloader.preload(pageImageUrl))
-      .catch((error) => {
-        console.warn('[viewer] page background preload failed', pageImageUrl, error)
-        return null
-      })
       .then((image) => {
+        if (!image) throw new Error('La imagen no terminó de cargar o decodificar.')
         div.__pageBackgroundLoaded = true
-        div.__pageBackgroundLoading = null
         return image
+      })
+      .catch((error) => {
+        // PROTECTED: un fallo no equivale a página lista. Mantener false permite
+        // reintentar cuando el usuario vuelva a necesitar esta página.
+        div.__pageBackgroundLoaded = false
+        console.warn('[viewer] page background preload failed', pageImageUrl, error)
+        throw error
+      })
+      .finally(() => {
+        div.__pageBackgroundLoading = null
       })
 
     div.__pageBackgroundLoading = task
@@ -4350,7 +4374,9 @@ async function init() {
 
       const div = pageDivs[pageNumber - 1]
       if (!div) return
-      if (isRealPageReady(pageNumber)) return
+      // La cola diferida solo precarga fondos. Nunca debe construir Fabric de
+      // todas las páginas fuera de pantalla.
+      if (div.__pageBackgroundLoaded || div.__pageBackgroundLoading) return
       if (deferredBackgroundQueued.has(pageNumber)) return
 
       deferredBackgroundQueued.add(pageNumber)
@@ -4382,7 +4408,9 @@ async function init() {
       deferredBackgroundActive += 1
 
       Promise.resolve(
-        ensureRealPagesReady([pageNumber]),
+        // Solo fondo en segundo plano. El overlay Fabric se construye bajo
+        // demanda para el pliego activo/destino.
+        ensureRealPageBackgrounds([pageNumber]),
       ).finally(() => {
         deferredBackgroundActive -= 1
         scheduleDeferredBackgroundPump()
@@ -4431,6 +4459,9 @@ async function init() {
     }
 
     const fcanvas = new fabric.StaticCanvas(cv, { width: DESIGN_W, height: DESIGN_H, enableRetinaScaling: true })
+    // Guardar las referencias para poder liberar canvases de páginas lejanas.
+    div.__overlayWrap = wrap
+    div.__overlayCanvas = fcanvas
     // Mapa elementId → holderDiv para widgets DOM (show_hide puede afectarlos igual que objetos Fabric)
     const elementDomMap = {}
     // Sin fondo: la imagen de la página ya está debajo
@@ -4642,17 +4673,27 @@ async function init() {
         lead + realIdx,
       ),
     )
+      .then(() => {
+        div.__overlayBuilt = true
+        return div
+      })
       .catch((error) => {
+        // PROTECTED: un overlay que falló no puede anunciarse como construido.
+        div.__overlayBuilt = false
+        const failedCanvas = div.__overlayCanvas
+        if (failedCanvas) {
+          unregisterAnimations(failedCanvas)
+          try { failedCanvas.dispose?.() } catch (_) {}
+        }
+        div.__overlayWrap?.remove?.()
+        div.__overlayCanvas = null
+        div.__overlayWrap = null
         console.warn(
           '[viewer] overlay build failed',
           data.pages[realIdx]?.id,
           error,
         )
-        return null
-      })
-      .then(() => {
-        div.__overlayBuilt = true
-        return div
+        throw error
       })
       .finally(() => {
         div.__overlayBuilding = null
@@ -4688,11 +4729,12 @@ async function init() {
     )
   }
 
-  function ensureRealPagesReady(pageNumbers) {
-    return Promise.all([
+  async function ensureRealPagesReady(pageNumbers) {
+    await Promise.all([
       ensureRealPageBackgrounds(pageNumbers),
       ensureRealPageOverlays(pageNumbers),
     ])
+    return areRealPagesReady(pageNumbers)
   }
 
   function isRealPageReady(pageNumber) {
@@ -4717,6 +4759,53 @@ async function init() {
       window.requestIdleCallback(work, { timeout: 700 })
     } else {
       window.setTimeout(work, 0)
+    }
+  }
+
+  // PROTECTED: virtualizar overlays Fabric. Mantener solo el pliego actual y un
+  // pequeño margen evita acumular decenas de StaticCanvas e imágenes decodificadas.
+  function disposePageOverlay(pageNumber) {
+    if (pageNumber < 1 || pageNumber > realCount) return
+    const div = pageDivs[pageNumber - 1]
+    if (!div || div.__overlayBuilding) return
+
+    const fcanvas = div.__overlayCanvas
+    if (fcanvas) {
+      unregisterAnimations(fcanvas)
+      try { fcanvas.dispose?.() } catch (_) {}
+    }
+    div.__overlayWrap?.remove?.()
+    div.__overlayCanvas = null
+    div.__overlayWrap = null
+    div.__overlayBuilt = false
+
+    const flipbookIndex = lead + pageNumber - 1
+    delete pageEntrancePlayers[flipbookIndex]
+    // Si la página vuelve a entrar en memoria, su animación de entrada debe
+    // partir de un estado coherente en el overlay recién construido.
+    playedEntrances.delete(flipbookIndex)
+  }
+
+  function disposeFarPageOverlays(pageIndex) {
+    const currentRealPage = pageNumOf(pageIndex)
+    const keep = new Set([
+      currentRealPage - 1,
+      currentRealPage,
+      currentRealPage + 1,
+      currentRealPage + 2,
+    ].filter((pageNumber) => pageNumber >= 1 && pageNumber <= realCount))
+
+    for (let pageNumber = 1; pageNumber <= realCount; pageNumber += 1) {
+      if (!keep.has(pageNumber)) disposePageOverlay(pageNumber)
+    }
+  }
+
+  function scheduleFarOverlayCleanup(pageIndex) {
+    const work = () => disposeFarPageOverlays(pageIndex)
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(work, { timeout: 900 })
+    } else {
+      window.setTimeout(work, 120)
     }
   }
 
@@ -4755,6 +4844,7 @@ async function init() {
   ])
 
   scheduleNearbyOverlays(initialPageIndex)
+  scheduleFarOverlayCleanup(initialPageIndex)
 
   if (loadingScreen) {
     if (loadingStatus) loadingStatus.textContent = 'Catálogo listo'
@@ -5196,6 +5286,7 @@ async function init() {
 
     queueDeferredBackgrounds(nearbyRealPages, { front: true })
     scheduleNearbyOverlays(idx)
+    scheduleFarOverlayCleanup(idx)
     startPageTimer(pageNumOf(idx))
     triggerEntrances(idx)
     firePendingBannersForPage(idx)
@@ -5382,7 +5473,26 @@ async function init() {
       }
 
       queueDeferredBackgrounds(targetRealPages, { front: true })
-      await ensureRealPagesReady(targetRealPages)
+      let targetReady = await Promise.race([
+        ensureRealPagesReady(targetRealPages),
+        delayViewer(8000).then(() => false),
+      ])
+
+      // Un segundo intento corto cubre fallos transitorios de red/decodificación
+      // sin dejar navigationPending bloqueado indefinidamente.
+      if (!targetReady) {
+        await delayViewer(250)
+        targetReady = await Promise.race([
+          ensureRealPagesReady(targetRealPages),
+          delayViewer(5000).then(() => false),
+        ])
+      }
+
+      if (!targetReady) {
+        showPreparingHint('No pudimos preparar esas páginas. Inténtalo otra vez.')
+        return
+      }
+
       await waitUntilPageFlipRead()
 
       executeFlip()
