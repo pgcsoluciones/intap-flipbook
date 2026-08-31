@@ -1,0 +1,44 @@
+name: Audit viewer load read-only
+
+on:
+  push:
+    branches:
+      - audit/viewer-load-resilience-20260831
+    paths:
+      - scripts/audit-viewer-catalog.mjs
+      - .github/workflows/audit-viewer-load-readonly.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  catalog-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout audit branch
+        uses: actions/checkout@v4
+
+      - name: Show audit identity
+        run: |
+          echo "ref=$GITHUB_REF"
+          echo "sha=$GITHUB_SHA"
+          git status --short
+
+      - name: Probe public catalog and media
+        env:
+          INTAP_AUDIT_API_URL: https://intap-flipbook-api.fliaprince.workers.dev/view/catalogo-padres-2026
+          INTAP_AUDIT_OUTPUT: audit-output.json
+          INTAP_AUDIT_TIMEOUT_MS: '20000'
+          INTAP_AUDIT_CONCURRENCY: '3'
+        run: node scripts/audit-viewer-catalog.mjs
+
+      - name: Upload forensic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-load-forensic-report
+          path: audit-output.json
+          if-no-files-found: warn
+          retention-days: 7
