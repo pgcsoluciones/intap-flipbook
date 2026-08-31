@@ -1,14 +1,7 @@
 name: Deploy viewer resilience preview
 
 on:
-  push:
-    branches:
-      - audit/viewer-load-resilience-20260831
-    paths:
-      - 'apps/viewer/src/**'
-      - 'apps/viewer/functions/**'
-      - 'apps/viewer/wrangler.toml'
-      - '.github/workflows/deploy-viewer-resilience-preview.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
