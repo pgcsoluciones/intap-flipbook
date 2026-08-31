@@ -1,0 +1,63 @@
+name: Deploy viewer resilience preview
+
+on:
+  push:
+    branches:
+      - audit/viewer-load-resilience-20260831
+    paths:
+      - 'apps/viewer/src/**'
+      - 'apps/viewer/functions/**'
+      - 'apps/viewer/wrangler.toml'
+      - '.github/workflows/deploy-viewer-resilience-preview.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/viewer
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout isolated viewer branch
+        uses: actions/checkout@v4
+        with:
+          ref: audit/viewer-load-resilience-20260831
+          fetch-depth: 1
+
+      - name: Verify Cloudflare CI credentials are available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "CLOUDFLARE_API_TOKEN is not configured in GitHub Actions secrets."
+            exit 1
+          fi
+          echo "Cloudflare API token is available."
+          if [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "Cloudflare account ID is available."
+          else
+            echo "CLOUDFLARE_ACCOUNT_ID is not configured; Wrangler will attempt account discovery."
+          fi
+
+      - name: Validate patched Viewer before deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check src/flipbook.js
+          node --check src/viewerRuntime.js
+          node --test tests/*.test.mjs
+
+      - name: Deploy isolated Preview only
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@3.65.0 pages deploy src \
+            --project-name=intap-flipbook-viewer \
+            --branch=qa-viewer-resilience-20260831 \
+            --commit-dirty=true
