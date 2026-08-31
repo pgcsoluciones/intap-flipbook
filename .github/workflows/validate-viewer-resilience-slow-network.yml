@@ -1,0 +1,86 @@
+name: Validate patched viewer slow network
+
+on:
+  push:
+    branches:
+      - audit/viewer-load-resilience-20260831
+    paths:
+      - .github/workflows/validate-viewer-resilience-slow-network.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  slow-mobile-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout patched branch
+        uses: actions/checkout@v4
+        with:
+          ref: audit/viewer-load-resilience-20260831
+
+      - name: Validate source and tests
+        run: |
+          set -euo pipefail
+          node --check apps/viewer/src/flipbook.js
+          node --check apps/viewer/src/viewerRuntime.js
+          node --test apps/viewer/tests/*.test.mjs
+
+      - name: Serve patched Viewer locally
+        run: |
+          python3 -m http.server 4174 --bind 127.0.0.1 --directory apps/viewer/src > /tmp/intap-viewer-http.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4174/ >/dev/null; then exit 0; fi
+            sleep 0.2
+          done
+          cat /tmp/intap-viewer-http.log
+          exit 1
+
+      - name: Configure mobile Slow-4G forensic browser
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/audit-viewer-browser.mjs')
+          s = p.read_text()
+          s = s.replace("  '--disable-background-networking',\n", "  '--disable-background-networking',\n  '--disable-web-security',\n", 1)
+          s = s.replace("'--window-size=1365,900'", "'--window-size=390,844'", 1)
+          needle = "  await Promise.all([\n    cdp.send('Runtime.enable'),\n    cdp.send('Network.enable'),\n    cdp.send('Page.enable'),\n    cdp.send('Performance.enable'),\n  ])\n"
+          assert needle in s
+          replacement = needle + "\n  // Approximate constrained 4G: ~1.6 Mbps down, 0.75 Mbps up, 150 ms RTT.\n  await cdp.send('Network.emulateNetworkConditions', {\n    offline: false,\n    latency: 150,\n    downloadThroughput: 200000,\n    uploadThroughput: 93750,\n    connectionType: 'cellular4g',\n  })\n"
+          s = s.replace(needle, replacement, 1)
+          p.write_text(s)
+          PY
+
+      - name: Run constrained mobile lifecycle QA
+        env:
+          INTAP_AUDIT_VIEWER_URL: http://127.0.0.1:4174/?publication=catalogo-padres-2026&preview=1&api_base=https%3A%2F%2Fintap-flipbook-api.fliaprince.workers.dev
+          INTAP_BROWSER_AUDIT_OUTPUT: audit-browser-patched-slow-mobile.json
+          INTAP_CHROME_DEBUG_PORT: '9224'
+        run: node scripts/audit-viewer-browser.mjs
+
+      - name: Require progress beyond halfway without fatal errors
+        run: |
+          python3 - <<'PY'
+          import json,re
+          d=json.load(open('audit-browser-patched-slow-mobile.json'))
+          final=d['snapshots'][-1]
+          m=re.search(r'(\d+)\s*/\s*(\d+)', final.get('pageInfo',''))
+          assert m, final.get('pageInfo')
+          current,total=map(int,m.groups())
+          assert current >= 18, (current,total)
+          assert not d.get('exceptions'), d.get('exceptions')
+          fatal=[e for e in d.get('http_errors',[]) if 'favicon.ico' not in e.get('url','')]
+          assert not fatal, fatal
+          print(f'OK constrained network: {current}/{total}, overlays={sum(1 for p in final["pages"] if p.get("overlayBuilt"))}, heapMiB={round(final.get("heap",{}).get("usedSize",0)/1048576,1)}')
+          PY
+
+      - name: Upload constrained QA report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-resilience-slow-network-qa
+          path: audit-browser-patched-slow-mobile.json
+          if-no-files-found: warn
+          retention-days: 7
