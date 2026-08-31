@@ -80,6 +80,9 @@
             if (settled) return
             settled = true
             if (timeout) clearTimeout(timeout)
+            // Un error/timeout no puede quedar cacheado para siempre: la siguiente
+            // navegación debe poder reintentar la misma URL.
+            if (!value) cache.delete(src)
             resolve(value)
           }
 
