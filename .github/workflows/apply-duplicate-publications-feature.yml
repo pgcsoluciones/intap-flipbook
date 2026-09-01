@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/apply-duplicate-publications-feature.yml
       - scripts/apply-publication-duplicate-feature.py
+      - scripts/refine-publication-duplicate-feature.py
 
 permissions:
   contents: write
@@ -21,8 +22,10 @@ jobs:
           ref: audit/duplicate-publications-20260901
           fetch-depth: 0
 
-      - name: Preserve patch script
-        run: cp scripts/apply-publication-duplicate-feature.py /tmp/apply-publication-duplicate-feature.py
+      - name: Preserve patch scripts
+        run: |
+          cp scripts/apply-publication-duplicate-feature.py /tmp/apply-publication-duplicate-feature.py
+          cp scripts/refine-publication-duplicate-feature.py /tmp/refine-publication-duplicate-feature.py
 
       - name: Checkout feature branch
         run: |
@@ -35,7 +38,9 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Apply feature patch
-        run: python3 /tmp/apply-publication-duplicate-feature.py
+        run: |
+          python3 /tmp/apply-publication-duplicate-feature.py
+          python3 /tmp/refine-publication-duplicate-feature.py
 
       - name: Syntax and build checks
         run: |
