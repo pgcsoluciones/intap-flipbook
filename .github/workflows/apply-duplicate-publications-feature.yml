@@ -1,0 +1,69 @@
+name: Apply duplicate publications feature
+
+on:
+  push:
+    branches:
+      - audit/duplicate-publications-20260901
+    paths:
+      - .github/workflows/apply-duplicate-publications-feature.yml
+      - scripts/apply-publication-duplicate-feature.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/duplicate-publications-20260901
+          fetch-depth: 0
+
+      - name: Preserve patch script
+        run: cp scripts/apply-publication-duplicate-feature.py /tmp/apply-publication-duplicate-feature.py
+
+      - name: Checkout feature branch
+        run: |
+          git fetch origin feature/duplicate-publications-20260901
+          git checkout -B feature/duplicate-publications-20260901 origin/feature/duplicate-publications-20260901
+          git config user.name "pgcsoluciones"
+          git config user.email "fliaprince@gmail.com"
+
+      - name: Install workspace dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Apply feature patch
+        run: python3 /tmp/apply-publication-duplicate-feature.py
+
+      - name: Syntax and type checks
+        run: |
+          npx tsc -p apps/api/tsconfig.json --noEmit
+          npm --prefix apps/dashboard run build
+          git diff --check
+
+      - name: API test suite
+        run: node --test apps/api/tests/*.test.mjs
+
+      - name: Dashboard test suite
+        run: node --test apps/dashboard/tests/*.test.mjs
+
+      - name: Protected editor guardrails
+        run: npm run verify:protected-editor
+
+      - name: Commit validated feature
+        run: |
+          git add \
+            apps/api/src/lib/publicationClone.ts \
+            apps/api/src/routes/publications.ts \
+            apps/api/tests/publication-clone-helpers.test.mjs \
+            apps/api/tests/publication-duplicate-contract.test.mjs \
+            apps/dashboard/src/lib/api.ts \
+            apps/dashboard/src/lib/publicationDuplicate.ts \
+            apps/dashboard/src/pages/Publications.tsx \
+            apps/dashboard/src/pages/Settings.tsx \
+            apps/dashboard/tests/publication-duplicate.test.mjs \
+            apps/dashboard/tests/publication-duplicate-contract.test.mjs
+          git commit -m "feat(publications): duplicate editable catalogs safely"
+          git push origin HEAD:feature/duplicate-publications-20260901
