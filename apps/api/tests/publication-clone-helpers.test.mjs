@@ -24,7 +24,7 @@ async function loadHelpers() {
 const helpers = await loadHelpers()
 after(() => helpers.cleanup())
 
-test('remapea marker_id anidados sin cambiar elementId ni texto casual', () => {
+test('remapea vínculos internos sin cambiar elementId ni texto casual', () => {
   const source = JSON.stringify({
     objects: [
       {
@@ -35,6 +35,8 @@ test('remapea marker_id anidados sin cambiar elementId ni texto casual', () => {
         },
         objects: [
           { type: 'text', text: 'marker-old', data: { markerId: 'marker-old' } },
+          { type: 'rect', data: { action: { type: 'open_product_detail', detail_id: 41 } } },
+          { type: 'rect', action: { type: 'open_product_detail', detail_id: '41' } },
         ],
       },
     ],
@@ -42,12 +44,15 @@ test('remapea marker_id anidados sin cambiar elementId ni texto casual', () => {
   const result = JSON.parse(helpers.remapPublicationCanvasJson(
     source,
     new Map([['marker-old', 'marker-new']]),
+    new Map([[41, 8041]]),
   ))
 
   assert.equal(result.objects[0].data.elementId, 'el_keep')
   assert.equal(result.objects[0].data.action.marker_id, 'marker-new')
   assert.equal(result.objects[0].objects[0].data.markerId, 'marker-new')
   assert.equal(result.objects[0].objects[0].text, 'marker-old')
+  assert.equal(result.objects[0].objects[1].data.action.detail_id, 8041)
+  assert.equal(result.objects[0].objects[2].action.detail_id, '8041')
 })
 
 test('preserva canvas_json malformado exactamente como llegó', () => {
