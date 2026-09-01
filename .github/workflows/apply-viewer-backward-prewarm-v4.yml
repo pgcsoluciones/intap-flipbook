@@ -33,18 +33,12 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
-
           p = Path('apps/viewer/src/flipbook.js')
           s = p.read_text()
-
           old = ';[realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'
-          new = '''// PROTECTED: conservar también el pliego anterior ya renderizado.
-    // En escritorio un retroceso normal salta dos páginas; mantener -2/-1 evita
-    // reconstruir el overlay durante el giro hacia atrás.
-    ;[realPage - 2, realPage - 1, realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'''
+          new = '// PROTECTED: conservar también el pliego anterior ya renderizado.\n    // En escritorio un retroceso normal salta dos páginas; mantener -2/-1 evita\n    // reconstruir el overlay durante el giro hacia atrás.\n    ;[realPage - 2, realPage - 1, realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'
           assert old in s, 'No se encontró ventana ensureNearbyOverlays v3'
           s = s.replace(old, new, 1)
-
           old = '      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,\n      currentRealPage + 3,'
           new = '      currentRealPage - 2,\n      currentRealPage - 1,\n      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,\n      currentRealPage + 3,'
           assert old in s, 'No se encontró ventana keep v3'
@@ -55,14 +49,7 @@ jobs:
           ts = t.read_text()
           marker = "test('viewer keeps previous and next spreads warm for bidirectional turns'"
           if marker not in ts:
-              ts += r'''
-
-test('viewer keeps previous and next spreads warm for bidirectional turns', () => {
-  const source = fs.readFileSync(new URL('../src/flipbook.js', import.meta.url), 'utf8')
-  assert.match(source, /\[realPage - 2, realPage - 1, realPage, realPage \+ 1, realPage \+ 2, realPage \+ 3\]/)
-  assert.match(source, /currentRealPage - 2,\s*currentRealPage - 1,\s*currentRealPage,\s*currentRealPage \+ 1,\s*currentRealPage \+ 2,\s*currentRealPage \+ 3/)
-})
-'''
+              ts += "\n\ntest('viewer keeps previous and next spreads warm for bidirectional turns', () => {\n  const source = fs.readFileSync(new URL('../src/flipbook.js', import.meta.url), 'utf8')\n  assert.match(source, /\\[realPage - 2, realPage - 1, realPage, realPage \\+ 1, realPage \\+ 2, realPage \\+ 3\\]/)\n  assert.match(source, /currentRealPage - 2,\\s*currentRealPage - 1,\\s*currentRealPage,\\s*currentRealPage \\+ 1,\\s*currentRealPage \\+ 2,\\s*currentRealPage \\+ 3/)\n})\n"
               t.write_text(ts)
           PY
 
@@ -83,18 +70,12 @@ test('viewer keeps previous and next spreads warm for bidirectional turns', () =
 
           python3 - <<'PY'
           from pathlib import Path
-
           p = Path('apps/viewer/src/flipbook.js')
           s = p.read_text()
-
           old = ';[realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'
-          new = '''// PROTECTED: conservar también el pliego anterior ya renderizado.
-    // En escritorio un retroceso normal salta dos páginas; mantener -2/-1 evita
-    // reconstruir el overlay durante el giro hacia atrás.
-    ;[realPage - 2, realPage - 1, realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'''
+          new = '// PROTECTED: conservar también el pliego anterior ya renderizado.\n    // En escritorio un retroceso normal salta dos páginas; mantener -2/-1 evita\n    // reconstruir el overlay durante el giro hacia atrás.\n    ;[realPage - 2, realPage - 1, realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'
           assert old in s, 'No se encontró ventana ensureNearbyOverlays v3 en deploy'
           s = s.replace(old, new, 1)
-
           old = '      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,\n      currentRealPage + 3,'
           new = '      currentRealPage - 2,\n      currentRealPage - 1,\n      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,\n      currentRealPage + 3,'
           assert old in s, 'No se encontró ventana keep v3 en deploy'
@@ -105,14 +86,7 @@ test('viewer keeps previous and next spreads warm for bidirectional turns', () =
           ts = t.read_text()
           marker = "test('viewer keeps previous and next spreads warm for bidirectional turns'"
           if marker not in ts:
-              ts += r'''
-
-test('viewer keeps previous and next spreads warm for bidirectional turns', () => {
-  const source = fs.readFileSync(new URL('../src/flipbook.js', import.meta.url), 'utf8')
-  assert.match(source, /\[realPage - 2, realPage - 1, realPage, realPage \+ 1, realPage \+ 2, realPage \+ 3\]/)
-  assert.match(source, /currentRealPage - 2,\s*currentRealPage - 1,\s*currentRealPage,\s*currentRealPage \+ 1,\s*currentRealPage \+ 2,\s*currentRealPage \+ 3/)
-})
-'''
+              ts += "\n\ntest('viewer keeps previous and next spreads warm for bidirectional turns', () => {\n  const source = fs.readFileSync(new URL('../src/flipbook.js', import.meta.url), 'utf8')\n  assert.match(source, /\\[realPage - 2, realPage - 1, realPage, realPage \\+ 1, realPage \\+ 2, realPage \\+ 3\\]/)\n  assert.match(source, /currentRealPage - 2,\\s*currentRealPage - 1,\\s*currentRealPage,\\s*currentRealPage \\+ 1,\\s*currentRealPage \\+ 2,\\s*currentRealPage \\+ 3/)\n})\n"
               t.write_text(ts)
           PY
 
