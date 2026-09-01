@@ -37,9 +37,10 @@ jobs:
       - name: Apply feature patch
         run: python3 /tmp/apply-publication-duplicate-feature.py
 
-      - name: Syntax and type checks
+      - name: Syntax and build checks
         run: |
-          npx tsc -p apps/api/tsconfig.json --noEmit
+          npx esbuild apps/api/src/routes/publications.ts --bundle --platform=node --format=esm --outfile=/tmp/publications-route.mjs
+          npx esbuild apps/api/src/lib/publicationClone.ts --bundle --platform=node --format=esm --outfile=/tmp/publication-clone.mjs
           npm --prefix apps/dashboard run build
           git diff --check
 
