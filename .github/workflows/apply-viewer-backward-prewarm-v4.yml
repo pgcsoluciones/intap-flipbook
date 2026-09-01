@@ -1,0 +1,126 @@
+name: Apply Viewer backward spread prewarm v4
+
+on:
+  push:
+    branches:
+      - audit/viewer-load-resilience-20260831
+    paths:
+      - .github/workflows/apply-viewer-backward-prewarm-v4.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/viewer-load-resilience-20260831
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "pgcsoluciones"
+          git config user.email "fliaprince@gmail.com"
+
+      - name: Patch product branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin fix/viewer-load-resilience-20260831 deploy/preview-viewer-resilience-20260831
+          git checkout -B fix/viewer-load-resilience-20260831 origin/fix/viewer-load-resilience-20260831
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('apps/viewer/src/flipbook.js')
+          s = p.read_text()
+
+          old = ';[realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'
+          new = '''// PROTECTED: conservar también el pliego anterior ya renderizado.
+    // En escritorio un retroceso normal salta dos páginas; mantener -2/-1 evita
+    // reconstruir el overlay durante el giro hacia atrás.
+    ;[realPage - 2, realPage - 1, realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'''
+          assert old in s, 'No se encontró ventana ensureNearbyOverlays v3'
+          s = s.replace(old, new, 1)
+
+          old = '      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,\n      currentRealPage + 3,'
+          new = '      currentRealPage - 2,\n      currentRealPage - 1,\n      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,\n      currentRealPage + 3,'
+          assert old in s, 'No se encontró ventana keep v3'
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          t = Path('apps/viewer/tests/viewer-load-resilience.test.mjs')
+          ts = t.read_text()
+          marker = "test('viewer keeps previous and next spreads warm for bidirectional turns'"
+          if marker not in ts:
+              ts += r'''
+
+test('viewer keeps previous and next spreads warm for bidirectional turns', () => {
+  const source = fs.readFileSync(new URL('../src/flipbook.js', import.meta.url), 'utf8')
+  assert.match(source, /\[realPage - 2, realPage - 1, realPage, realPage \+ 1, realPage \+ 2, realPage \+ 3\]/)
+  assert.match(source, /currentRealPage - 2,\s*currentRealPage - 1,\s*currentRealPage,\s*currentRealPage \+ 1,\s*currentRealPage \+ 2,\s*currentRealPage \+ 3/)
+})
+'''
+              t.write_text(ts)
+          PY
+
+          node --check apps/viewer/src/flipbook.js
+          node --check apps/viewer/src/viewerRuntime.js
+          node --test apps/viewer/tests/*.test.mjs
+          git diff --check
+          grep -F '[realPage - 2, realPage - 1, realPage, realPage + 1, realPage + 2, realPage + 3]' apps/viewer/src/flipbook.js
+          git add apps/viewer/src/flipbook.js apps/viewer/tests/viewer-load-resilience.test.mjs
+          git commit -m "perf(viewer): keep previous spread warm for back turns"
+          git push origin HEAD:fix/viewer-load-resilience-20260831
+
+      - name: Patch QA deployment branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -B deploy/preview-viewer-resilience-20260831 origin/deploy/preview-viewer-resilience-20260831
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('apps/viewer/src/flipbook.js')
+          s = p.read_text()
+
+          old = ';[realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'
+          new = '''// PROTECTED: conservar también el pliego anterior ya renderizado.
+    // En escritorio un retroceso normal salta dos páginas; mantener -2/-1 evita
+    // reconstruir el overlay durante el giro hacia atrás.
+    ;[realPage - 2, realPage - 1, realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'''
+          assert old in s, 'No se encontró ventana ensureNearbyOverlays v3 en deploy'
+          s = s.replace(old, new, 1)
+
+          old = '      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,\n      currentRealPage + 3,'
+          new = '      currentRealPage - 2,\n      currentRealPage - 1,\n      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,\n      currentRealPage + 3,'
+          assert old in s, 'No se encontró ventana keep v3 en deploy'
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          t = Path('apps/viewer/tests/viewer-load-resilience.test.mjs')
+          ts = t.read_text()
+          marker = "test('viewer keeps previous and next spreads warm for bidirectional turns'"
+          if marker not in ts:
+              ts += r'''
+
+test('viewer keeps previous and next spreads warm for bidirectional turns', () => {
+  const source = fs.readFileSync(new URL('../src/flipbook.js', import.meta.url), 'utf8')
+  assert.match(source, /\[realPage - 2, realPage - 1, realPage, realPage \+ 1, realPage \+ 2, realPage \+ 3\]/)
+  assert.match(source, /currentRealPage - 2,\s*currentRealPage - 1,\s*currentRealPage,\s*currentRealPage \+ 1,\s*currentRealPage \+ 2,\s*currentRealPage \+ 3/)
+})
+'''
+              t.write_text(ts)
+          PY
+
+          node --check apps/viewer/src/flipbook.js
+          node --check apps/viewer/src/viewerRuntime.js
+          node --test apps/viewer/tests/*.test.mjs
+          git diff --check
+          grep -F '[realPage - 2, realPage - 1, realPage, realPage + 1, realPage + 2, realPage + 3]' apps/viewer/src/flipbook.js
+          git add apps/viewer/src/flipbook.js apps/viewer/tests/viewer-load-resilience.test.mjs
+          git commit -m "perf(viewer): keep previous spread warm for back turns"
+          git push origin HEAD:deploy/preview-viewer-resilience-20260831
