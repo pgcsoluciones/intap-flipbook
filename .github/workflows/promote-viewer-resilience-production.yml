@@ -1,0 +1,80 @@
+name: Promote Viewer resilience to Production
+
+on:
+  push:
+    branches:
+      - audit/viewer-load-resilience-20260831
+    paths:
+      - .github/workflows/promote-viewer-resilience-production.yml
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/viewer-load-resilience-20260831
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "pgcsoluciones"
+          git config user.email "fliaprince@gmail.com"
+
+      - name: Verify and fast-forward production branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROD_BRANCH="claude/kind-shannon-udb4qo"
+          PROD_EXPECTED="6a73cec45ca698abac8764cfa1e8c46132626ecb"
+          FIX_BRANCH="fix/viewer-load-resilience-20260831"
+          FIX_EXPECTED="d3371153d802d25ac65e1be47225e59e30e42ff8"
+
+          git fetch origin "$PROD_BRANCH" "$FIX_BRANCH"
+
+          PROD_ACTUAL="$(git rev-parse "origin/$PROD_BRANCH")"
+          FIX_ACTUAL="$(git rev-parse "origin/$FIX_BRANCH")"
+
+          echo "Production actual: $PROD_ACTUAL"
+          echo "Fix validado:     $FIX_ACTUAL"
+
+          test "$PROD_ACTUAL" = "$PROD_EXPECTED" || {
+            echo "ERROR: Production cambió desde el baseline auditado. Promoción cancelada."
+            exit 1
+          }
+
+          test "$FIX_ACTUAL" = "$FIX_EXPECTED" || {
+            echo "ERROR: la rama fix cambió desde la versión validada. Promoción cancelada."
+            exit 1
+          }
+
+          git merge-base --is-ancestor "$PROD_ACTUAL" "$FIX_ACTUAL"
+
+          mapfile -t CHANGED < <(git diff --name-only "$PROD_ACTUAL..$FIX_ACTUAL")
+          printf 'Archivos a promover:\n%s\n' "${CHANGED[*]}"
+
+          test "${#CHANGED[@]}" -eq 3
+          printf '%s\n' "${CHANGED[@]}" | sort > /tmp/changed.txt
+          cat > /tmp/expected.txt <<'EOF'
+apps/viewer/src/flipbook.js
+apps/viewer/src/viewerRuntime.js
+apps/viewer/tests/viewer-load-resilience.test.mjs
+EOF
+          sort -o /tmp/expected.txt /tmp/expected.txt
+          diff -u /tmp/expected.txt /tmp/changed.txt
+
+          git checkout --detach "$FIX_ACTUAL"
+          node --check apps/viewer/src/flipbook.js
+          node --check apps/viewer/src/viewerRuntime.js
+          node --test apps/viewer/tests/*.test.mjs
+          git diff --check "$PROD_ACTUAL..$FIX_ACTUAL"
+
+          git push origin "$FIX_ACTUAL:refs/heads/$PROD_BRANCH"
+
+          REMOTE_AFTER="$(git ls-remote origin "refs/heads/$PROD_BRANCH" | awk '{print $1}')"
+          echo "Production repo después: $REMOTE_AFTER"
+          test "$REMOTE_AFTER" = "$FIX_EXPECTED"
