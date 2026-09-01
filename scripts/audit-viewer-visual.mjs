@@ -13,6 +13,7 @@ const HEIGHT = Number(process.env.INTAP_VISUAL_HEIGHT || 900)
 const TARGETS = String(process.env.INTAP_VISUAL_TARGETS || '1,16,18,20,34')
   .split(',').map((v) => Number(v.trim())).filter(Number.isFinite)
 const SLOW_NETWORK = process.env.INTAP_VISUAL_SLOW_NETWORK === '1'
+const CAPTURE_DELAY_MS = Number(process.env.INTAP_VISUAL_CAPTURE_DELAY_MS || (SLOW_NETWORK ? 10000 : 1200))
 
 if (!VIEWER_URL) throw new Error('Falta INTAP_VISUAL_VIEWER_URL')
 await fs.mkdir(OUTPUT_DIR, { recursive: true })
@@ -111,12 +112,12 @@ async function currentState(cdp) {
 }
 
 async function capture(cdp, label) {
-  await sleep(1200)
+  await sleep(CAPTURE_DELAY_MS)
   const state = await currentState(cdp)
   const shot = await cdp.send('Page.captureScreenshot', { format: 'png', fromSurface: true, captureBeyondViewport: false })
   const safe = label.replace(/[^a-zA-Z0-9_-]+/g, '-')
   await fs.writeFile(path.join(OUTPUT_DIR, `${safe}.png`), Buffer.from(shot.data, 'base64'))
-  return { label, ...state }
+  return { label, captureDelayMs: CAPTURE_DELAY_MS, ...state }
 }
 
 const chromeCandidates = [process.env.CHROME_BIN, '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser'].filter(Boolean)
@@ -166,8 +167,8 @@ try {
     const actual = pageNumber(info)
     manifest.push(await capture(cdp, `target-${targetPage}-actual-${actual ?? 'none'}`))
   }
-  await fs.writeFile(path.join(OUTPUT_DIR, 'manifest.json'), JSON.stringify({ viewer_url: VIEWER_URL, width: WIDTH, height: HEIGHT, slow_network: SLOW_NETWORK, captures: manifest }, null, 2))
-  console.log(JSON.stringify(manifest.map((m) => ({ label:m.label, info:m.info, visible:m.visible.length })), null, 2))
+  await fs.writeFile(path.join(OUTPUT_DIR, 'manifest.json'), JSON.stringify({ viewer_url: VIEWER_URL, width: WIDTH, height: HEIGHT, slow_network: SLOW_NETWORK, capture_delay_ms: CAPTURE_DELAY_MS, captures: manifest }, null, 2))
+  console.log(JSON.stringify(manifest.map((m) => ({ label:m.label, info:m.info, visible:m.visible.length, captureDelayMs:m.captureDelayMs })), null, 2))
 } finally {
   cdp?.close()
   try { chrome.kill('SIGTERM') } catch {}
