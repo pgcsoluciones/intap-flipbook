@@ -4707,7 +4707,10 @@ async function init() {
     const realPage = pageNumOf(pageIndex)
     const jobs = []
 
-    ;[realPage - 1, realPage, realPage + 1].forEach((pageNumber) => {
+    // PROTECTED: mantener preparado el pliego actual y el siguiente.
+    // En escritorio el avance normal salta dos páginas; precalentar +2/+3
+    // evita que el efecto de giro revele un overlay todavía frío.
+    ;[realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {
       if (pageNumber < 1 || pageNumber > realCount) return
 
       jobs.push(
@@ -4789,10 +4792,10 @@ async function init() {
   function disposeFarPageOverlays(pageIndex) {
     const currentRealPage = pageNumOf(pageIndex)
     const keep = new Set([
-      currentRealPage - 1,
       currentRealPage,
       currentRealPage + 1,
       currentRealPage + 2,
+      currentRealPage + 3,
     ].filter((pageNumber) => pageNumber >= 1 && pageNumber <= realCount))
 
     for (let pageNumber = 1; pageNumber <= realCount; pageNumber += 1) {
@@ -5495,8 +5498,11 @@ async function init() {
 
       await waitUntilPageFlipRead()
 
-      executeFlip()
-      await waitForPageFlipCycle()
+      // Arrancar las entradas al comenzar el giro evita revelar una hoja
+    // blanca mientras los objetos esperan el evento `flip` final.
+    triggerEntrances(targetIndex)
+    executeFlip()
+    await waitForPageFlipCycle()
     } finally {
       navigationPending = false
 
