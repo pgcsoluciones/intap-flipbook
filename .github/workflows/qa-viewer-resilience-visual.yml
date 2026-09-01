@@ -1,0 +1,57 @@
+name: QA Viewer resilience visual checkpoints
+
+on:
+  push:
+    branches:
+      - audit/viewer-load-resilience-20260831
+    paths:
+      - .github/workflows/qa-viewer-resilience-visual.yml
+      - scripts/audit-viewer-visual.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visual-checkpoints:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PREVIEW_URL: https://qa-viewer-resilience-2026083.intap-flipbook-viewer.pages.dev/?publication=catalogo-padres-2026&preview=1&api_base=https%3A%2F%2Fintap-flipbook-api.fliaprince.workers.dev
+    steps:
+      - name: Checkout audit tooling
+        uses: actions/checkout@v4
+        with:
+          ref: audit/viewer-load-resilience-20260831
+
+      - name: Capture desktop checkpoints
+        env:
+          INTAP_VISUAL_VIEWER_URL: ${{ env.PREVIEW_URL }}
+          INTAP_VISUAL_OUTPUT_DIR: visual-desktop
+          INTAP_VISUAL_CHROME_DEBUG_PORT: '9230'
+          INTAP_VISUAL_WIDTH: '1365'
+          INTAP_VISUAL_HEIGHT: '900'
+          INTAP_VISUAL_TARGETS: '1,16,18,20,34'
+        run: node scripts/audit-viewer-visual.mjs
+
+      - name: Capture mobile Slow-4G checkpoints
+        env:
+          INTAP_VISUAL_VIEWER_URL: ${{ env.PREVIEW_URL }}
+          INTAP_VISUAL_OUTPUT_DIR: visual-mobile-slow
+          INTAP_VISUAL_CHROME_DEBUG_PORT: '9231'
+          INTAP_VISUAL_WIDTH: '390'
+          INTAP_VISUAL_HEIGHT: '844'
+          INTAP_VISUAL_TARGETS: '1,16,18,20,23'
+          INTAP_VISUAL_SLOW_NETWORK: '1'
+        run: node scripts/audit-viewer-visual.mjs
+
+      - name: Upload visual QA checkpoints
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-resilience-visual-checkpoints
+          path: |
+            visual-desktop
+            visual-mobile-slow
+          if-no-files-found: error
+          retention-days: 7
