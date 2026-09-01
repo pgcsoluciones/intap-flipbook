@@ -29,6 +29,19 @@ jobs:
           set -euo pipefail
           curl --retry 4 --retry-delay 2 --connect-timeout 10 --max-time 30 -fsSI "$PREVIEW_BASE/" | head -n 20
 
+      - name: Configure read-only cross-origin probe
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/audit-viewer-browser.mjs')
+          s=p.read_text()
+          needle="  '--disable-background-networking',\n"
+          assert needle in s
+          if "  '--disable-web-security',\n" not in s:
+              s=s.replace(needle, needle+"  '--disable-web-security',\n", 1)
+          p.write_text(s)
+          PY
+
       - name: Run deployed desktop lifecycle QA
         env:
           INTAP_AUDIT_VIEWER_URL: ${{ env.PREVIEW_URL }}
@@ -53,7 +66,7 @@ jobs:
           assert not fatal_net, fatal_net
           built=sum(1 for p in final['pages'] if p.get('overlayBuilt'))
           assert built <= 4, built
-          print(f'OK desktop Preview: {current}/{total}, overlays={built}, heapMiB={round(final.get("heap",{}).get("usedSize",0)/1048576,1)}')
+          print(f'OK desktop Preview: {current}/{total}, overlays={built}, heapMiB={round(final.get("heap",{}).get("usedSize",0)/1048576,1)}, viewerWarnings={len(d.get("console_events",[]))}')
           PY
 
       - name: Configure mobile constrained browser
@@ -63,7 +76,6 @@ jobs:
           from pathlib import Path
           p=Path('scripts/audit-viewer-browser-mobile.mjs')
           s=p.read_text()
-          s=s.replace("  '--disable-background-networking',\n", "  '--disable-background-networking',\n  '--disable-web-security',\n", 1)
           s=s.replace("'--window-size=1365,900'", "'--window-size=390,844'", 1)
           needle="  await Promise.all([\n    cdp.send('Runtime.enable'),\n    cdp.send('Network.enable'),\n    cdp.send('Page.enable'),\n    cdp.send('Performance.enable'),\n  ])\n"
           assert needle in s
