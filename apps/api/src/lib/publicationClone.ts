@@ -2,7 +2,8 @@ export type CloneColumn = {
   name: string
 }
 
-export type CloneMapRow = Record<string, string | null>
+export type CloneMapScalar = string | number | null
+export type CloneMapRow = Record<string, CloneMapScalar>
 
 export type CloneSqlOverride = {
   sql: string
@@ -125,9 +126,20 @@ const MARKER_REFERENCE_KEYS = new Set([
   'dynamicMarkerId',
 ])
 
-function remapMarkerReferences(value: unknown, markerIds: ReadonlyMap<string, string>): unknown {
+const PRODUCT_DETAIL_REFERENCE_KEYS = new Set([
+  'detail_id',
+  'detailId',
+  'product_detail_id',
+  'productDetailId',
+])
+
+function remapLinkedReferences(
+  value: unknown,
+  markerIds: ReadonlyMap<string, string>,
+  productDetailIds: ReadonlyMap<number, number>,
+): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => remapMarkerReferences(item, markerIds))
+    return value.map((item) => remapLinkedReferences(item, markerIds, productDetailIds))
   }
   if (!value || typeof value !== 'object') return value
 
@@ -137,7 +149,17 @@ function remapMarkerReferences(value: unknown, markerIds: ReadonlyMap<string, st
       next[key] = markerIds.get(child)!
       continue
     }
-    next[key] = remapMarkerReferences(child, markerIds)
+
+    if (PRODUCT_DETAIL_REFERENCE_KEYS.has(key)) {
+      const numericId = typeof child === 'number' ? child : Number(child)
+      if (Number.isInteger(numericId) && productDetailIds.has(numericId)) {
+        const nextId = productDetailIds.get(numericId)!
+        next[key] = typeof child === 'string' ? String(nextId) : nextId
+        continue
+      }
+    }
+
+    next[key] = remapLinkedReferences(child, markerIds, productDetailIds)
   }
   return next
 }
@@ -145,13 +167,14 @@ function remapMarkerReferences(value: unknown, markerIds: ReadonlyMap<string, st
 export function remapPublicationCanvasJson(
   canvasJson: string | null | undefined,
   markerIdMap: ReadonlyMap<string, string>,
+  productDetailIdMap: ReadonlyMap<number, number> = new Map(),
 ): string | null {
   if (canvasJson == null) return null
-  if (!canvasJson.trim() || markerIdMap.size === 0) return canvasJson
+  if (!canvasJson.trim() || (markerIdMap.size === 0 && productDetailIdMap.size === 0)) return canvasJson
 
   try {
     const parsed = JSON.parse(canvasJson)
-    const remapped = remapMarkerReferences(parsed, markerIdMap)
+    const remapped = remapLinkedReferences(parsed, markerIdMap, productDetailIdMap)
     return JSON.stringify(remapped)
   } catch {
     // El editor ya tolera canvas_json históricos o dañados. Una clonación no debe
@@ -161,5 +184,9 @@ export function remapPublicationCanvasJson(
 }
 
 export function cloneMapPairs(map: ReadonlyMap<string, string>): Array<{ old_id: string; new_id: string }> {
+  return Array.from(map.entries()).map(([old_id, new_id]) => ({ old_id, new_id }))
+}
+
+export function cloneNumericMapPairs(map: ReadonlyMap<number, number>): Array<{ old_id: number; new_id: number }> {
   return Array.from(map.entries()).map(([old_id, new_id]) => ({ old_id, new_id }))
 }
