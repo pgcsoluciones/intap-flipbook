@@ -57,3 +57,10 @@ test('failed background and overlay work cannot be marked ready', () => {
   assert.match(source, /div\.__pageBackgroundLoaded = false/)
   assert.match(source, /div\.__overlayBuilt = false/)
 })
+
+
+test('viewer keeps previous and next spreads warm for bidirectional turns', () => {
+  const source = fs.readFileSync(new URL('../src/flipbook.js', import.meta.url), 'utf8')
+  assert.match(source, /\[realPage - 2, realPage - 1, realPage, realPage \+ 1, realPage \+ 2, realPage \+ 3\]/)
+  assert.match(source, /currentRealPage - 2,\s*currentRealPage - 1,\s*currentRealPage,\s*currentRealPage \+ 1,\s*currentRealPage \+ 2,\s*currentRealPage \+ 3/)
+})
