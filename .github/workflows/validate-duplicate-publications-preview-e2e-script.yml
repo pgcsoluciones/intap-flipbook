@@ -1,0 +1,19 @@
+name: Validate duplicate publications Preview E2E script
+
+on:
+  push:
+    branches:
+      - audit/duplicate-publications-20260901
+    paths:
+      - scripts/qa-duplicate-publications-preview.mjs
+      - .github/workflows/validate-duplicate-publications-preview-e2e-script.yml
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/duplicate-publications-20260901
+      - name: Check QA probe syntax
+        run: node --check scripts/qa-duplicate-publications-preview.mjs
