@@ -841,12 +841,13 @@ publications.put('/:id', async (c) => {
     socialImageSourceUrl.present ||
     socialImageCropJson.present
 
-  await c.env.DB.prepare(
+  try {
+    await c.env.DB.prepare(
     `UPDATE publications
      SET title = COALESCE(?, title),
          description = COALESCE(?, description),
          category = COALESCE(?, category),
-         public_slug = CASE WHEN ? THEN ? ELSE public_slug END,
+         public_slug = COALESCE(?, public_slug),
          sound_enabled = COALESCE(?, sound_enabled),
          cover_image_url = COALESCE(?, cover_image_url),
          project_phone = COALESCE(?, project_phone),
@@ -868,7 +869,6 @@ publications.put('/:id', async (c) => {
       body.title ?? null,
       body.description ?? null,
       body.category ?? null,
-      publicSlugPresent ? 1 : 0,
       publicSlugValue,
       soundValue,
       body.cover_image_url ?? null,
@@ -892,6 +892,21 @@ publications.put('/:id', async (c) => {
       c.req.param('id'),
     )
     .run()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('[publications.update] failed', {
+      publication_id: c.req.param('id'),
+      user_id: userId,
+      public_slug_present: publicSlugPresent,
+      error: message,
+    })
+    return c.json({
+      success: false,
+      error: (c.env.APP_ENV ?? 'production') === 'preview'
+        ? `No se pudo actualizar la publicación en Preview: ${message}`
+        : 'No se pudo actualizar la publicación',
+    }, 500)
+  }
 
   const updated = await c.env.DB.prepare('SELECT * FROM publications WHERE id = ?')
     .bind(c.req.param('id'))

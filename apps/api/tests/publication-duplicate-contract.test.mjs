@@ -27,6 +27,12 @@ test('duplicate remaps linked data and reuses physical media safely', () => {
   assert.match(source, /cloned_from_marker_id: \{ sql: 'source\.id' \}/)
 })
 
+test('publication slug update uses a nullable direct binding compatible with D1', () => {
+  assert.match(source, /public_slug = COALESCE\(\?, public_slug\)/)
+  assert.doesNotMatch(source, /public_slug = CASE WHEN \? THEN \? ELSE public_slug END/)
+  assert.match(source, /No se pudo actualizar la publicación en Preview/)
+})
+
 test('duplicate does not copy analytics or transactional history', () => {
   const duplicateBlock = source.slice(
     source.indexOf("publications.post('/:id/duplicate'"),
