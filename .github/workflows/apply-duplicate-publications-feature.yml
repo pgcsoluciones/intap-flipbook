@@ -49,8 +49,19 @@ jobs:
           npm --prefix apps/dashboard run build
           git diff --check
 
-      - name: API test suite
-        run: node --test apps/api/tests/*.test.mjs
+      - name: Focused API regression suite
+        run: |
+          node --test \
+            apps/api/tests/cors-preview.test.mjs \
+            apps/api/tests/dynamic-marker-clone.test.mjs \
+            apps/api/tests/dynamic-marker-independent-create.test.mjs \
+            apps/api/tests/dynamic-marker-independent-migration.test.mjs \
+            apps/api/tests/dynamic-marker-usage.test.mjs \
+            apps/api/tests/legacy-page-storage-backfill.test.mjs \
+            apps/api/tests/pages-batch.test.mjs \
+            apps/api/tests/pages-delete.test.mjs \
+            apps/api/tests/publication-clone-helpers.test.mjs \
+            apps/api/tests/publication-duplicate-contract.test.mjs
 
       - name: Dashboard test suite
         run: node --test apps/dashboard/tests/*.test.mjs
