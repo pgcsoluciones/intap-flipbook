@@ -4710,7 +4710,10 @@ async function init() {
     // PROTECTED: mantener preparado el pliego actual y el siguiente.
     // En escritorio el avance normal salta dos páginas; precalentar +2/+3
     // evita que el efecto de giro revele un overlay todavía frío.
-    ;[realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {
+    // PROTECTED: conservar también el pliego anterior ya renderizado.
+    // En escritorio un retroceso normal salta dos páginas; mantener -2/-1 evita
+    // reconstruir el overlay durante el giro hacia atrás.
+    ;[realPage - 2, realPage - 1, realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {
       if (pageNumber < 1 || pageNumber > realCount) return
 
       jobs.push(
@@ -4792,6 +4795,8 @@ async function init() {
   function disposeFarPageOverlays(pageIndex) {
     const currentRealPage = pageNumOf(pageIndex)
     const keep = new Set([
+      currentRealPage - 2,
+      currentRealPage - 1,
       currentRealPage,
       currentRealPage + 1,
       currentRealPage + 2,
