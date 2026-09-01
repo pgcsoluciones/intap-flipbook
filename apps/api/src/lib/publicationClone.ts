@@ -143,14 +143,16 @@ function remapLinkedReferences(
   }
   if (!value || typeof value !== 'object') return value
 
+  const record = value as Record<string, unknown>
+  const isProductDetailAction = record.type === 'open_product_detail'
   const next: Record<string, unknown> = {}
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, child] of Object.entries(record)) {
     if (MARKER_REFERENCE_KEYS.has(key) && typeof child === 'string' && markerIds.has(child)) {
       next[key] = markerIds.get(child)!
       continue
     }
 
-    if (PRODUCT_DETAIL_REFERENCE_KEYS.has(key)) {
+    if (isProductDetailAction && PRODUCT_DETAIL_REFERENCE_KEYS.has(key)) {
       const numericId = typeof child === 'number' ? child : Number(child)
       if (Number.isInteger(numericId) && productDetailIds.has(numericId)) {
         const nextId = productDetailIds.get(numericId)!

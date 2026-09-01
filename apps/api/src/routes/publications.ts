@@ -3,6 +3,7 @@ import { jwtMiddleware } from '../middleware/jwt'
 import { signJwt } from '../lib/jwt'
 import { getUserPlan, checkPublicationLimit, checkSoundAllowed } from '../lib/plans'
 import { slugify, uniqueSlug } from './auth'
+import { countOpenProductDetailReferences, parseCanvasJson } from '../lib/productDetailsCanvas'
 import {
   buildJsonColumnUpdateStatement,
   buildMappedCloneInsertStatement,
@@ -222,6 +223,26 @@ function clonePublicationInsertStatement(input: {
   }
 }
 
+
+function cloneProductInternalName(value: unknown, publicationId: string): string {
+  const base = String(value ?? '').trim() || 'Producto'
+  const suffix = ` · copia ${publicationId.slice(0, 12)}`
+  return `${base.slice(0, Math.max(1, 160 - suffix.length))}${suffix}`
+}
+
+async function cleanupStagedProductDetails(
+  db: D1Database,
+  tenantId: string,
+  ids: number[],
+): Promise<void> {
+  if (!ids.length) return
+  await db.prepare(
+    `DELETE FROM product_details
+     WHERE tenant_id = ?
+       AND id IN (SELECT CAST(value AS INTEGER) FROM json_each(?))`,
+  ).bind(tenantId, JSON.stringify(ids)).run()
+}
+
 // GET /api/publications — solo las activas (deleted_at IS NULL)
 publications.get('/', async (c) => {
   const userId = c.get('user').sub
@@ -386,6 +407,31 @@ publications.post('/:id/duplicate', async (c) => {
   const unitIdMap = new Map<string, string>()
   sourceUnits.forEach((unit) => unitIdMap.set(String(unit.id), crypto.randomUUID()))
 
+
+  const usedProductDetailIds = new Set<number>()
+  sourcePages.forEach((page) => {
+    const refs = countOpenProductDetailReferences(parseCanvasJson(page.canvas_json))
+    refs.forEach((_count, detailId) => usedProductDetailIds.add(detailId))
+  })
+
+  const sourceProductDetails = usedProductDetailIds.size
+    ? await optionalCloneRows<Record<string, any>>(
+        c.env.DB,
+        `SELECT * FROM product_details
+         WHERE tenant_id = ?
+           AND id IN (SELECT CAST(value AS INTEGER) FROM json_each(?))
+         ORDER BY id ASC`,
+        [userId, JSON.stringify(Array.from(usedProductDetailIds))],
+      )
+    : []
+
+  if (sourceProductDetails.length !== usedProductDetailIds.size) {
+    return c.json({
+      success: false,
+      error: 'El catálogo contiene detalles de producto heredados que ya no están disponibles. Corrige esos vínculos antes de duplicar.',
+    }, 409)
+  }
+
   const [
     publicationColumns,
     pageColumns,
@@ -522,35 +568,98 @@ publications.post('/:id/duplicate', async (c) => {
     }))
   }
 
-  if (pageColumns.includes('canvas_json')) {
-    addStatement(buildJsonColumnUpdateStatement({
-      table: 'pages',
-      valueColumn: 'canvas_json',
-      rows: sourcePages.map((page) => ({
-        id: pageIdMap.get(String(page.id))!,
-        value: remapPublicationCanvasJson(page.canvas_json, markerIdMap),
-      })),
-    }))
-  }
-
-  if (storageReferenceColumns.length) {
-    const storageMaps = [
-      [{ old_id: sourcePublicationId, new_id: newPublicationId }],
-      cloneMapPairs(pageIdMap),
-      cloneMapPairs(markerIdMap),
-      cloneMapPairs(mediaFolderIdMap),
-      cloneMapPairs(mediaAssetIdMap),
-      cloneMapPairs(unitIdMap),
-    ]
-    storageMaps.forEach((mapRows) => {
-      addStatement(buildMappedStorageReferenceStatement(mapRows, newPublicationId, sourcePublicationId))
-    })
-  }
+  const productDetailIdMap = new Map<number, number>()
+  const stagedProductDetailIds: number[] = []
 
   try {
-    // D1 batch es atómico: si una copia dependiente falla, no queda una publicación parcial.
+    if (sourceProductDetails.length) {
+      const productResults = await c.env.DB.batch(sourceProductDetails.map((detail) => c.env.DB.prepare(
+        `INSERT INTO product_details (
+          tenant_id,
+          internal_name,
+          title,
+          description,
+          price,
+          image_url,
+          accent_color,
+          cta_type,
+          cta_label,
+          cta_target,
+          status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        userId,
+        cloneProductInternalName(detail.internal_name, newPublicationId),
+        detail.title,
+        detail.description ?? null,
+        detail.price ?? null,
+        detail.image_url ?? null,
+        detail.accent_color ?? '#4F46E5',
+        detail.cta_type ?? null,
+        detail.cta_label ?? null,
+        detail.cta_target ?? null,
+        detail.status === 'active' ? 'active' : 'inactive',
+      )))
+
+      productResults.forEach((result, index) => {
+        const newId = Number(result.meta.last_row_id)
+        const oldId = Number(sourceProductDetails[index]?.id)
+        if (!Number.isInteger(newId) || newId <= 0 || !Number.isInteger(oldId) || oldId <= 0) {
+          throw new Error('D1 no devolvió un id válido al clonar un detalle de producto')
+        }
+        stagedProductDetailIds.push(newId)
+        productDetailIdMap.set(oldId, newId)
+      })
+
+      if (productDetailIdMap.size !== sourceProductDetails.length) {
+        throw new Error('No se pudo completar el mapa de detalles de producto')
+      }
+    }
+
+    if (pageColumns.includes('canvas_json')) {
+      addStatement(buildJsonColumnUpdateStatement({
+        table: 'pages',
+        valueColumn: 'canvas_json',
+        rows: sourcePages.map((page) => ({
+          id: pageIdMap.get(String(page.id))!,
+          value: remapPublicationCanvasJson(page.canvas_json, markerIdMap, productDetailIdMap),
+        })),
+      }))
+    }
+
+    if (storageReferenceColumns.length) {
+      const storageMaps = [
+        [{ old_id: sourcePublicationId, new_id: newPublicationId }],
+        cloneMapPairs(pageIdMap),
+        cloneMapPairs(markerIdMap),
+        cloneMapPairs(mediaFolderIdMap),
+        cloneMapPairs(mediaAssetIdMap),
+        cloneMapPairs(unitIdMap),
+      ]
+      storageMaps.forEach((mapRows) => {
+        addStatement(buildMappedStorageReferenceStatement(mapRows, newPublicationId, sourcePublicationId))
+      })
+    }
+
+    // El catálogo y sus dependencias propias se escriben atómicamente. Los
+    // product_details heredados son tenant-global y se preparan antes solo para
+    // obtener sus IDs AUTOINCREMENT; si este batch falla, se eliminan abajo.
     await c.env.DB.batch(statements)
   } catch (error) {
+    if (stagedProductDetailIds.length) {
+      try {
+        await cleanupStagedProductDetails(c.env.DB, userId, stagedProductDetailIds)
+      } catch (cleanupError) {
+        console.error('[publications.duplicate] staged product detail cleanup failed', {
+          source_publication_id: sourcePublicationId,
+          target_publication_id: newPublicationId,
+          user_id: userId,
+          staged_product_detail_ids: stagedProductDetailIds,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        })
+      }
+    }
+
     console.error('[publications.duplicate] transaction failed', {
       source_publication_id: sourcePublicationId,
       target_publication_id: newPublicationId,
@@ -576,7 +685,8 @@ publications.post('/:id/duplicate', async (c) => {
       dynamic_markers: sourceMarkers.length,
       media_folders: sourceMediaFolders.length,
       media_assets: sourceMediaAssets.length,
-      legacy_product_details_reused: true,
+      product_details: sourceProductDetails.length,
+      legacy_product_details_reused: false,
       units: sourceUnits.length,
       copied_history: false,
       reused_physical_media: true,

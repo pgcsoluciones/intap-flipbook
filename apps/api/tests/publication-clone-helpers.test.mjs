@@ -37,6 +37,7 @@ test('remapea vínculos internos sin cambiar elementId ni texto casual', () => {
           { type: 'text', text: 'marker-old', data: { markerId: 'marker-old' } },
           { type: 'rect', data: { action: { type: 'open_product_detail', detail_id: 41 } } },
           { type: 'rect', action: { type: 'open_product_detail', detail_id: '41' } },
+          { type: 'rect', data: { detail_id: 41, label: 'dato no enlazado' } },
         ],
       },
     ],
@@ -53,6 +54,7 @@ test('remapea vínculos internos sin cambiar elementId ni texto casual', () => {
   assert.equal(result.objects[0].objects[0].text, 'marker-old')
   assert.equal(result.objects[0].objects[1].data.action.detail_id, 8041)
   assert.equal(result.objects[0].objects[2].action.detail_id, '8041')
+  assert.equal(result.objects[0].objects[3].data.detail_id, 41)
 })
 
 test('preserva canvas_json malformado exactamente como llegó', () => {

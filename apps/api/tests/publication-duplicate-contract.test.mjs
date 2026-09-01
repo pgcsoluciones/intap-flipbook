@@ -19,10 +19,11 @@ test('duplicate is atomic and always creates a draft with fresh identity', () =>
 })
 
 test('duplicate remaps linked data and reuses physical media safely', () => {
-  assert.match(source, /remapPublicationCanvasJson\(page\.canvas_json, markerIdMap\)/)
+  assert.match(source, /remapPublicationCanvasJson\(page\.canvas_json, markerIdMap, productDetailIdMap\)/)
   assert.match(source, /buildMappedStorageReferenceStatement/)
   assert.match(source, /reused_physical_media: true/)
-  assert.match(source, /legacy_product_details_reused: true/)
+  assert.match(source, /product_details: sourceProductDetails\.length/)
+  assert.match(source, /legacy_product_details_reused: false/)
   assert.match(source, /cloned_from_marker_id: \{ sql: 'source\.id' \}/)
 })
 
@@ -36,4 +37,13 @@ test('duplicate does not copy analytics or transactional history', () => {
   assert.doesNotMatch(duplicateBlock, /INSERT INTO form_responses/)
   assert.doesNotMatch(duplicateBlock, /INSERT INTO lead_intakes/)
   assert.doesNotMatch(duplicateBlock, /INSERT INTO appointment_calendar_bookings/)
+})
+
+
+test('legacy product details referenced by the catalog are cloned and cleaned if the catalog transaction fails', () => {
+  assert.match(source, /countOpenProductDetailReferences\(parseCanvasJson\(page\.canvas_json\)\)/)
+  assert.match(source, /INSERT INTO product_details/)
+  assert.match(source, /result\.meta\.last_row_id/)
+  assert.match(source, /cleanupStagedProductDetails\(c\.env\.DB, userId, stagedProductDetailIds\)/)
+  assert.match(source, /sourceProductDetails\.length !== usedProductDetailIds\.size/)
 })
