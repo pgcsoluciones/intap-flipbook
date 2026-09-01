@@ -1,0 +1,106 @@
+name: Apply Viewer page-turn responsiveness patch v3
+
+on:
+  push:
+    branches:
+      - audit/viewer-load-resilience-20260831
+    paths:
+      - .github/workflows/apply-viewer-page-turn-responsiveness-v3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/viewer-load-resilience-20260831
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "pgcsoluciones"
+          git config user.email "fliaprince@gmail.com"
+
+      - name: Patch product branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin fix/viewer-load-resilience-20260831 deploy/preview-viewer-resilience-20260831
+          git checkout -B fix/viewer-load-resilience-20260831 origin/fix/viewer-load-resilience-20260831
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apps/viewer/src/flipbook.js')
+          s = p.read_text()
+          old = ';[realPage - 1, realPage, realPage + 1].forEach((pageNumber) => {'
+          new = '''// PROTECTED: mantener preparado el pliego actual y el siguiente.
+              // En escritorio el avance normal salta dos páginas; precalentar +2/+3
+              // evita que el efecto de giro revele un overlay todavía frío.
+              ;[realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'''
+          assert old in s, 'No se encontró lista ensureNearbyOverlays'
+          s = s.replace(old, new, 1)
+          old = '      currentRealPage - 1,\n      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,'
+          new = '      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,\n      currentRealPage + 3,'
+          assert old in s, 'No se encontró ventana keep'
+          s = s.replace(old, new, 1)
+          old = '      executeFlip()\n      await waitForPageFlipCycle()'
+          new = '''      // Arrancar las entradas al comenzar el giro evita revelar una hoja
+              // blanca mientras los objetos esperan el evento `flip` final.
+              triggerEntrances(targetIndex)
+              executeFlip()
+              await waitForPageFlipCycle()'''
+          assert old in s, 'No se encontró executeFlip esperado'
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          node --check apps/viewer/src/flipbook.js
+          node --check apps/viewer/src/viewerRuntime.js
+          node --test apps/viewer/tests/*.test.mjs
+          grep -F '[realPage, realPage + 1, realPage + 2, realPage + 3]' apps/viewer/src/flipbook.js
+          grep -F 'triggerEntrances(targetIndex)' apps/viewer/src/flipbook.js
+          git diff --check
+          git add apps/viewer/src/flipbook.js
+          git commit -m "perf(viewer): prewarm next spread during page turn"
+          git push origin HEAD:fix/viewer-load-resilience-20260831
+
+      - name: Patch QA deployment branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -B deploy/preview-viewer-resilience-20260831 origin/deploy/preview-viewer-resilience-20260831
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apps/viewer/src/flipbook.js')
+          s = p.read_text()
+          old = ';[realPage - 1, realPage, realPage + 1].forEach((pageNumber) => {'
+          new = '''// PROTECTED: mantener preparado el pliego actual y el siguiente.
+              // En escritorio el avance normal salta dos páginas; precalentar +2/+3
+              // evita que el efecto de giro revele un overlay todavía frío.
+              ;[realPage, realPage + 1, realPage + 2, realPage + 3].forEach((pageNumber) => {'''
+          assert old in s, 'No se encontró lista ensureNearbyOverlays en deploy'
+          s = s.replace(old, new, 1)
+          old = '      currentRealPage - 1,\n      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,'
+          new = '      currentRealPage,\n      currentRealPage + 1,\n      currentRealPage + 2,\n      currentRealPage + 3,'
+          assert old in s, 'No se encontró ventana keep en deploy'
+          s = s.replace(old, new, 1)
+          old = '      executeFlip()\n      await waitForPageFlipCycle()'
+          new = '''      // Arrancar las entradas al comenzar el giro evita revelar una hoja
+              // blanca mientras los objetos esperan el evento `flip` final.
+              triggerEntrances(targetIndex)
+              executeFlip()
+              await waitForPageFlipCycle()'''
+          assert old in s, 'No se encontró executeFlip en deploy'
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          node --check apps/viewer/src/flipbook.js
+          node --check apps/viewer/src/viewerRuntime.js
+          node --test apps/viewer/tests/*.test.mjs
+          grep -F '[realPage, realPage + 1, realPage + 2, realPage + 3]' apps/viewer/src/flipbook.js
+          grep -F 'triggerEntrances(targetIndex)' apps/viewer/src/flipbook.js
+          git diff --check
+          git add apps/viewer/src/flipbook.js
+          git commit -m "perf(viewer): prewarm next spread during page turn"
+          git push origin HEAD:deploy/preview-viewer-resilience-20260831
