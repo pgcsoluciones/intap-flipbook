@@ -561,6 +561,11 @@ export const api = {
     get: (id: string) => request<{ success: true; data: any }>(`/api/publications/${id}`),
     create: (body: { title: string; description?: string; category?: string }) =>
       request<{ success: true; data: any }>('/api/publications', { method: 'POST', body: JSON.stringify(body) }),
+    duplicate: (id: string, body: { title: string; public_slug?: string }) =>
+      request<{ success: true; data: any; clone_summary?: Record<string, unknown>; warning?: string }>(
+        `/api/publications/${id}/duplicate`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
     update: (id: string, body: Record<string, unknown>) =>
       request<{ success: true; data: any }>(`/api/publications/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     delete: (id: string) =>

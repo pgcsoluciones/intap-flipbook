@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api, toCanvasSafeAssetUrl } from '../lib/api'
+import { publicationSlugDraft } from '../lib/publicationDuplicate'
 import UnitsPanel from './UnitsPanel'
 
 const CATEGORIES = [
@@ -228,6 +229,7 @@ export default function Settings() {
 
   const [pub, setPub]               = useState<any>(null)
   const [title, setTitle]           = useState('')
+  const [publicSlug, setPublicSlug] = useState('')
   const [description, setDesc]      = useState('')
   const [category, setCategory]     = useState('')
   const [soundEnabled, setSound]    = useState(false)
@@ -263,6 +265,7 @@ export default function Settings() {
       const p = r.data
       setPub(p)
       setTitle(p.title ?? '')
+      setPublicSlug(p.public_slug ?? '')
       setDesc(p.description ?? '')
       setCategory(p.category ?? '')
       setSound(!!p.sound_enabled)
@@ -299,6 +302,7 @@ export default function Settings() {
     try {
       const body: Record<string, unknown> = {
         title,
+        public_slug: publicationSlugDraft(publicSlug),
         description,
         category,
         sound_enabled: soundEnabled,
@@ -336,6 +340,7 @@ export default function Settings() {
 
       const res = await api.publications.update(id, body)
       setPub(res.data)
+      setPublicSlug(res.data.public_slug ?? '')
       setSocialTitle(res.data.social_title ?? '')
       setSocialDescription(res.data.social_description ?? '')
       setSocialImageUrl(res.data.social_image_url ?? savedImageUrl ?? '')
@@ -463,6 +468,22 @@ export default function Settings() {
                 required
                 maxLength={120}
               />
+            </label>
+
+            <label style={styles.label}>
+              Enlace público (slug) <span style={styles.required}>*</span>
+              <input
+                style={styles.input}
+                value={publicSlug}
+                onChange={(e) => setPublicSlug(publicationSlugDraft(e.target.value))}
+                required
+                maxLength={60}
+                placeholder="catalogo-para-hombres"
+              />
+              <span style={styles.helpText}>flip.intaprd.com/{publicSlug || 'slug-del-flipbook'}</span>
+              {pub.status === 'published' && publicSlug !== (pub.public_slug ?? '') && (
+                <span style={styles.warnText}>Cambiar el slug modifica el enlace público de esta publicación.</span>
+              )}
             </label>
 
             <label style={styles.label}>

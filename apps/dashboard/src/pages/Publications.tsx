@@ -4,6 +4,7 @@ import { api } from '../lib/api'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { BLANK_PAGE_URL } from '../lib/blankPage'
 import { ensurePdfJs } from '../lib/externalScripts'
+import { duplicatePublicationSlug, duplicatePublicationTitle, publicationSlugDraft } from '../lib/publicationDuplicate'
 
 const CATEGORIES: Record<string, string> = {
   catalogo:   'Catálogo',
@@ -748,16 +749,140 @@ function ProposeModal({ pub, onClose }: { pub: any; onClose: () => void }) {
   )
 }
 
+
+function DuplicatePublicationModal({
+  pub,
+  onClose,
+  onCreated,
+}: {
+  pub: any
+  onClose: () => void
+  onCreated: (copy: any) => void
+}) {
+  const [title, setTitle] = useState(() => duplicatePublicationTitle(pub.title))
+  const [slug, setSlug] = useState(() => duplicatePublicationSlug(pub.title))
+  const [slugTouched, setSlugTouched] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const cleanTitle = title.trim()
+    const cleanSlug = publicationSlugDraft(slug)
+    if (!cleanTitle) { setError('El nombre de la copia es requerido.'); return }
+    if (!cleanSlug) { setError('El slug debe contener letras o números.'); return }
+
+    setSaving(true)
+    setError('')
+    try {
+      const response = await api.publications.duplicate(pub.id, {
+        title: cleanTitle,
+        public_slug: cleanSlug,
+      })
+      onCreated(response.data)
+    } catch (err: any) {
+      setError(err?.message ?? 'No se pudo duplicar el flipbook.')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={s.overlay} onClick={(e) => e.target === e.currentTarget && !saving && onClose()}>
+      <div style={{ ...s.modal, width: 520 }}>
+        <div style={s.modalHeader}>
+          <div>
+            <h2 style={s.modalTitle}>Duplicar flipbook</h2>
+            <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>{pub.title}</div>
+          </div>
+          <button style={s.closeBtn} onClick={onClose} disabled={saving}>✕</button>
+        </div>
+        <form onSubmit={handleSubmit} style={s.modalForm}>
+          <div style={{ padding: '10px 12px', borderRadius: 8, background: '#eef2ff', color: '#3730a3', fontSize: 12, lineHeight: 1.5 }}>
+            Se creará una copia independiente en borrador. El original, sus vistas, solicitudes, respuestas y reservas no se modifican ni se copian.
+          </div>
+
+          <div style={s.formField}>
+            <label style={s.formLabel}>Nombre de la copia *</label>
+            <input
+              autoFocus
+              required
+              maxLength={120}
+              style={s.formInput}
+              value={title}
+              disabled={saving}
+              onChange={(e) => {
+                const nextTitle = e.target.value
+                setTitle(nextTitle)
+                if (!slugTouched) setSlug(publicationSlugDraft(nextTitle))
+              }}
+              placeholder="Ej: Catálogo para Hombres"
+            />
+          </div>
+
+          <div style={s.formField}>
+            <label style={s.formLabel}>Slug público *</label>
+            <input
+              required
+              maxLength={60}
+              style={s.formInput}
+              value={slug}
+              disabled={saving}
+              onChange={(e) => {
+                setSlugTouched(true)
+                setSlug(publicationSlugDraft(e.target.value))
+              }}
+              placeholder="catalogo-para-hombres"
+            />
+            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
+              flip.intaprd.com/{slug || 'nuevo-slug'}
+            </div>
+          </div>
+
+          {saving && (
+            <div style={{ fontSize: 12, color: '#4f46e5' }}>
+              Duplicando páginas, fichas, multimedia y vínculos…
+            </div>
+          )}
+          {error && <div style={s.errorText}>{error}</div>}
+
+          <div style={s.modalFooter}>
+            <button type="button" style={s.btnCancel} onClick={onClose} disabled={saving}>Cancelar</button>
+            <button
+              type="submit"
+              style={{ ...s.btnCreate, opacity: saving ? 0.7 : 1 }}
+              disabled={saving || !title.trim() || !slug}
+            >
+              {saving ? 'Duplicando…' : 'Duplicar y editar →'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function PubCard({ pub, isMobile, onDelete, onPublish, onMoveFolder, onCoverChanged, folders }: { pub: any; isMobile?: boolean; onDelete: () => void; onPublish: () => void; onMoveFolder: (folderId: string | null) => void; onCoverChanged: (url: string) => void; folders: any[] }) {
   const [hover, setHover] = useState(false)
   const [showPropose, setShowPropose] = useState(false)
   const [showCoverModal, setShowCoverModal] = useState(false)
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false)
+  const navigate = useNavigate()
   const isPublished = pub.status === 'published'
 
   return (
     <>
     {showPropose && <ProposeModal pub={pub} onClose={() => setShowPropose(false)} />}
     {showCoverModal && <CoverModal pubId={pub.id} currentCover={pub.cover_image_url} onClose={() => setShowCoverModal(false)} onConfirm={(url) => { onCoverChanged(url); setShowCoverModal(false) }} />}
+    {showDuplicateModal && (
+      <DuplicatePublicationModal
+        pub={pub}
+        onClose={() => setShowDuplicateModal(false)}
+        onCreated={(copy) => {
+          setShowDuplicateModal(false)
+          navigate(`/publications/${copy.id}/editor`)
+        }}
+      />
+    )}
     <div
       style={{ ...s.card, boxShadow: hover ? '0 4px 20px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.07)' }}
       onMouseEnter={() => setHover(true)}
@@ -819,6 +944,12 @@ function PubCard({ pub, isMobile, onDelete, onPublish, onMoveFolder, onCoverChan
             style={{ ...s.actionBtn, fontSize: 11 }}
             onClick={() => setShowCoverModal(true)}
           >🖼️</button>
+          <button
+            title="Duplicar flipbook"
+            aria-label={`Duplicar ${pub.title}`}
+            style={{ ...s.actionBtn, color: '#4f46e5', fontWeight: 600 }}
+            onClick={() => setShowDuplicateModal(true)}
+          >⧉ Duplicar</button>
           {isPublished && (
             <button
               title="Proponer como plantilla"
@@ -958,7 +1089,7 @@ const s: Record<string, React.CSSProperties> = {
   cardInfo:    { padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 6 },
   cardName:    { fontWeight: 600, fontSize: 13, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   cardMeta:    { fontSize: 11, color: '#9ca3af' },
-  cardActions: { display: 'flex', gap: 4, alignItems: 'center', marginTop: 2 },
+  cardActions: { display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', marginTop: 2 },
   actionBtn:   { background: 'none', border: 'none', fontSize: 12, cursor: 'pointer', color: '#6b7280', padding: '4px 6px', borderRadius: 4 },
   mobilePrimary: { width: '100%', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 6, padding: '8px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
   mobileGhost:   { width: '100%', background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 6, padding: '8px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },

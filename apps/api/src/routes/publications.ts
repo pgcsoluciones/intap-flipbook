@@ -3,6 +3,16 @@ import { jwtMiddleware } from '../middleware/jwt'
 import { signJwt } from '../lib/jwt'
 import { getUserPlan, checkPublicationLimit, checkSoundAllowed } from '../lib/plans'
 import { slugify, uniqueSlug } from './auth'
+import {
+  buildJsonColumnUpdateStatement,
+  buildMappedCloneInsertStatement,
+  buildMappedStorageReferenceStatement,
+  cloneMapPairs,
+  normalizeCloneColumns,
+  quoteCloneIdentifier,
+  remapPublicationCanvasJson,
+  type CloneSqlStatement,
+} from '../lib/publicationClone'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
@@ -102,6 +112,116 @@ function normalizeOptionalCropJson(
   return { ok: true, present: true, value: JSON.stringify(crop) }
 }
 
+
+async function uniquePublicationSlugExcluding(
+  db: D1Database,
+  rawValue: string,
+  excludedPublicationId: string,
+): Promise<string> {
+  const base = slugify(rawValue)
+  if (!base) throw new Error('El slug debe contener letras o números')
+
+  let candidate = base
+  let suffixNumber = 2
+  while (true) {
+    const collision = await db.prepare(
+      `SELECT id FROM publications
+       WHERE public_slug = ? AND id <> ?
+       LIMIT 1`,
+    ).bind(candidate, excludedPublicationId).first<{ id: string }>()
+    if (!collision) return candidate
+
+    const suffix = `-${suffixNumber++}`
+    candidate = `${base.slice(0, Math.max(1, 60 - suffix.length))}${suffix}`
+  }
+}
+
+async function cloneTableColumns(db: D1Database, table: string): Promise<string[]> {
+  const quoted = quoteCloneIdentifier(table)
+  try {
+    const { results } = await db.prepare(`PRAGMA table_info(${quoted})`).all<{ name: string }>()
+    return normalizeCloneColumns(results ?? [])
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/no such table/i.test(message)) return []
+    throw error
+  }
+}
+
+async function optionalCloneRows<T>(
+  db: D1Database,
+  sql: string,
+  bindings: unknown[] = [],
+): Promise<T[]> {
+  try {
+    const statement = db.prepare(sql)
+    const { results } = bindings.length
+      ? await statement.bind(...(bindings as any[])).all<T>()
+      : await statement.all<T>()
+    return results ?? []
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/no such table/i.test(message)) return []
+    throw error
+  }
+}
+
+function prepareCloneSql(db: D1Database, statement: CloneSqlStatement | null): D1PreparedStatement | null {
+  if (!statement) return null
+  return db.prepare(statement.sql).bind(...(statement.bindings as any[]))
+}
+
+function clonePublicationInsertStatement(input: {
+  columns: string[]
+  sourcePublicationId: string
+  userId: string
+  newPublicationId: string
+  title: string
+  publicSlug: string
+  soundEnabled: number
+}): CloneSqlStatement {
+  const bindings: unknown[] = []
+  const selectExpressions = input.columns.map((column) => {
+    switch (column) {
+      case 'id':
+        bindings.push(input.newPublicationId)
+        return '?'
+      case 'user_id':
+        bindings.push(input.userId)
+        return '?'
+      case 'title':
+        bindings.push(input.title)
+        return '?'
+      case 'public_slug':
+        bindings.push(input.publicSlug)
+        return '?'
+      case 'status':
+        return "'draft'"
+      case 'views_count':
+        return '0'
+      case 'deleted_at':
+        return 'NULL'
+      case 'created_at':
+      case 'updated_at':
+        return "datetime('now')"
+      case 'sound_enabled':
+        bindings.push(input.soundEnabled)
+        return '?'
+      default:
+        return `source.${quoteCloneIdentifier(column)}`
+    }
+  })
+
+  bindings.push(input.sourcePublicationId, input.userId)
+  return {
+    sql: `INSERT INTO publications (${input.columns.map(quoteCloneIdentifier).join(', ')})\n` +
+      `SELECT ${selectExpressions.join(', ')}\n` +
+      `FROM publications AS source\n` +
+      `WHERE source.id = ? AND source.user_id = ?`,
+    bindings,
+  }
+}
+
 // GET /api/publications — solo las activas (deleted_at IS NULL)
 publications.get('/', async (c) => {
   const userId = c.get('user').sub
@@ -141,6 +261,7 @@ publications.post('/', async (c) => {
     title: string
     description?: string
     category?: string
+    public_slug?: unknown
     sound_enabled?: boolean
   }>()
 
@@ -174,6 +295,293 @@ publications.post('/', async (c) => {
     success: true,
     data: pub,
     ...(wantsSound && !soundAllowed ? { warning: checkSoundAllowed(plan) } : {}),
+  }, 201)
+})
+
+
+// POST /api/publications/:id/duplicate — copia editable e independiente del catálogo.
+// PROTECTED: no copia analítica, respuestas, leads, reservas ni historial transaccional.
+publications.post('/:id/duplicate', async (c) => {
+  const userId = c.get('user').sub
+  const sourcePublicationId = c.req.param('id')
+  const body = await c.req.json<{ title?: unknown; public_slug?: unknown }>().catch(() => null)
+  if (!body || typeof body !== 'object') {
+    return c.json({ success: false, error: 'JSON inválido' }, 400)
+  }
+
+  if (typeof body.title !== 'string' || !body.title.trim()) {
+    return c.json({ success: false, error: 'El nombre de la copia es requerido' }, 400)
+  }
+  const title = body.title.trim()
+  if (title.length > 120) {
+    return c.json({ success: false, error: 'El nombre no puede exceder 120 caracteres' }, 400)
+  }
+  if (body.public_slug !== undefined && typeof body.public_slug !== 'string') {
+    return c.json({ success: false, error: 'El slug debe ser texto' }, 400)
+  }
+
+  const source = await c.env.DB.prepare(
+    `SELECT * FROM publications
+     WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+  ).bind(sourcePublicationId, userId).first<Record<string, any>>()
+  if (!source) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
+
+  const { plan, customLimits } = await getUserPlan(c.env.DB, userId)
+  const publicationLimitError = await checkPublicationLimit(c.env.DB, userId, plan, customLimits)
+  if (publicationLimitError) return c.json({ success: false, error: publicationLimitError }, 403)
+
+  const { results: sourcePagesResult } = await c.env.DB.prepare(
+    'SELECT * FROM pages WHERE publication_id = ? ORDER BY page_number ASC, id ASC',
+  ).bind(sourcePublicationId).all<Record<string, any>>()
+  const sourcePages = sourcePagesResult ?? []
+  const effectiveMaxPages = customLimits.max_pages ?? plan.max_pages_per_pub
+  if (effectiveMaxPages != null && sourcePages.length > effectiveMaxPages) {
+    return c.json({
+      success: false,
+      error: `Tu plan ${plan.name} permite máximo ${effectiveMaxPages} páginas por publicación. La copia tendría ${sourcePages.length}.`,
+    }, 403)
+  }
+
+  const slugBase = slugify((body.public_slug as string | undefined)?.trim() || title)
+  if (!slugBase) {
+    return c.json({ success: false, error: 'El slug debe contener letras o números' }, 400)
+  }
+  const publicSlug = await uniqueSlug(c.env.DB, 'publications', slugBase)
+  const newPublicationId = crypto.randomUUID()
+  const soundEnabled = source.sound_enabled && plan.sound_enabled === 1 ? 1 : 0
+
+  const pageIdMap = new Map<string, string>()
+  sourcePages.forEach((page) => pageIdMap.set(String(page.id), crypto.randomUUID()))
+
+  const sourceMarkers = await optionalCloneRows<Record<string, any>>(
+    c.env.DB,
+    'SELECT * FROM dynamic_markers WHERE publication_id = ? ORDER BY created_at ASC, id ASC',
+    [sourcePublicationId],
+  )
+  const markerIdMap = new Map<string, string>()
+  sourceMarkers.forEach((marker) => markerIdMap.set(String(marker.id), crypto.randomUUID()))
+
+  const sourceMediaFolders = await optionalCloneRows<Record<string, any>>(
+    c.env.DB,
+    'SELECT * FROM media_folders WHERE tenant_id = ? AND publication_id = ? ORDER BY created_at ASC, id ASC',
+    [userId, sourcePublicationId],
+  )
+  const mediaFolderIdMap = new Map<string, string>()
+  sourceMediaFolders.forEach((folder) => mediaFolderIdMap.set(String(folder.id), crypto.randomUUID()))
+
+  const sourceMediaAssetsAll = await optionalCloneRows<Record<string, any>>(
+    c.env.DB,
+    'SELECT * FROM media_assets WHERE tenant_id = ? AND publication_id = ? ORDER BY created_at ASC, id ASC',
+    [userId, sourcePublicationId],
+  )
+  const sourceMediaAssets = sourceMediaAssetsAll.filter((asset) => !asset.deleted_at && asset.is_hidden !== 1)
+  const mediaAssetIdMap = new Map<string, string>()
+  sourceMediaAssets.forEach((asset) => mediaAssetIdMap.set(String(asset.id), crypto.randomUUID()))
+
+  const sourceUnits = await optionalCloneRows<Record<string, any>>(
+    c.env.DB,
+    'SELECT * FROM units WHERE publication_id = ? ORDER BY created_at ASC, id ASC',
+    [sourcePublicationId],
+  )
+  const unitIdMap = new Map<string, string>()
+  sourceUnits.forEach((unit) => unitIdMap.set(String(unit.id), crypto.randomUUID()))
+
+  const [
+    publicationColumns,
+    pageColumns,
+    markerColumns,
+    mediaFolderColumns,
+    mediaAssetColumns,
+    unitColumns,
+    storageReferenceColumns,
+  ] = await Promise.all([
+    cloneTableColumns(c.env.DB, 'publications'),
+    cloneTableColumns(c.env.DB, 'pages'),
+    cloneTableColumns(c.env.DB, 'dynamic_markers'),
+    cloneTableColumns(c.env.DB, 'media_folders'),
+    cloneTableColumns(c.env.DB, 'media_assets'),
+    cloneTableColumns(c.env.DB, 'units'),
+    cloneTableColumns(c.env.DB, 'storage_object_references'),
+  ])
+
+  if (!publicationColumns.length || !pageColumns.length) {
+    return c.json({ success: false, error: 'La base de datos no está lista para duplicar publicaciones' }, 500)
+  }
+
+  const statements: D1PreparedStatement[] = []
+  const addStatement = (statement: CloneSqlStatement | null) => {
+    const prepared = prepareCloneSql(c.env.DB, statement)
+    if (prepared) statements.push(prepared)
+  }
+
+  addStatement(clonePublicationInsertStatement({
+    columns: publicationColumns,
+    sourcePublicationId,
+    userId,
+    newPublicationId,
+    title,
+    publicSlug,
+    soundEnabled,
+  }))
+
+  addStatement(buildMappedCloneInsertStatement({
+    table: 'pages',
+    columns: pageColumns,
+    mapRows: sourcePages.map((page) => ({
+      old_id: String(page.id),
+      new_id: pageIdMap.get(String(page.id))!,
+    })),
+    mapFields: ['old_id', 'new_id'],
+    overrides: {
+      id: { sql: 'map.new_id' },
+      publication_id: { sql: '?', bindings: [newPublicationId] },
+      deleted_at: { sql: 'NULL' },
+      created_at: { sql: "datetime('now')" },
+      updated_at: { sql: "datetime('now')" },
+    },
+  }))
+
+  if (mediaFolderColumns.length) {
+    addStatement(buildMappedCloneInsertStatement({
+      table: 'media_folders',
+      columns: mediaFolderColumns,
+      mapRows: sourceMediaFolders.map((folder) => ({
+        old_id: String(folder.id),
+        new_id: mediaFolderIdMap.get(String(folder.id))!,
+      })),
+      mapFields: ['old_id', 'new_id'],
+      overrides: {
+        id: { sql: 'map.new_id' },
+        publication_id: { sql: '?', bindings: [newPublicationId] },
+        created_at: { sql: "datetime('now')" },
+        updated_at: { sql: "datetime('now')" },
+      },
+    }))
+  }
+
+  if (mediaAssetColumns.length) {
+    addStatement(buildMappedCloneInsertStatement({
+      table: 'media_assets',
+      columns: mediaAssetColumns,
+      mapRows: sourceMediaAssets.map((asset) => ({
+        old_id: String(asset.id),
+        new_id: mediaAssetIdMap.get(String(asset.id))!,
+        new_folder_id: asset.folder_id ? (mediaFolderIdMap.get(String(asset.folder_id)) ?? null) : null,
+      })),
+      mapFields: ['old_id', 'new_id', 'new_folder_id'],
+      overrides: {
+        id: { sql: 'map.new_id' },
+        publication_id: { sql: '?', bindings: [newPublicationId] },
+        folder_id: { sql: 'map.new_folder_id' },
+        deleted_at: { sql: 'NULL' },
+        is_hidden: { sql: '0' },
+        created_at: { sql: "datetime('now')" },
+        updated_at: { sql: "datetime('now')" },
+      },
+    }))
+  }
+
+  if (markerColumns.length) {
+    addStatement(buildMappedCloneInsertStatement({
+      table: 'dynamic_markers',
+      columns: markerColumns,
+      mapRows: sourceMarkers.map((marker) => ({
+        old_id: String(marker.id),
+        new_id: markerIdMap.get(String(marker.id))!,
+        new_page_id: marker.page_id ? (pageIdMap.get(String(marker.page_id)) ?? null) : null,
+      })),
+      mapFields: ['old_id', 'new_id', 'new_page_id'],
+      overrides: {
+        id: { sql: 'map.new_id' },
+        publication_id: { sql: '?', bindings: [newPublicationId] },
+        page_id: { sql: 'map.new_page_id' },
+        cloned_from_marker_id: { sql: 'source.id' },
+        created_at: { sql: "datetime('now')" },
+        updated_at: { sql: "datetime('now')" },
+      },
+    }))
+  }
+
+  if (unitColumns.length) {
+    addStatement(buildMappedCloneInsertStatement({
+      table: 'units',
+      columns: unitColumns,
+      mapRows: sourceUnits.map((unit) => ({
+        old_id: String(unit.id),
+        new_id: unitIdMap.get(String(unit.id))!,
+        new_page_id: unit.page_id ? (pageIdMap.get(String(unit.page_id)) ?? null) : null,
+      })),
+      mapFields: ['old_id', 'new_id', 'new_page_id'],
+      overrides: {
+        id: { sql: 'map.new_id' },
+        publication_id: { sql: '?', bindings: [newPublicationId] },
+        page_id: { sql: 'map.new_page_id' },
+        created_at: { sql: "datetime('now')" },
+        updated_at: { sql: "datetime('now')" },
+      },
+    }))
+  }
+
+  if (pageColumns.includes('canvas_json')) {
+    addStatement(buildJsonColumnUpdateStatement({
+      table: 'pages',
+      valueColumn: 'canvas_json',
+      rows: sourcePages.map((page) => ({
+        id: pageIdMap.get(String(page.id))!,
+        value: remapPublicationCanvasJson(page.canvas_json, markerIdMap),
+      })),
+    }))
+  }
+
+  if (storageReferenceColumns.length) {
+    const storageMaps = [
+      [{ old_id: sourcePublicationId, new_id: newPublicationId }],
+      cloneMapPairs(pageIdMap),
+      cloneMapPairs(markerIdMap),
+      cloneMapPairs(mediaFolderIdMap),
+      cloneMapPairs(mediaAssetIdMap),
+      cloneMapPairs(unitIdMap),
+    ]
+    storageMaps.forEach((mapRows) => {
+      addStatement(buildMappedStorageReferenceStatement(mapRows, newPublicationId, sourcePublicationId))
+    })
+  }
+
+  try {
+    // D1 batch es atómico: si una copia dependiente falla, no queda una publicación parcial.
+    await c.env.DB.batch(statements)
+  } catch (error) {
+    console.error('[publications.duplicate] transaction failed', {
+      source_publication_id: sourcePublicationId,
+      target_publication_id: newPublicationId,
+      user_id: userId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return c.json({ success: false, error: 'No se pudo completar la duplicación. El original no fue modificado.' }, 500)
+  }
+
+  const created = await c.env.DB.prepare(
+    `SELECT p.*, COUNT(pg.id) AS page_count
+     FROM publications p
+     LEFT JOIN pages pg ON pg.publication_id = p.id
+     WHERE p.id = ? AND p.user_id = ?
+     GROUP BY p.id`,
+  ).bind(newPublicationId, userId).first<Record<string, any>>()
+
+  return c.json({
+    success: true,
+    data: created,
+    clone_summary: {
+      pages: sourcePages.length,
+      dynamic_markers: sourceMarkers.length,
+      media_folders: sourceMediaFolders.length,
+      media_assets: sourceMediaAssets.length,
+      legacy_product_details_reused: true,
+      units: sourceUnits.length,
+      copied_history: false,
+      reused_physical_media: true,
+    },
+    ...(source.sound_enabled && !soundEnabled ? { warning: checkSoundAllowed(plan) } : {}),
   }, 201)
 })
 
@@ -269,6 +677,24 @@ publications.put('/:id', async (c) => {
     .first()
   if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
 
+
+  const publicSlugPresent = hasOwn(rawBody, 'public_slug')
+  let publicSlugValue: string | null = null
+  if (publicSlugPresent) {
+    if (typeof rawBody.public_slug !== 'string') {
+      return c.json({ success: false, error: 'public_slug debe ser texto' }, 400)
+    }
+    try {
+      publicSlugValue = await uniquePublicationSlugExcluding(
+        c.env.DB,
+        rawBody.public_slug,
+        c.req.param('id'),
+      )
+    } catch (error: any) {
+      return c.json({ success: false, error: error.message }, 400)
+    }
+  }
+
   let soundValue: number | null = null
   let soundWarning: string | undefined
 
@@ -310,6 +736,7 @@ publications.put('/:id', async (c) => {
      SET title = COALESCE(?, title),
          description = COALESCE(?, description),
          category = COALESCE(?, category),
+         public_slug = CASE WHEN ? THEN ? ELSE public_slug END,
          sound_enabled = COALESCE(?, sound_enabled),
          cover_image_url = COALESCE(?, cover_image_url),
          project_phone = COALESCE(?, project_phone),
@@ -331,6 +758,8 @@ publications.put('/:id', async (c) => {
       body.title ?? null,
       body.description ?? null,
       body.category ?? null,
+      publicSlugPresent ? 1 : 0,
+      publicSlugValue,
       soundValue,
       body.cover_image_url ?? null,
       body.project_phone ?? null,
