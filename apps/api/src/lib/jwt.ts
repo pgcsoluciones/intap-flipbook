@@ -1,6 +1,8 @@
 const ALGORITHM = { name: 'HMAC', hash: 'SHA-256' }
+const MAX_CLOCK_SKEW_SECONDS = 60
 
 async function getKey(secret: string): Promise<CryptoKey> {
+  if (!secret || secret.length < 32) throw new Error('JWT secret is too short')
   return crypto.subtle.importKey(
     'raw',
     new TextEncoder().encode(secret),
@@ -18,6 +20,7 @@ function base64url(buf: ArrayBuffer): string {
 }
 
 function decodeBase64url(str: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]+$/.test(str)) throw new Error('Invalid base64url')
   const base64 = str.replace(/-/g, '+').replace(/_/g, '/')
   const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))
@@ -28,6 +31,9 @@ export interface JwtPayload {
   email: string
   iat: number
   exp: number
+  kind?: string
+  publication_id?: string
+  [key: string]: unknown
 }
 
 export async function signJwt(
@@ -35,8 +41,11 @@ export async function signJwt(
   secret: string,
   expiryDays: number,
 ): Promise<string> {
+  if (!payload.sub || !payload.email) throw new Error('Invalid JWT subject')
+  if (!Number.isFinite(expiryDays) || expiryDays <= 0) throw new Error('Invalid JWT expiry')
+
   const now = Math.floor(Date.now() / 1000)
-  const full: JwtPayload = { ...payload, iat: now, exp: now + expiryDays * 86400 }
+  const full: JwtPayload = { ...payload, iat: now, exp: now + Math.floor(expiryDays * 86400) }
 
   const header = base64url(new TextEncoder().encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })))
   const body = base64url(new TextEncoder().encode(JSON.stringify(full)))
@@ -49,12 +58,15 @@ export async function signJwt(
 }
 
 export async function verifyJwt(token: string, secret: string): Promise<JwtPayload> {
+  if (!token || token.length > 8192) throw new Error('Invalid token length')
   const parts = token.split('.')
   if (parts.length !== 3) throw new Error('Invalid token format')
 
-  const [header, body, sig] = parts
-  const input = `${header}.${body}`
+  const [headerPart, body, sig] = parts
+  const header = JSON.parse(new TextDecoder().decode(decodeBase64url(headerPart)))
+  if (header?.alg !== 'HS256' || header?.typ !== 'JWT') throw new Error('Invalid token header')
 
+  const input = `${headerPart}.${body}`
   const key = await getKey(secret)
   const valid = await crypto.subtle.verify(
     ALGORITHM,
@@ -65,7 +77,15 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtPaylo
   if (!valid) throw new Error('Invalid signature')
 
   const payload: JwtPayload = JSON.parse(new TextDecoder().decode(decodeBase64url(body)))
-  if (payload.exp < Math.floor(Date.now() / 1000)) throw new Error('Token expired')
+  const now = Math.floor(Date.now() / 1000)
+
+  if (!payload || typeof payload !== 'object') throw new Error('Invalid payload')
+  if (typeof payload.sub !== 'string' || !payload.sub) throw new Error('Invalid subject')
+  if (typeof payload.email !== 'string' || !payload.email) throw new Error('Invalid email')
+  if (!Number.isInteger(payload.iat) || !Number.isInteger(payload.exp)) throw new Error('Invalid timestamps')
+  if (payload.iat > now + MAX_CLOCK_SKEW_SECONDS) throw new Error('Token issued in the future')
+  if (payload.exp <= now) throw new Error('Token expired')
+  if (payload.exp <= payload.iat) throw new Error('Invalid token lifetime')
 
   return payload
 }
