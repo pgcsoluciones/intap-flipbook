@@ -13,7 +13,9 @@ import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
 const auth = new Hono<{ Bindings: Env; Variables: AuthVariables }>()
-const PASSWORD_HASH_ITERATIONS = 210_000
+// Cloudflare Workers Web Crypto rejects PBKDF2 iteration counts above 100,000.
+// Keep the maximum supported cost and version the stored format for future migration.
+const PASSWORD_HASH_ITERATIONS = 100_000
 
 function normalizedEmail(value: string) {
   return value.trim().toLowerCase().slice(0, 320)
