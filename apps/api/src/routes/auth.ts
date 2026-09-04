@@ -1,10 +1,27 @@
 import { Hono } from 'hono'
 import { signJwt } from '../lib/jwt'
+import {
+  accessTokenExpiryDays,
+  checkLoginThrottle,
+  clearLoginFailures,
+  passwordPolicyError,
+  recordFailedLogin,
+  revokeUserSessions,
+} from '../lib/authSecurity'
 import { jwtMiddleware } from '../middleware/jwt'
 import type { Env } from '../index'
 import type { AuthVariables } from '../middleware/jwt'
 
 const auth = new Hono<{ Bindings: Env; Variables: AuthVariables }>()
+const PASSWORD_HASH_ITERATIONS = 210_000
+
+function normalizedEmail(value: string) {
+  return value.trim().toLowerCase().slice(0, 320)
+}
+
+function safeTokenDays(value: string | undefined) {
+  return accessTokenExpiryDays(value)
+}
 
 auth.post('/register', async (c) => {
   const body = await c.req.json<{ email: string; password: string; name?: string; slug?: string; referral_code?: string }>()
@@ -12,31 +29,29 @@ auth.post('/register', async (c) => {
   if (!body.email || !body.password) {
     return c.json({ success: false, error: 'email and password are required' }, 400)
   }
-  if (body.password.length < 8) {
-    return c.json({ success: false, error: 'Password must be at least 8 characters' }, 400)
-  }
+  const passwordError = passwordPolicyError(body.password)
+  if (passwordError) return c.json({ success: false, error: passwordError }, 400)
 
+  const email = normalizedEmail(body.email)
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?')
-    .bind(body.email.toLowerCase())
+    .bind(email)
     .first()
   if (existing) {
-    return c.json({ success: false, error: 'Email already registered' }, 409)
+    return c.json({ success: false, error: 'No pudimos completar el registro con esos datos' }, 409)
   }
 
   const passwordHash = await hashPassword(body.password)
   const id = crypto.randomUUID()
 
-  // Slug del tenant: el que el usuario eligió, o derivado del nombre/email.
-  const base = slugify(body.slug || body.name || body.email.split('@')[0])
+  const base = slugify(body.slug || body.name || email.split('@')[0])
   const slug = await uniqueSlug(c.env.DB, 'users', base)
 
   await c.env.DB.prepare(
     'INSERT INTO users (id, email, password_hash, name, slug) VALUES (?, ?, ?, ?, ?)',
   )
-    .bind(id, body.email.toLowerCase(), passwordHash, body.name ?? null, slug)
+    .bind(id, email, passwordHash, body.name ?? null, slug)
     .run()
 
-  // Si viene con código de referido, vincular al referrer
   if (body.referral_code) {
     const referrer = await c.env.DB.prepare(
       'SELECT id FROM users WHERE referral_code = ?'
@@ -49,9 +64,9 @@ auth.post('/register', async (c) => {
   }
 
   const token = await signJwt(
-    { sub: id, email: body.email.toLowerCase() },
+    { sub: id, email, kind: 'access' },
     c.env.JWT_SECRET,
-    Number(c.env.JWT_EXPIRY_DAYS),
+    safeTokenDays(c.env.JWT_EXPIRY_DAYS),
   )
 
   return c.json({ success: true, data: { token } }, 201)
@@ -60,27 +75,60 @@ auth.post('/register', async (c) => {
 auth.post('/login', async (c) => {
   const body = await c.req.json<{ email: string; password: string }>()
 
-  if (!body.email || !body.password) {
-    return c.json({ success: false, error: 'email and password are required' }, 400)
+  if (!body.email || !body.password || body.password.length > 200) {
+    return c.json({ success: false, error: 'Email o contraseña incorrectos' }, 401)
+  }
+
+  const email = normalizedEmail(body.email)
+  const throttle = await checkLoginThrottle(c.env.SESSIONS, c.req.raw.headers, email)
+  if (!throttle.allowed) {
+    c.header('Retry-After', String(throttle.retryAfterSeconds))
+    return c.json({
+      success: false,
+      error: 'Demasiados intentos. Espera unos minutos antes de volver a intentarlo.',
+      code: 'LOGIN_RATE_LIMITED',
+      retry_after: throttle.retryAfterSeconds,
+    }, 429)
   }
 
   const user = await c.env.DB.prepare(
     'SELECT id, email, password_hash FROM users WHERE email = ?',
   )
-    .bind(body.email.toLowerCase())
+    .bind(email)
     .first<{ id: string; email: string; password_hash: string }>()
 
-  if (!user || !(await verifyPassword(body.password, user.password_hash))) {
-    return c.json({ success: false, error: 'Invalid email or password' }, 401)
+  const verification = user
+    ? await verifyPassword(body.password, user.password_hash)
+    : { valid: false, needsUpgrade: false }
+
+  if (!user || !verification.valid) {
+    const failure = await recordFailedLogin(c.env.SESSIONS, throttle.key)
+    if (failure.retryAfterSeconds) c.header('Retry-After', String(failure.retryAfterSeconds))
+    return c.json({ success: false, error: 'Email o contraseña incorrectos' }, 401)
+  }
+
+  await clearLoginFailures(c.env.SESSIONS, throttle.key)
+
+  if (verification.needsUpgrade) {
+    const upgradedHash = await hashPassword(body.password)
+    await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+      .bind(upgradedHash, user.id)
+      .run()
   }
 
   const token = await signJwt(
-    { sub: user.id, email: user.email },
+    { sub: user.id, email: user.email, kind: 'access' },
     c.env.JWT_SECRET,
-    Number(c.env.JWT_EXPIRY_DAYS),
+    safeTokenDays(c.env.JWT_EXPIRY_DAYS),
   )
 
   return c.json({ success: true, data: { token } })
+})
+
+auth.post('/logout-all', jwtMiddleware, async (c) => {
+  const { sub } = c.get('user')
+  await revokeUserSessions(c.env.SESSIONS, sub)
+  return c.json({ success: true })
 })
 
 auth.get('/me', jwtMiddleware, async (c) => {
@@ -97,12 +145,10 @@ auth.get('/me', jwtMiddleware, async (c) => {
   return c.json({ success: true, data: user })
 })
 
-// PUT /auth/me — actualizar nombre y/o slug del tenant
 auth.put('/me', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
   const body = await c.req.json<{ name?: string; slug?: string }>()
 
-  // Si pide cambiar el slug, lo normalizamos y verificamos que sea único.
   let newSlug: string | undefined
   if (body.slug !== undefined) {
     const base = slugify(body.slug)
@@ -123,7 +169,6 @@ auth.put('/me', jwtMiddleware, async (c) => {
   return c.json({ success: true, data: user })
 })
 
-// PUT /auth/me/watermark — el tenant controla su propia marca de agua (solo basic/pro)
 auth.put('/me/watermark', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
   const body = await c.req.json<{ watermark_tenant?: string | null }>()
@@ -136,28 +181,31 @@ auth.put('/me/watermark', jwtMiddleware, async (c) => {
   return c.json({ success: true })
 })
 
-// PUT /auth/password — change password
 auth.put('/password', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
   const body = await c.req.json<{ current_password: string; new_password: string }>()
   if (!body.current_password || !body.new_password) {
     return c.json({ success: false, error: 'current_password y new_password son requeridos' }, 400)
   }
-  if (body.new_password.length < 8) {
-    return c.json({ success: false, error: 'La nueva contraseña debe tener al menos 8 caracteres' }, 400)
-  }
+  const passwordError = passwordPolicyError(body.new_password)
+  if (passwordError) return c.json({ success: false, error: passwordError }, 400)
+
   const user = await c.env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
     .bind(sub)
     .first<{ password_hash: string }>()
-  if (!user || !(await verifyPassword(body.current_password, user.password_hash))) {
+  const verification = user
+    ? await verifyPassword(body.current_password, user.password_hash)
+    : { valid: false, needsUpgrade: false }
+  if (!verification.valid) {
     return c.json({ success: false, error: 'Contraseña actual incorrecta' }, 401)
   }
+
   const newHash = await hashPassword(body.new_password)
   await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(newHash, sub).run()
-  return c.json({ success: true })
+  await revokeUserSessions(c.env.SESSIONS, sub)
+  return c.json({ success: true, data: { session_revoked: true } })
 })
 
-// GET /auth/referral-config — configuración pública del programa de referidos (sin auth)
 auth.get('/referral-config', async (c) => {
   const config = await c.env.DB.prepare(
     `SELECT * FROM referral_config WHERE id = 1`,
@@ -165,7 +213,6 @@ auth.get('/referral-config', async (c) => {
   return c.json({ success: true, data: config })
 })
 
-// GET /auth/referrals/my — mis referidos (con auth)
 auth.get('/referrals/my', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
   const { results } = await c.env.DB.prepare(
@@ -180,7 +227,6 @@ auth.get('/referrals/my', jwtMiddleware, async (c) => {
   return c.json({ success: true, data: results })
 })
 
-// GET /auth/stats/my — mis estadísticas de publicaciones y vistas (con auth)
 auth.get('/stats/my', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
 
@@ -214,7 +260,6 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
     .bind(sub)
     .all()
 
-  // Filtro opcional por publicación (?publication_id=...) para ver el detalle de una sola
   const pubFilter = c.req.query('publication_id')
   const ownedIds = pubs.map((p) => p.id)
   const scopedIds = pubFilter && ownedIds.includes(pubFilter) ? [pubFilter] : ownedIds
@@ -224,7 +269,6 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
   if (scopedIds.length > 0) {
     const placeholders = scopedIds.map(() => '?').join(',')
 
-    // Tiempo promedio y vistas por número de página
     const pt = await c.env.DB.prepare(
       `SELECT page_number,
               COUNT(*) as visits,
@@ -237,7 +281,6 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
     ).bind(...scopedIds).all()
     pageTimes = pt.results
 
-    // Ranking de botones más clickeados
     const bc = await c.env.DB.prepare(
       `SELECT label, action_type, page_number, COUNT(*) as clicks
        FROM page_events
@@ -261,21 +304,19 @@ auth.get('/stats/my', jwtMiddleware, async (c) => {
   } })
 })
 
-// Convierte un texto en slug URL-safe: minúsculas, sin acentos, guiones.
 export function slugify(text: string): string {
   return (text || '')
     .toString()
     .replace(/ñ/gi, 'n')
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '') // quita los acentos (marcas diacríticas)
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, '-')     // todo lo no alfanumérico → guion
-    .replace(/^-+|-+$/g, '')          // recorta guiones de los extremos
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
     .slice(0, 60)
 }
 
-// Devuelve un slug único en la columna dada, agregando sufijos -2, -3… si ya existe.
 export async function uniqueSlug(
   db: D1Database,
   table: 'users' | 'publications',
@@ -284,7 +325,6 @@ export async function uniqueSlug(
   const col = table === 'publications' ? 'public_slug' : 'slug'
   const safe = base || (table === 'users' ? 'tenant' : 'flipbook')
   let slug = safe
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const existing = await db
       .prepare(`SELECT 1 FROM ${table} WHERE ${col} = ?`)
@@ -296,65 +336,89 @@ export async function uniqueSlug(
   }
 }
 
-// PBKDF2 password hashing via Web Crypto API
+function bytesToHex(bytes: Uint8Array) {
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+function hexToBytes(value: string) {
+  if (!value || value.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(value)) return null
+  return new Uint8Array(value.match(/.{2}/g)!.map((part) => parseInt(part, 16)))
+}
+
+function constantTimeHexEqual(left: string, right: string) {
+  if (left.length !== right.length) return false
+  let diff = 0
+  for (let index = 0; index < left.length; index += 1) {
+    diff |= left.charCodeAt(index) ^ right.charCodeAt(index)
+  }
+  return diff === 0
+}
+
+async function derivePasswordHash(password: string, salt: Uint8Array, iterations: number) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  )
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
+    key,
+    256,
+  )
+  return bytesToHex(new Uint8Array(bits))
+}
+
 async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16))
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits'],
-  )
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100_000 },
-    key,
-    256,
-  )
-  const saltHex = Array.from(salt).map((b) => b.toString(16).padStart(2, '0')).join('')
-  const hashHex = Array.from(new Uint8Array(bits)).map((b) => b.toString(16).padStart(2, '0')).join('')
-  return `${saltHex}:${hashHex}`
+  const hashHex = await derivePasswordHash(password, salt, PASSWORD_HASH_ITERATIONS)
+  return `v2$${PASSWORD_HASH_ITERATIONS}$${bytesToHex(salt)}$${hashHex}`
 }
 
-async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [saltHex, hashHex] = stored.split(':')
-  const salt = new Uint8Array(saltHex.match(/.{2}/g)!.map((b) => parseInt(b, 16)))
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits'],
-  )
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100_000 },
-    key,
-    256,
-  )
-  const candidate = Array.from(new Uint8Array(bits)).map((b) => b.toString(16).padStart(2, '0')).join('')
-  return candidate === hashHex
+async function verifyPassword(password: string, stored: string): Promise<{ valid: boolean; needsUpgrade: boolean }> {
+  try {
+    if (stored.startsWith('v2$')) {
+      const [, iterationsRaw, saltHex, hashHex] = stored.split('$')
+      const iterations = Number(iterationsRaw)
+      const salt = hexToBytes(saltHex)
+      if (!salt || !Number.isInteger(iterations) || iterations < 100_000 || !hashHex) {
+        return { valid: false, needsUpgrade: false }
+      }
+      const candidate = await derivePasswordHash(password, salt, iterations)
+      return {
+        valid: constantTimeHexEqual(candidate, hashHex),
+        needsUpgrade: iterations < PASSWORD_HASH_ITERATIONS,
+      }
+    }
+
+    const [saltHex, hashHex] = stored.split(':')
+    const salt = hexToBytes(saltHex)
+    if (!salt || !hashHex) return { valid: false, needsUpgrade: false }
+    const candidate = await derivePasswordHash(password, salt, 100_000)
+    const valid = constantTimeHexEqual(candidate, hashHex)
+    return { valid, needsUpgrade: valid }
+  } catch {
+    return { valid: false, needsUpgrade: false }
+  }
 }
 
-// GET /auth/stats/pub/:id — estadísticas detalladas de una publicación específica
 auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
   const { sub } = c.get('user')
   const pubId = c.req.param('id')
 
-  // Verificar que la publicación pertenece al usuario
   const pub = await c.env.DB.prepare(
     `SELECT id, title, status, views_count, public_slug FROM publications WHERE id = ? AND user_id = ?`
   ).bind(pubId, sub).first<{ id: string; title: string; status: string; views_count: number; public_slug: string | null }>()
 
   if (!pub) return c.json({ success: false, error: 'Publicación no encontrada' }, 404)
 
-  // Vistas recientes para esta publicación
   const { results: recentViews } = await c.env.DB.prepare(
     `SELECT id, viewed_at, device FROM publication_views
      WHERE publication_id = ?
      ORDER BY viewed_at DESC LIMIT 200`
   ).bind(pubId).all()
 
-  // Conteo de dispositivos
   const { results: deviceBreakdown } = await c.env.DB.prepare(
     `SELECT device, COUNT(*) as count
      FROM publication_views
@@ -362,7 +426,6 @@ auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
      GROUP BY device`
   ).bind(pubId).all()
 
-  // Tiempo promedio por página (eventos page_time con duración registrada)
   const { results: pageTimes } = await c.env.DB.prepare(
     `SELECT page_number, COUNT(*) as time_events, AVG(duration_ms) as avg_ms
      FROM page_events
@@ -371,7 +434,6 @@ auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
      ORDER BY page_number ASC`
   ).bind(pubId).all()
 
-  // Ranking de botones clickeados
   const { results: buttonClicks } = await c.env.DB.prepare(
     `SELECT label, action_type, page_number, COUNT(*) as clicks
      FROM page_events
@@ -380,7 +442,6 @@ auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
      ORDER BY clicks DESC LIMIT 20`
   ).bind(pubId).all()
 
-  // Vistas por día (últimos 30 días)
   const { results: viewsByDay } = await c.env.DB.prepare(
     `SELECT date(viewed_at) as day, COUNT(*) as views
      FROM publication_views
@@ -390,7 +451,6 @@ auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
      ORDER BY day ASC`
   ).bind(pubId).all()
 
-  // Top países (desde publication_views)
   const { results: countryBreakdown } = await c.env.DB.prepare(
     `SELECT country, COUNT(*) as count
      FROM publication_views
@@ -400,7 +460,6 @@ auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
      LIMIT 10`
   ).bind(pubId).all()
 
-  // Top links clickeados con URL destino
   const { results: topLinks } = await c.env.DB.prepare(
     `SELECT action_type, label, url_destination, COUNT(*) as count
      FROM page_events
@@ -410,8 +469,6 @@ auth.get('/stats/pub/:id', jwtMiddleware, async (c) => {
      LIMIT 20`
   ).bind(pubId).all()
 
-  // Páginas visitadas — usa page_view (se envía al llegar a cada página) para contar correctamente
-  // page_time solo llega si el usuario permaneció ≥0.5s, page_view llega siempre
   const { results: pageVisits } = await c.env.DB.prepare(
     `SELECT page_number,
             COUNT(*) as visits,
