@@ -10,6 +10,8 @@ export default function Login() {
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+  const [capsLock, setCapsLock] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -29,6 +31,13 @@ export default function Login() {
     }
   }
 
+  function changeMode() {
+    setMode(mode === 'login' ? 'register' : 'login')
+    setError('')
+    setPassword('')
+    setCapsLock(false)
+  }
+
   return (
     <div style={styles.wrapper}>
       <div style={styles.card}>
@@ -40,6 +49,7 @@ export default function Login() {
             <input
               style={styles.input}
               placeholder="Nombre"
+              autoComplete="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
@@ -48,19 +58,38 @@ export default function Login() {
             style={styles.input}
             type="email"
             placeholder="Email"
+            autoComplete="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
-          <input
-            style={styles.input}
-            type="password"
-            placeholder="Contraseña"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <div style={styles.passwordWrap}>
+            <input
+              style={{ ...styles.input, paddingRight: 76 }}
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Contraseña"
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              required
+              minLength={mode === 'register' ? 12 : undefined}
+              maxLength={200}
+              value={password}
+              onKeyUp={(e) => setCapsLock(e.getModifierState('CapsLock'))}
+              onKeyDown={(e) => setCapsLock(e.getModifierState('CapsLock'))}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button
+              type="button"
+              style={styles.showPassword}
+              onClick={() => setShowPassword((value) => !value)}
+              aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+            >
+              {showPassword ? 'Ocultar' : 'Mostrar'}
+            </button>
+          </div>
+          {mode === 'register' && (
+            <p style={styles.help}>Usa al menos 12 caracteres.</p>
+          )}
+          {capsLock && <p style={styles.warning}>Bloq Mayús está activado.</p>}
           {error && <p style={styles.error}>{error}</p>}
           <button style={styles.btn} type="submit" disabled={loading}>
             {loading ? 'Cargando...' : mode === 'login' ? 'Entrar' : 'Registrarse'}
@@ -69,10 +98,7 @@ export default function Login() {
 
         <p style={styles.toggle}>
           {mode === 'login' ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}{' '}
-          <button
-            style={styles.link}
-            onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}
-          >
+          <button style={styles.link} type="button" onClick={changeMode}>
             {mode === 'login' ? 'Regístrate' : 'Inicia sesión'}
           </button>
         </p>
@@ -87,7 +113,11 @@ const styles: Record<string, React.CSSProperties> = {
   logo: { textAlign: 'center', fontSize: '1.5rem', marginBottom: '0.5rem' },
   title: { textAlign: 'center', fontWeight: 600, marginBottom: '1.5rem', color: '#1a1a2e' },
   form: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
-  input: { padding: '0.75rem 1rem', borderRadius: 8, border: '1px solid #ddd', fontSize: '1rem', outline: 'none' },
+  input: { boxSizing: 'border-box', width: '100%', padding: '0.75rem 1rem', borderRadius: 8, border: '1px solid #ddd', fontSize: '1rem', outline: 'none' },
+  passwordWrap: { position: 'relative' },
+  showPassword: { position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' },
+  help: { color: '#666', fontSize: '0.78rem', margin: '-0.25rem 0 0' },
+  warning: { color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, fontSize: '0.8rem', margin: 0, padding: '0.55rem 0.7rem' },
   error: { color: '#e53e3e', fontSize: '0.875rem', margin: 0 },
   btn: { padding: '0.75rem', borderRadius: 8, background: '#4f46e5', color: '#fff', border: 'none', fontWeight: 600, fontSize: '1rem', cursor: 'pointer' },
   toggle: { textAlign: 'center', marginTop: '1rem', fontSize: '0.875rem', color: '#666' },
