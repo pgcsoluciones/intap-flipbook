@@ -9,8 +9,26 @@
     }
   }
 
+  function isPreviewSession() {
+    try {
+      return !!root.location && new URLSearchParams(root.location.search || '').get('preview') === '1'
+    } catch (e) {
+      return false
+    }
+  }
+
   function selectPageImageUrl(page) {
     if (!page) return ''
+
+    // PROTECTED: en Preview privilegiamos el archivo fuente de la página.
+    // Las copias de catálogo reutilizan físicamente los binarios del original y
+    // algunas derivadas WebP antiguas pueden existir en D1 aunque el objeto ya no
+    // esté disponible en R2. El Viewer público conserva la derivada optimizada por
+    // rendimiento; Preview usa la fuente estable para no bloquear el QA de borradores.
+    if (isPreviewSession()) {
+      return cleanHttpsLike(page.image_url) || cleanHttpsLike(page.optimized_url) || cleanHttpsLike(page.display_url)
+    }
+
     return cleanHttpsLike(page.optimized_url) || cleanHttpsLike(page.display_url) || cleanHttpsLike(page.image_url)
   }
 
