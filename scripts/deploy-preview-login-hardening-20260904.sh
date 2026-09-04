@@ -6,6 +6,7 @@ BASE_SHA="f46e66c4153edbbfd7a5a6754f2bf90ff04aa165"
 REPO="https://github.com/pgcsoluciones/intap-flipbook.git"
 API_URL="https://intap-flipbook-api-preview.fliaprince.workers.dev"
 VIEWER_URL="https://f144363d.intap-flipbook-viewer.pages.dev"
+QA_ORIGIN="https://studio.flip.intaprd.com"
 DASHBOARD_PROJECT="intap-flipbook-dashboard"
 DASHBOARD_BRANCH="qa-login-hardening-20260904"
 WRANGLER="${WRANGLER:-$HOME/intap-flipbook-dynamic-markers/node_modules/.bin/wrangler}"
@@ -101,14 +102,15 @@ printf '\n=== 6. DEPLOY SOLO API PREVIEW ===\n'
 "$WRANGLER" deploy --config apps/api/wrangler.toml --env preview
 
 printf '\n=== 7. QA E2E DE AUTENTICACIÓN EN PREVIEW ===\n'
+printf 'Origen QA permitido: %s\n' "$QA_ORIGIN"
 register_body="$(printf '{"email":"%s","password":"%s","name":"QA Login Security"}' "$QA_EMAIL" "$QA_PASSWORD")"
-register_json="$(curl -fsS -X POST "$API_URL/auth/register" -H 'Content-Type: application/json' --data "$register_body")"
+register_json="$(curl -fsS -X POST "$API_URL/auth/register" -H "Origin: $QA_ORIGIN" -H 'Content-Type: application/json' --data "$register_body")"
 QA_TOKEN="$(printf '%s' "$register_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s); if(!j.success||!j.data?.token) process.exit(2); process.stdout.write(j.data.token)})')"
 [ -n "$QA_TOKEN" ] || fail "Registro QA no devolvió token."
 printf '✓ Registro con contraseña fuerte\n'
 
 WEAK_EMAIL="qa-weak-password-$(date +%s)-$RANDOM@example.test"
-weak_status="$(curl -sS -o "$TMP_DIR/weak.json" -w '%{http_code}' -X POST "$API_URL/auth/register" -H 'Content-Type: application/json' --data "{\"email\":\"$WEAK_EMAIL\",\"password\":\"12345678\"}")"
+weak_status="$(curl -sS -o "$TMP_DIR/weak.json" -w '%{http_code}' -X POST "$API_URL/auth/register" -H "Origin: $QA_ORIGIN" -H 'Content-Type: application/json' --data "{\"email\":\"$WEAK_EMAIL\",\"password\":\"12345678\"}")"
 [ "$weak_status" = "400" ] || fail "La contraseña débil no fue rechazada: HTTP $weak_status"
 printf '✓ Contraseña débil rechazada\n'
 
@@ -116,7 +118,7 @@ me_status="$(curl -sS -o "$TMP_DIR/me-before.json" -w '%{http_code}' "$API_URL/a
 [ "$me_status" = "200" ] || fail "Token recién emitido no accede a /auth/me: HTTP $me_status"
 printf '✓ Token de acceso válido\n'
 
-logout_status="$(curl -sS -o "$TMP_DIR/logout-all.json" -w '%{http_code}' -X POST "$API_URL/auth/logout-all" -H "Authorization: Bearer $QA_TOKEN")"
+logout_status="$(curl -sS -o "$TMP_DIR/logout-all.json" -w '%{http_code}' -X POST "$API_URL/auth/logout-all" -H "Origin: $QA_ORIGIN" -H "Authorization: Bearer $QA_TOKEN")"
 [ "$logout_status" = "200" ] || fail "logout-all falló: HTTP $logout_status"
 revoked_status="$(curl -sS -o "$TMP_DIR/me-after.json" -w '%{http_code}' "$API_URL/auth/me" -H "Authorization: Bearer $QA_TOKEN")"
 [ "$revoked_status" = "401" ] || fail "El token revocado siguió funcionando: HTTP $revoked_status"
@@ -124,10 +126,10 @@ printf '✓ Revocación de sesiones confirmada\n'
 
 RATE_EMAIL="qa-rate-limit-$(date +%s)-$RANDOM@example.test"
 for n in 1 2 3 4 5; do
-  status="$(curl -sS -o "$TMP_DIR/rate-$n.json" -w '%{http_code}' -X POST "$API_URL/auth/login" -H 'Content-Type: application/json' --data "{\"email\":\"$RATE_EMAIL\",\"password\":\"incorrecta-$n\"}")"
+  status="$(curl -sS -o "$TMP_DIR/rate-$n.json" -w '%{http_code}' -X POST "$API_URL/auth/login" -H "Origin: $QA_ORIGIN" -H 'Content-Type: application/json' --data "{\"email\":\"$RATE_EMAIL\",\"password\":\"incorrecta-$n\"}")"
   [ "$status" = "401" ] || fail "Intento $n esperaba 401 y devolvió $status"
 done
-rate_status="$(curl -sS -o "$TMP_DIR/rate-blocked.json" -w '%{http_code}' -X POST "$API_URL/auth/login" -H 'Content-Type: application/json' --data "{\"email\":\"$RATE_EMAIL\",\"password\":\"incorrecta-6\"}")"
+rate_status="$(curl -sS -o "$TMP_DIR/rate-blocked.json" -w '%{http_code}' -X POST "$API_URL/auth/login" -H "Origin: $QA_ORIGIN" -H 'Content-Type: application/json' --data "{\"email\":\"$RATE_EMAIL\",\"password\":\"incorrecta-6\"}")"
 [ "$rate_status" = "429" ] || fail "No se activó rate limit: HTTP $rate_status"
 grep -q 'LOGIN_RATE_LIMITED' "$TMP_DIR/rate-blocked.json" || fail "Respuesta 429 sin código LOGIN_RATE_LIMITED."
 printf '✓ Fuerza bruta limitada después de 5 fallos\n'
