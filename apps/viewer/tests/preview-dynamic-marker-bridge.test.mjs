@@ -67,34 +67,31 @@ const payload = {
   ],
 }
 
-test('Preview intercepta catalogo dinamico por slug y usa el payload autenticado', async () => {
+test('Preview intercepta catálogo y detalle dinámico usando un único payload autenticado', async () => {
+  // Ambos requests comparten deliberadamente la misma instancia del bridge. Además de
+  // reflejar el Viewer real, evita que tests paralelos compitan por globalThis.window.
   const ctx = await loadBridge({ payload, search })
   try {
-    const response = await ctx.window.fetch('https://api-preview.example.test/view/copia/dynamic-markers/catalog?limit=12&q=zapato')
-    const body = await response.json()
+    const catalogResponse = await ctx.window.fetch('https://api-preview.example.test/view/copia/dynamic-markers/catalog?limit=12&q=zapato')
+    const catalogBody = await catalogResponse.json()
 
-    assert.equal(response.status, 200)
-    assert.equal(body.success, true)
-    assert.equal(body.data.length, 1)
-    assert.equal(body.data[0].id, 'marker-1')
-    assert.equal(body.data[0].cover_url, 'https://media.example.test/marker-1.jpg')
-    assert.deepEqual(body.meta.filters.categories, ['Accesorios', 'Calzado'])
-    assert.equal(ctx.calls.length, 1)
-    assert.match(ctx.calls[0], /\/view\/preview\/test-token$/)
-  } finally {
-    ctx.restore()
-  }
-})
+    assert.equal(catalogResponse.status, 200)
+    assert.equal(catalogBody.success, true)
+    assert.equal(catalogBody.data.length, 1)
+    assert.equal(catalogBody.data[0].id, 'marker-1')
+    assert.equal(catalogBody.data[0].cover_url, 'https://media.example.test/marker-1.jpg')
+    assert.deepEqual(catalogBody.meta.filters.categories, ['Accesorios', 'Calzado'])
 
-test('Preview intercepta detalle dinamico sin consultar endpoint publico', async () => {
-  const ctx = await loadBridge({ payload, search })
-  try {
-    const response = await ctx.window.fetch('https://api-preview.example.test/view/copia/dynamic-markers/marker-2')
-    const body = await response.json()
+    const detailResponse = await ctx.window.fetch('https://api-preview.example.test/view/copia/dynamic-markers/marker-2')
+    const detailBody = await detailResponse.json()
 
-    assert.equal(response.status, 200)
-    assert.equal(body.data.id, 'marker-2')
-    assert.equal(body.data.name, 'Correa negra')
+    assert.equal(detailResponse.status, 200)
+    assert.equal(detailBody.success, true)
+    assert.equal(detailBody.data.id, 'marker-2')
+    assert.equal(detailBody.data.name, 'Correa negra')
+
+    // El catálogo y el detalle salen del mismo payload de /view/preview/:token.
+    // No debe existir ninguna llamada al endpoint público por slug.
     assert.equal(ctx.calls.length, 1)
     assert.match(ctx.calls[0], /\/view\/preview\/test-token$/)
   } finally {
