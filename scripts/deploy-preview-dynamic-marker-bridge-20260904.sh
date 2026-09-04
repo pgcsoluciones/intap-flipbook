@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SOURCE_SHA="520225e62eccf976161a2d3b46630b8afbb80ec7"
+SOURCE_SHA="3628507f4353424fb5be7c2435e94ae6cef76567"
 REPO="https://github.com/pgcsoluciones/intap-flipbook.git"
 API_URL="https://intap-flipbook-api-preview.fliaprince.workers.dev"
 VIEWER_PROJECT="intap-flipbook-viewer"
