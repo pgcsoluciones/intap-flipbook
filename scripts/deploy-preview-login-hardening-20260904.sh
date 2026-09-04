@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE_SHA="4c1918ef9fc4f9c9abbcbf5787022f49080e2564"
+REPO="https://github.com/pgcsoluciones/intap-flipbook.git"
+API_URL="https://intap-flipbook-api-preview.fliaprince.workers.dev"
+VIEWER_URL="https://f144363d.intap-flipbook-viewer.pages.dev"
+DASHBOARD_PROJECT="intap-flipbook-dashboard"
+DASHBOARD_BRANCH="qa-login-hardening-20260904"
+WRANGLER="${WRANGLER:-$HOME/intap-flipbook-dynamic-markers/node_modules/.bin/wrangler}"
+TMP_DIR="$(mktemp -d /tmp/intap-login-hardening.XXXXXX)"
+QA_EMAIL="qa-login-security-$(date +%s)-$RANDOM@example.test"
+QA_PASSWORD="Kawvo-QA-$(date +%s)-Aa9!"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+[ -x "$WRANGLER" ] || fail "No se encontró Wrangler en $WRANGLER"
+
+printf '\n======================================================\n'
+printf ' INTAP · PREVIEW · LOGIN HARDENING\n'
+printf '======================================================\n\n'
+
+printf '=== 1. CLON AISLADO DEL CANDIDATO ===\n'
+git clone --no-checkout "$REPO" "$TMP_DIR/repo"
+cd "$TMP_DIR/repo"
+git checkout --detach "$SOURCE_SHA"
+ACTUAL_SHA="$(git rev-parse HEAD)"
+printf 'Commit esperado: %s\n' "$SOURCE_SHA"
+printf 'Commit usado:    %s\n' "$ACTUAL_SHA"
+[ "$ACTUAL_SHA" = "$SOURCE_SHA" ] || fail "Commit inesperado. Se cancela."
+
+printf '\n=== 2. DEPENDENCIAS TEMPORALES ===\n'
+npm ci --ignore-scripts
+
+printf '\n=== 3. QA ESTÁTICO Y TYPESCRIPT ===\n'
+./node_modules/.bin/tsc --noEmit -p apps/api/tsconfig.json
+VITE_API_BASE_URL="$API_URL" \
+VITE_VIEWER_BASE_URL="$VIEWER_URL" \
+VITE_VIEWER_PREVIEW="1" \
+npm --prefix apps/dashboard run build
+
+grep -q "LOGIN_MAX_FAILURES = 5" apps/api/src/lib/authSecurity.ts || fail "Falta límite de intentos."
+grep -q "revokeUserSessions" apps/api/src/routes/auth.ts || fail "Falta revocación de sesiones."
+grep -q "v2\\$" apps/api/src/routes/auth.ts || fail "Falta hash versionado."
+grep -q "payload.kind && payload.kind !== 'access'" apps/api/src/middleware/jwt.ts || fail "Falta validación de tipo de token."
+grep -q 'minLength={mode === .register. ? 12' apps/dashboard/src/pages/Login.tsx || fail "Falta política de 12 caracteres en UI."
+printf '✓ TypeScript API aprobado\n'
+printf '✓ Dashboard build aprobado\n'
+printf '✓ Guardrails de login presentes\n'
+
+printf '\n=== 4. DEPLOY SOLO API PREVIEW ===\n'
+"$WRANGLER" deploy --config apps/api/wrangler.toml --env preview
+
+printf '\n=== 5. QA E2E DE AUTENTICACIÓN EN PREVIEW ===\n'
+register_body="$(printf '{"email":"%s","password":"%s","name":"QA Login Security"}' "$QA_EMAIL" "$QA_PASSWORD")"
+register_json="$(curl -fsS -X POST "$API_URL/auth/register" -H 'Content-Type: application/json' --data "$register_body")"
+QA_TOKEN="$(printf '%s' "$register_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s); if(!j.success||!j.data?.token) process.exit(2); process.stdout.write(j.data.token)})')"
+[ -n "$QA_TOKEN" ] || fail "Registro QA no devolvió token."
+printf '✓ Registro con contraseña fuerte\n'
+
+weak_status="$(curl -sS -o "$TMP_DIR/weak.json" -w '%{http_code}' -X POST "$API_URL/auth/register" -H 'Content-Type: application/json' --data '{"email":"qa-weak-password@example.test","password":"12345678"}')"
+[ "$weak_status" = "400" ] || fail "La contraseña débil no fue rechazada: HTTP $weak_status"
+printf '✓ Contraseña débil rechazada\n'
+
+me_status="$(curl -sS -o "$TMP_DIR/me-before.json" -w '%{http_code}' "$API_URL/auth/me" -H "Authorization: Bearer $QA_TOKEN")"
+[ "$me_status" = "200" ] || fail "Token recién emitido no accede a /auth/me: HTTP $me_status"
+printf '✓ Token de acceso válido\n'
+
+logout_status="$(curl -sS -o "$TMP_DIR/logout-all.json" -w '%{http_code}' -X POST "$API_URL/auth/logout-all" -H "Authorization: Bearer $QA_TOKEN")"
+[ "$logout_status" = "200" ] || fail "logout-all falló: HTTP $logout_status"
+revoked_status="$(curl -sS -o "$TMP_DIR/me-after.json" -w '%{http_code}' "$API_URL/auth/me" -H "Authorization: Bearer $QA_TOKEN")"
+[ "$revoked_status" = "401" ] || fail "El token revocado siguió funcionando: HTTP $revoked_status"
+printf '✓ Revocación de sesiones confirmada\n'
+
+RATE_EMAIL="qa-rate-limit-$(date +%s)-$RANDOM@example.test"
+for n in 1 2 3 4 5; do
+  status="$(curl -sS -o "$TMP_DIR/rate-$n.json" -w '%{http_code}' -X POST "$API_URL/auth/login" -H 'Content-Type: application/json' --data "{\"email\":\"$RATE_EMAIL\",\"password\":\"incorrecta-$n\"}")"
+  [ "$status" = "401" ] || fail "Intento $n esperaba 401 y devolvió $status"
+done
+rate_status="$(curl -sS -o "$TMP_DIR/rate-blocked.json" -w '%{http_code}' -X POST "$API_URL/auth/login" -H 'Content-Type: application/json' --data "{\"email\":\"$RATE_EMAIL\",\"password\":\"incorrecta-6\"}")"
+[ "$rate_status" = "429" ] || fail "No se activó rate limit: HTTP $rate_status"
+grep -q 'LOGIN_RATE_LIMITED' "$TMP_DIR/rate-blocked.json" || fail "Respuesta 429 sin código LOGIN_RATE_LIMITED."
+printf '✓ Fuerza bruta limitada después de 5 fallos\n'
+
+printf '\n=== 6. LIMPIEZA DEL USUARIO QA EN D1 PREVIEW ===\n'
+"$WRANGLER" d1 execute pgc-landing-saas-db \
+  --config apps/api/wrangler.toml --env preview --remote \
+  --command "DELETE FROM users WHERE email = '$QA_EMAIL';" >/dev/null
+printf '✓ Usuario QA eliminado\n'
+
+printf '\n=== 7. DEPLOY SOLO DASHBOARD PREVIEW ===\n'
+"$WRANGLER" pages deploy apps/dashboard/dist \
+  --project-name="$DASHBOARD_PROJECT" \
+  --branch="$DASHBOARD_BRANCH"
+
+printf '\n======================================================\n'
+printf ' LOGIN HARDENING PREVIEW LISTO PARA QA FÍSICO\n'
+printf '======================================================\n'
+printf 'API: %s\n' "$API_URL"
+printf 'Viewer conservado: %s\n' "$VIEWER_URL"
+printf 'Producción no fue modificada.\n\n'
