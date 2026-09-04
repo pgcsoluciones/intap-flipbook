@@ -87,7 +87,7 @@ npm --prefix apps/dashboard run build
 
 grep -q "LOGIN_MAX_FAILURES = 5" apps/api/src/lib/authSecurity.ts || fail "Falta límite de intentos."
 grep -q "revokeUserSessions" apps/api/src/routes/auth.ts || fail "Falta revocación de sesiones."
-grep -q "return \`v2\\\$" apps/api/src/routes/auth.ts || fail "Falta hash versionado."
+grep -Fq 'return `v2$${PASSWORD_HASH_ITERATIONS}$${bytesToHex(salt)}$${hashHex}`' apps/api/src/routes/auth.ts || fail "Falta hash versionado."
 grep -q "payload.kind && payload.kind !== 'access'" apps/api/src/middleware/jwt.ts || fail "Falta validación de tipo de token."
 grep -q 'minLength={mode === .register. ? 12' apps/dashboard/src/pages/Login.tsx || fail "Falta política de 12 caracteres en UI."
 printf '✓ Dashboard build aprobado\n'
