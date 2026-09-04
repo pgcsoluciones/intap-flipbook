@@ -2,25 +2,45 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 const runtime = await import('../src/viewerRuntime.js')
+const selectPageImageUrl = runtime.default?.selectPageImageUrl ?? runtime.selectPageImageUrl ?? globalThis.IntapViewerRuntime.selectPageImageUrl
 
-test('usa optimized_url como imagen principal y nunca thumbnail_url', () => {
+test('producción usa optimized_url como imagen principal y nunca thumbnail_url', () => {
   const page = {
     image_url: 'https://media.example.test/original.jpg',
     optimized_url: 'https://media.example.test/display.webp',
     thumbnail_url: 'https://media.example.test/thumb.webp',
   }
 
-  assert.equal(runtime.default?.selectPageImageUrl ? runtime.default.selectPageImageUrl(page) : runtime.selectPageImageUrl(page), page.optimized_url)
+  assert.equal(selectPageImageUrl(page), page.optimized_url)
+})
+
+test('Preview prioriza image_url estable sobre una derivada optimizada', () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'location')
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { search: '?preview=1&publication=copia' },
+  })
+
+  try {
+    const page = {
+      image_url: 'https://media.example.test/original.jpg',
+      optimized_url: 'https://media.example.test/display.webp',
+      display_url: 'https://media.example.test/legacy-display.webp',
+    }
+    assert.equal(selectPageImageUrl(page), page.image_url)
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'location', previous)
+    else delete globalThis.location
+  }
 })
 
 test('fallback de lectura es optimized_url hacia public_url original', () => {
-  const selectPageImageUrl = runtime.default?.selectPageImageUrl ?? runtime.selectPageImageUrl
   assert.equal(selectPageImageUrl({ image_url: 'https://media.example.test/original.jpg' }), 'https://media.example.test/original.jpg')
   assert.equal(selectPageImageUrl({ optimized_url: '', display_url: 'https://media.example.test/display.webp', image_url: 'https://media.example.test/original.jpg' }), 'https://media.example.test/display.webp')
 })
 
 test('apertura prioriza portada y primer pliego', () => {
-  const startupRealPageNumbers = runtime.default?.startupRealPageNumbers ?? runtime.startupRealPageNumbers
+  const startupRealPageNumbers = runtime.default?.startupRealPageNumbers ?? runtime.startupRealPageNumbers ?? globalThis.IntapViewerRuntime.startupRealPageNumbers
 
   assert.deepEqual(startupRealPageNumbers(33, false), [1, 2, 3])
   assert.deepEqual(startupRealPageNumbers(33, true), [1, 2])
@@ -28,7 +48,7 @@ test('apertura prioriza portada y primer pliego', () => {
 })
 
 test('salto directo prepara destino y paginas cercanas', () => {
-  const targetRealPageNumbers = runtime.default?.targetRealPageNumbers ?? runtime.targetRealPageNumbers
+  const targetRealPageNumbers = runtime.default?.targetRealPageNumbers ?? runtime.targetRealPageNumbers ?? globalThis.IntapViewerRuntime.targetRealPageNumbers
 
   assert.deepEqual(targetRealPageNumbers(14, 33), [14, 15])
   assert.deepEqual(targetRealPageNumbers(1, 33), [1, 2])
@@ -36,8 +56,8 @@ test('salto directo prepara destino y paginas cercanas', () => {
 })
 
 test('precarga paginas de dos spreads, espera decode y no repite descargas', async () => {
-  const nearbyRealPageNumbers = runtime.default?.nearbyRealPageNumbers ?? runtime.nearbyRealPageNumbers
-  const createImagePreloader = runtime.default?.createImagePreloader ?? runtime.createImagePreloader
+  const nearbyRealPageNumbers = runtime.default?.nearbyRealPageNumbers ?? runtime.nearbyRealPageNumbers ?? globalThis.IntapViewerRuntime.nearbyRealPageNumbers
+  const createImagePreloader = runtime.default?.createImagePreloader ?? runtime.createImagePreloader ?? globalThis.IntapViewerRuntime.createImagePreloader
   const created = []
   const decoded = []
 
@@ -82,6 +102,7 @@ test('z-index interactivo conserva el orden Fabric', () => {
   const interactiveOverlayZIndex =
     runtime.default?.interactiveOverlayZIndex
     ?? runtime.interactiveOverlayZIndex
+    ?? globalThis.IntapViewerRuntime.interactiveOverlayZIndex
 
   assert.equal(interactiveOverlayZIndex(0), 20)
   assert.equal(interactiveOverlayZIndex(1), 21)
@@ -97,6 +118,7 @@ test('z-index interactivo normaliza indices invalidos sin romper el overlay', ()
   const interactiveOverlayZIndex =
     runtime.default?.interactiveOverlayZIndex
     ?? runtime.interactiveOverlayZIndex
+    ?? globalThis.IntapViewerRuntime.interactiveOverlayZIndex
 
   assert.equal(interactiveOverlayZIndex(-1), 20)
   assert.equal(interactiveOverlayZIndex('abc'), 20)
