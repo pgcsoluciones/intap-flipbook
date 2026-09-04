@@ -12,8 +12,9 @@ async function getKey(secret: string): Promise<CryptoKey> {
   )
 }
 
-function base64url(buf: ArrayBuffer): string {
-  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+function base64url(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
+  return btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '')
@@ -36,8 +37,13 @@ export interface JwtPayload {
   [key: string]: unknown
 }
 
+type JwtSignPayload = Omit<JwtPayload, 'iat' | 'exp'> & {
+  sub: string
+  email: string
+}
+
 export async function signJwt(
-  payload: Omit<JwtPayload, 'iat' | 'exp'>,
+  payload: JwtSignPayload,
   secret: string,
   expiryDays: number,
 ): Promise<string> {
@@ -45,7 +51,13 @@ export async function signJwt(
   if (!Number.isFinite(expiryDays) || expiryDays <= 0) throw new Error('Invalid JWT expiry')
 
   const now = Math.floor(Date.now() / 1000)
-  const full: JwtPayload = { ...payload, iat: now, exp: now + Math.floor(expiryDays * 86400) }
+  const full: JwtPayload = {
+    ...payload,
+    sub: payload.sub,
+    email: payload.email,
+    iat: now,
+    exp: now + Math.floor(expiryDays * 86400),
+  }
 
   const header = base64url(new TextEncoder().encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })))
   const body = base64url(new TextEncoder().encode(JSON.stringify(full)))
