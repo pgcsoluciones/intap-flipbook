@@ -2,7 +2,7 @@ const ALGORITHM = { name: 'HMAC', hash: 'SHA-256' }
 const MAX_CLOCK_SKEW_SECONDS = 60
 
 async function getKey(secret: string): Promise<CryptoKey> {
-  if (!secret || secret.length < 32) throw new Error('JWT secret is too short')
+  if (!secret) throw new Error('JWT secret is required')
   return crypto.subtle.importKey(
     'raw',
     new TextEncoder().encode(secret),
